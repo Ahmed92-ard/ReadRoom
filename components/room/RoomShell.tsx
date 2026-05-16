@@ -239,7 +239,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const isMobile = useIsMobile();
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const desktopTabs = [
-    { id: 'files' as const,    Icon: FolderOpen,    label: 'Shelf' },
+    { id: 'shelf' as const,    Icon: FolderOpen,    label: 'Shelf' },
     { id: 'notes' as const,    Icon: FileText,      label: 'Notes' },
     { id: 'presence' as const, Icon: Users,         label: 'People' },
   ];
@@ -247,7 +247,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const mobileTabs = [
     { id: 'libraries' as const,  Icon: LayoutGrid,    label: 'Libraries' },
     { id: 'channels' as const, Icon: Menu,          label: 'Rooms' },
-    { id: 'files' as const,    Icon: FolderOpen,    label: 'Shelf' },
+    { id: 'shelf' as const,    Icon: FolderOpen,    label: 'Shelf' },
     { id: 'notes' as const,    Icon: FileText,      label: 'Notes' },
     { id: 'presence' as const, Icon: Users,         label: 'People' },
   ];
@@ -322,7 +322,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   useEffect(() => {
     if (!isMobile && (activePanel === 'libraries' || activePanel === 'channels' || activePanel === 'chat')) {
-      setActivePanel('files');
+      setActivePanel('shelf');
     }
   }, [isMobile, activePanel, setActivePanel]);
 
@@ -1023,7 +1023,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           <PresenceList />
         </div>
 
-        <div className={activePanel === 'files' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
+        <div className={activePanel === 'shelf' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
           <div className="flex flex-col h-full p-4">
              <div className="flex items-center justify-between mb-4">
                 <span className="text-[11px] font-bold text-room-muted tracking-widest flex items-center gap-2">
