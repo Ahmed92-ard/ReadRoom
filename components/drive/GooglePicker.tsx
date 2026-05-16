@@ -37,6 +37,7 @@ export function GooglePicker({
   onRequestAccess,
   onSelect,
   onLocalFile,
+  onRoomPdfUploaded,
   onClose,
   mode = 'replace',
   libraryId,
