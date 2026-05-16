@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark theme is default */
+:root,
+html.dark {
+  --room-bg:      #0f1117;
+  --room-surface: #161b27;
+  --room-border:  #1e2535;
+  --room-hover:   #1c2333;
+  --room-text:    #e2e8f0;
+  --room-muted:   #64748b;
+
+  color-scheme: dark;
+}
+
+/* Light theme — only applied when html has .light class */
+html.light {
+  --room-bg:      #f5f5f4;
+  --room-surface: #ffffff;
+  --room-border:  #e5e7eb;
+  --room-hover:   #f3f4f6;
+  --room-text:    #111827;
+  --room-muted:   #6b7280;
+
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  background: var(--room-bg);
+  color: var(--room-text);
+  transition: background-color 0.2s, color 0.2s;
+}
