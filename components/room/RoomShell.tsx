@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Menu, X, MessageSquare, Users, FileText, FolderOpen, LayoutGrid, Pencil, Trash2 } from 'lucide-react';
+import { Menu, X, MessageSquare, LayoutDashboard, FileText, FolderOpen, LayoutGrid, Pencil, Trash2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
 import { useRoomStore } from '@/store/roomStore';
@@ -63,8 +63,6 @@ interface BottomSheetProps {
 function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragStartY = useRef<number | null>(null);
-  // Track if user explicitly closed the sheet (prevent auto-reopen)
-  const userClosedRef = useRef(false);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     dragStartY.current = e.touches[0].clientY;
@@ -74,19 +72,11 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
     if (dragStartY.current === null) return;
     const dy = e.changedTouches[0].clientY - dragStartY.current;
     if (dy < -40) {
-      userClosedRef.current = false;
       setExpanded(true);
     } else if (dy > 40) {
-      userClosedRef.current = true;
       setExpanded(false);
     }
     dragStartY.current = null;
-  };
-
-  const handleToggle = () => {
-    const next = !expanded;
-    userClosedRef.current = !next; // if closing, mark as user-closed
-    setExpanded(next);
   };
 
   return (
@@ -95,10 +85,7 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
       {expanded && (
         <div 
           className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-30 animate-in fade-in"
-          onClick={() => {
-            userClosedRef.current = true;
-            setExpanded(false);
-          }}
+          onClick={() => setExpanded(false)}
         />
       )}
       
@@ -109,35 +96,37 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
           bg-room-surface border-t border-room-border
           rounded-t-2xl shadow-2xl
           transition-[height] duration-300 ease-out
-          ${expanded ? (fullHeight ? 'h-[100dvh] rounded-none' : 'h-[75dvh]') : 'h-[56px]'}
+          ${expanded ? (fullHeight ? 'h-[100dvh] rounded-none' : 'h-[75dvh]') : 'h-0 overflow-hidden'}
         `}
         style={{ transform: 'translate3d(0,0,0)' }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        <div
-          className="flex items-center justify-between px-6 py-3 cursor-pointer"
-          onClick={handleToggle}
-        >
-          <div className="w-10" /> {/* Spacer */}
-          <div className="w-10 h-1.5 rounded-full bg-room-border" />
-          <div className="w-10 flex justify-end">
-            {expanded && (
-              <div className="p-1 rounded-full bg-room-hover text-room-muted">
-                <X size={16} />
-              </div>
-            )}
-          </div>
-        </div>
         {expanded && (
-          <div className="h-[calc(100%-48px)] overflow-hidden">
-            {children}
-          </div>
+          <>
+            {/* Drag handle */}
+            <div
+              className="flex items-center justify-between px-6 py-3 cursor-pointer"
+              onClick={() => setExpanded(false)}
+            >
+              <div className="w-10" />
+              <div className="w-10 h-1.5 rounded-full bg-room-border" />
+              <div className="w-10 flex justify-end">
+                <div className="p-1 rounded-full bg-room-hover text-room-muted">
+                  <X size={16} />
+                </div>
+              </div>
+            </div>
+            <div className="h-[calc(100%-48px)] overflow-hidden">
+              {children}
+            </div>
+          </>
         )}
       </div>
     </>
   );
 }
+
 
 function SidebarToggle({
   active,
@@ -239,17 +228,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const isMobile = useIsMobile();
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const desktopTabs = [
-    { id: 'shelf' as const,    Icon: FolderOpen,    label: 'Shelf' },
-    { id: 'notes' as const,    Icon: FileText,      label: 'Notes' },
-    { id: 'presence' as const, Icon: Users,         label: 'People' },
+    { id: 'shelf' as const,    Icon: FolderOpen,        label: 'Shelf' },
+    { id: 'notes' as const,    Icon: FileText,          label: 'Notes' },
+    { id: 'presence' as const, Icon: LayoutDashboard,   label: 'Workspace' },
   ];
 
   const mobileTabs = [
-    { id: 'libraries' as const,  Icon: LayoutGrid,    label: 'Libraries' },
-    { id: 'channels' as const, Icon: Menu,          label: 'Rooms' },
-    { id: 'shelf' as const,    Icon: FolderOpen,    label: 'Shelf' },
-    { id: 'notes' as const,    Icon: FileText,      label: 'Notes' },
-    { id: 'presence' as const, Icon: Users,         label: 'People' },
+    { id: 'libraries' as const,  Icon: LayoutGrid,      label: 'Libraries' },
+    { id: 'channels' as const,   Icon: Menu,            label: 'Rooms' },
+    { id: 'shelf' as const,      Icon: FolderOpen,      label: 'Shelf' },
+    { id: 'notes' as const,      Icon: FileText,        label: 'Notes' },
+    { id: 'presence' as const,   Icon: LayoutDashboard, label: 'Workspace' },
   ];
 
   const activeTabs = isMobile ? mobileTabs : desktopTabs;
@@ -325,6 +314,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       setActivePanel('shelf');
     }
   }, [isMobile, activePanel, setActivePanel]);
+
+  // First-visit: open Libraries tab so new users discover the workspace
+  useEffect(() => {
+    try {
+      const visited = localStorage.getItem('readroom:visited');
+      if (!visited) {
+        localStorage.setItem('readroom:visited', '1');
+        setSidebarOpen(true);
+        setActivePanel('libraries');
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     try {
@@ -1003,10 +1005,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       </div>
 
       <div className="flex-1 min-h-0 relative">
-        <div className={activePanel === 'chat' ? 'flex flex-col h-full' : 'hidden'}>
-          <Chat roomId={roomId} onClose={isMobile ? () => setMobileSheetExpanded(false) : toggleChatSidebar} />
-        </div>
-        
+        {/* Note: Chat is intentionally NOT rendered here.
+            Desktop: always lives in <ChatSidebar /> (right side, always mounted).
+            Mobile: lives in the dedicated mobileChatOpen slide-in drawer.
+            Rendering a second <Chat> here caused dual socket listeners + split message state on desktop. */}
+
+
         <div className={activePanel === 'libraries' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
           <LibrarySidebar inBottomSheet={true} onClose={() => setMobileSheetExpanded(false)} />
         </div>
@@ -1196,8 +1200,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 <SidebarToggle 
                   active={sidebarOpen} 
                   onClick={() => setSidebarOpen(!sidebarOpen)} 
-                  title="People & Notes"
-                  icon={<Users size={16} />}
+                  title="Workspace"
+                  icon={<LayoutDashboard size={16} />}
                 />
                 <SidebarToggle 
                   active={!chatSidebarCollapsed} 

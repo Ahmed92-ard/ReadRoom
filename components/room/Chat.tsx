@@ -2,9 +2,9 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, MessageSquare, X } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { usePresenceStore } from '@/store/presenceStore';
-import { connectSocket } from '@/lib/socket/client';
+import { getSocket } from '@/lib/socket/client';
 import type { ChatMessage } from '@/types';
 
 interface ChatProps {
@@ -19,8 +19,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef(connectSocket());
+  // Use getSocket() directly — the module-level singleton is always the same instance
   const sentIdsRef = useRef(new Set<string>());
+  // Ref to restore focus after send (keeps mobile keyboard open)
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Load initial messages from API
   useEffect(() => {
@@ -43,24 +45,19 @@ export function Chat({ roomId, onClose }: ChatProps) {
     loadMessages();
   }, [roomId]);
 
-  // Listen for new messages from socket — re-register when roomId changes
+  // Listen for new messages — always uses the singleton socket
   useEffect(() => {
-    const socket = socketRef.current;
+    const socket = getSocket();
 
     const handler = (msg: ChatMessage) => {
       console.log('[chat] received message:', msg.id, 'room:', msg.roomId);
-      // Only handle messages for this room
-      if (msg.roomId !== roomId) {
-        console.warn('[chat] message room mismatch:', msg.roomId, 'vs', roomId);
-        return;
-      }
+      if (msg.roomId !== roomId) return;
       // Skip messages we sent optimistically (already in the list)
       if (sentIdsRef.current.has(msg.id)) {
         sentIdsRef.current.delete(msg.id);
         return;
       }
       setMessages((prev) => {
-        // Avoid duplicates
         if (prev.some((m) => m.id === msg.id)) return prev;
         const next = [...prev, msg];
         return next.length > 500 ? next.slice(-500) : next;
@@ -73,7 +70,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
   }, [roomId]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -95,18 +92,22 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
 
     try {
-      // Track this ID so we skip the socket echo
       sentIdsRef.current.add(messageId);
 
       // Optimistic UI update
       setMessages((prev) => [...prev, payload]);
       setInput('');
 
-      // Emit via socket for real-time broadcast
-      console.log('[chat] emitting message:', messageId, 'to room:', roomId);
-      socketRef.current.emit('chat:message', payload);
+      // Restore focus so mobile keyboard stays open
+      // requestAnimationFrame ensures the state update has flushed first
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
 
-      // Persist to database via API
+      console.log('[chat] emitting message:', messageId, 'to room:', roomId);
+      getSocket().emit('chat:message', payload);
+
+      // Persist to database
       const res = await fetch(`/api/rooms/${roomId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -114,7 +115,6 @@ export function Chat({ roomId, onClose }: ChatProps) {
       });
 
       if (!res.ok) {
-        // Remove from optimistic update if save failed
         setMessages((prev) => prev.filter((m) => m.id !== messageId));
         sentIdsRef.current.delete(messageId);
         setError('Failed to send message');
@@ -153,17 +153,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
         )}
 
         {messages.map((msg) => {
-          // Resolve current name from presence store (reactive identity)
-          // Note: usePresenceStore.getState() is valid — it's NOT a hook call
+          // Read presence state ONCE outside the loop — not called as a hook
           const users = usePresenceStore.getState().users;
           const selfState = usePresenceStore.getState().self;
-          
-          // Helper to find name by base userId (handles multiple tabs)
+
           const resolveName = (id: string, fallback: string) => {
             const baseId = id.split('_')[0];
             if (selfState?.userId.startsWith(baseId)) return selfState.userName;
-            
-            // Search active users map
             const userList = Array.from(users.values());
             for (const u of userList) {
               if (u.userId.startsWith(baseId) && u.userName !== 'Reader') {
@@ -215,6 +211,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       <div className="flex-none p-3 border-t border-room-border">
         <div className="flex items-center gap-2 bg-room-bg rounded-xl border border-room-border px-3 focus-within:border-blue-500/50 transition-colors">
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -225,6 +222,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
           />
           <button
             onClick={send}
+            // Prevent button from stealing focus from the input on click
+            onMouseDown={(e) => e.preventDefault()}
             disabled={!input.trim()}
             className="p-2 rounded-xl text-blue-400 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors min-w-[36px] min-h-[36px] md:min-w-[40px] md:min-h-[40px] flex items-center justify-center"
             aria-label="Send"

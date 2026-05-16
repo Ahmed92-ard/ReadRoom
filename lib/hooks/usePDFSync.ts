@@ -75,7 +75,7 @@ export function usePDFSync(
         zoom,
         ts: Date.now(),
       } satisfies SyncPayload);
-    }, 100);
+    }, 150);
 
     return () => {
       if (throttleRef.current) clearTimeout(throttleRef.current);

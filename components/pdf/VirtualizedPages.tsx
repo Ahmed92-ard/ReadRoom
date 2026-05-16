@@ -329,7 +329,7 @@ export function VirtualizedPages({
 
     // Set guard BEFORE scrollTo so the resulting scroll event is ignored
     isProgrammaticScrollRef.current = true;
-    container.scrollTo({ top: targetScrollTop, behavior: followMode ? 'auto' : 'smooth' });
+    container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
 
     // Reset guard after the scroll event has had time to fire
     requestAnimationFrame(() => {
