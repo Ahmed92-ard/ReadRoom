@@ -35,7 +35,7 @@ let _driveTokenClient: any = null;
 const _driveSubscribers = new Set<() => void>();
 function notifyDriveSubscribers() { _driveSubscribers.forEach((fn) => fn()); }
 
-function readStored DriveToken(userId: string) {
+function readStoredDriveToken(userId: string) {
   try {
     const raw = localStorage.getItem(`readroom_drive_token_${userId}`);
     if (!raw) return null;
