@@ -24,6 +24,22 @@ async function signedUrl(db: any, storagePath?: string | null) {
   return data?.signedUrl ?? null;
 }
 
+function isModernChatSchemaError(error: any) {
+  const msg = String(error?.message ?? '').toLowerCase();
+  return (
+    ['42P01', '42703', 'PGRST108', 'PGRST200', 'PGRST204', 'PGRST205'].includes(error?.code)
+    || msg.includes('message_attachments')
+    || msg.includes('message_reactions')
+    || msg.includes('message_read_receipts')
+    || msg.includes('message_clears')
+    || msg.includes('reply_to_message_id')
+    || msg.includes('attachment_name')
+    || msg.includes('storage_path')
+    || msg.includes('schema cache')
+    || msg.includes('relationship')
+  );
+}
+
 async function serializeMessage(row: any, db: any): Promise<ChatMessage> {
   const profile = row.sender ?? row.users ?? null;
   const attachments: ChatAttachment[] = await Promise.all((row.attachments ?? []).map(async (a: any) => ({
@@ -84,12 +100,13 @@ async function serializeMessage(row: any, db: any): Promise<ChatMessage> {
 }
 
 async function getClearTime(db: any, roomId: string, userId: string) {
-  const { data } = await db
+  const { data, error } = await db
     .from('message_clears')
     .select('cleared_at')
     .eq('room_id', roomId)
     .eq('user_id', userId)
     .maybeSingle();
+  if (error) return null;
   return data?.cleared_at ?? null;
 }
 
@@ -102,6 +119,10 @@ function messageSelect() {
     reactions:message_reactions(*),
     receipts:message_read_receipts(*)
   `;
+}
+
+function baseMessageSelect() {
+  return '*, sender:users!messages_sender_id_fkey(id, display_name, avatar_url)';
 }
 
 export async function GET(req: Request, { params }: { params: Promise<Params> | Params }) {
@@ -125,23 +146,34 @@ export async function GET(req: Request, { params }: { params: Promise<Params> | 
   const media = url.searchParams.get('media') === '1';
   const clearTime = await getClearTime(db, channelId, user.id);
 
-  let query = db
-    .from('messages')
-    .select(messageSelect())
-    .eq('room_id', channelId)
-    .eq('deleted', false)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const buildQuery = (select: string, includeModernSearch: boolean) => {
+    let query = db
+      .from('messages')
+      .select(select)
+      .eq('room_id', channelId)
+      .eq('deleted', false)
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
-  if (before) query = query.lt('created_at', before);
-  if (clearTime) query = query.gt('created_at', clearTime);
-  if (media) query = query.not('attachment_type', 'is', null);
-  if (search) {
-    const safe = search.replaceAll('%', '\\%').replaceAll('_', '\\_');
-    query = query.or(`content.ilike.%${safe}%,sender_name.ilike.%${safe}%,attachment_name.ilike.%${safe}%`);
+    if (before) query = query.lt('created_at', before);
+    if (clearTime) query = query.gt('created_at', clearTime);
+    if (media) query = query.not('attachment_type', 'is', null);
+    if (search) {
+      const safe = search.replaceAll('%', '\\%').replaceAll('_', '\\_');
+      query = query.or(includeModernSearch
+        ? `content.ilike.%${safe}%,sender_name.ilike.%${safe}%,attachment_name.ilike.%${safe}%`
+        : `content.ilike.%${safe}%,sender_name.ilike.%${safe}%`);
+    }
+    return query;
+  };
+
+  let { data: rows, error } = await buildQuery(messageSelect(), true);
+  if (error && isModernChatSchemaError(error)) {
+    ({ data: rows, error } = await buildQuery(baseMessageSelect(), false));
   }
-
-  const { data: rows, error } = await query;
+  if (error && isModernChatSchemaError(error)) {
+    ({ data: rows, error } = await buildQuery('*', false));
+  }
   if (error) {
     if (error.code === '42P01') return NextResponse.json({ messages: [] });
     console.error('[api/messages] GET failed:', error);
@@ -177,27 +209,40 @@ export async function POST(req: Request, { params }: { params: Promise<Params> |
   const avatarUrl = profile?.avatar_url ?? (body.avatarUrl ? String(body.avatarUrl).slice(0, 512) : null);
   const replyToMessageId = body.replyToMessageId ? String(body.replyToMessageId) : null;
   const type = attachment?.kind ?? body.attachmentType ?? null;
+  const baseInsert = {
+    ...(body.id ? { id: body.id } : {}),
+    room_id: channelId,
+    sender_id: user.id,
+    sender_name: senderName,
+    avatar_color: avatarColor,
+    avatar_url: avatarUrl,
+    content: content || String(attachment?.name ?? body.content ?? 'Attachment').slice(0, 2000),
+  };
+  const modernInsert = {
+    ...baseInsert,
+    content: content || (attachment ? '' : String(body.content ?? '')),
+    reply_to_message_id: replyToMessageId,
+    attachment_url: attachment?.url ?? body.attachmentUrl ?? null,
+    attachment_type: type,
+    attachment_name: attachment?.name ?? null,
+    attachment_size: attachment?.sizeBytes ?? null,
+    attachment_mime: attachment?.mimeType ?? null,
+    storage_path: attachment?.storagePath ?? null,
+  };
 
-  const { data: row, error } = await db
+  let { data: row, error } = await db
     .from('messages')
-    .insert({
-      ...(body.id ? { id: body.id } : {}),
-      room_id: channelId,
-      sender_id: user.id,
-      sender_name: senderName,
-      avatar_color: avatarColor,
-      avatar_url: avatarUrl,
-      content: content || (attachment ? '' : String(body.content ?? '')),
-      reply_to_message_id: replyToMessageId,
-      attachment_url: attachment?.url ?? body.attachmentUrl ?? null,
-      attachment_type: type,
-      attachment_name: attachment?.name ?? null,
-      attachment_size: attachment?.sizeBytes ?? null,
-      attachment_mime: attachment?.mimeType ?? null,
-      storage_path: attachment?.storagePath ?? null,
-    })
-    .select(messageSelect())
+    .insert(modernInsert)
+    .select('*')
     .single();
+
+  if (error && isModernChatSchemaError(error)) {
+    ({ data: row, error } = await db
+      .from('messages')
+      .insert(baseInsert)
+      .select('*')
+      .single());
+  }
 
   if (error) {
     if (error.code === '42P01') return NextResponse.json({ message: { id: body.id ?? crypto.randomUUID(), roomId: channelId, userId: user.id, userName: senderName, avatarColor, avatarUrl, content, ts: Date.now() } });
@@ -224,7 +269,13 @@ export async function POST(req: Request, { params }: { params: Promise<Params> |
     if (attachError) console.warn('[api/messages] attachment metadata failed:', attachError);
   }
 
-  const { data: hydrated } = await db.from('messages').select(messageSelect()).eq('id', insertedRow.id).single();
+  let { data: hydrated, error: hydrateError } = await db.from('messages').select(messageSelect()).eq('id', insertedRow.id).single();
+  if (hydrateError && isModernChatSchemaError(hydrateError)) {
+    ({ data: hydrated } = await db.from('messages').select(baseMessageSelect()).eq('id', insertedRow.id).single());
+  }
+  if (!hydrated && hydrateError && isModernChatSchemaError(hydrateError)) {
+    ({ data: hydrated } = await db.from('messages').select('*').eq('id', insertedRow.id).single());
+  }
   return NextResponse.json({ message: await serializeMessage(hydrated ?? insertedRow, db) }, { status: 201 });
 }
 
@@ -247,6 +298,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<Params> 
 
   if (action === 'clear') {
     const { error } = await db.from('message_clears').upsert({ room_id: channelId, user_id: user.id, cleared_at: new Date().toISOString() }, { onConflict: 'room_id,user_id' });
+    if (error && isModernChatSchemaError(error)) return NextResponse.json({ ok: true, degraded: true });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
@@ -257,6 +309,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<Params> 
     const rows = messageIds.map((messageId: string) => ({ room_id: channelId, message_id: messageId, user_id: user.id, delivered_at: now, read_at: now }));
     if (rows.length) {
       const { error } = await db.from('message_read_receipts').upsert(rows, { onConflict: 'message_id,user_id' });
+      if (error && isModernChatSchemaError(error)) return NextResponse.json({ ok: true, readAt: now, messageIds, degraded: true });
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true, readAt: now, messageIds });
@@ -268,6 +321,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<Params> 
     const rows = messageIds.map((messageId: string) => ({ room_id: channelId, message_id: messageId, user_id: user.id, delivered_at: now }));
     if (rows.length) {
       const { error } = await db.from('message_read_receipts').upsert(rows, { onConflict: 'message_id,user_id' });
+      if (error && isModernChatSchemaError(error)) return NextResponse.json({ ok: true, deliveredAt: now, messageIds, degraded: true });
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true, deliveredAt: now, messageIds });
@@ -280,9 +334,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<Params> 
     if (!messageId || !emoji) return NextResponse.json({ error: 'messageId and emoji required' }, { status: 400 });
     if (active) {
       const { error } = await db.from('message_reactions').upsert({ message_id: messageId, user_id: user.id, emoji }, { onConflict: 'message_id,user_id,emoji' });
+      if (error && isModernChatSchemaError(error)) return NextResponse.json({ ok: true, degraded: true });
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     } else {
       const { error } = await db.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', user.id).eq('emoji', emoji);
+      if (error && isModernChatSchemaError(error)) return NextResponse.json({ ok: true, degraded: true });
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true });
@@ -303,6 +359,24 @@ export async function PATCH(req: Request, { params }: { params: Promise<Params> 
     .select(messageSelect())
     .single();
 
+  if (error && isModernChatSchemaError(error)) {
+    let { data: fallbackRow, error: fallbackError } = await db
+      .from('messages')
+      .update({ content, edited_at: new Date().toISOString() })
+      .eq('id', messageId)
+      .select(baseMessageSelect())
+      .single();
+    if (fallbackError && isModernChatSchemaError(fallbackError)) {
+      ({ data: fallbackRow, error: fallbackError } = await db
+        .from('messages')
+        .update({ content, edited_at: new Date().toISOString() })
+        .eq('id', messageId)
+        .select('*')
+        .single());
+    }
+    if (fallbackError) return NextResponse.json({ error: fallbackError.message }, { status: 500 });
+    return NextResponse.json({ message: await serializeMessage(fallbackRow, db) });
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ message: await serializeMessage(row, db) });
 }
@@ -331,7 +405,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<Params>
   const isOwner = ['owner', 'admin'].includes(membership.role);
   if (msg.sender_id !== user.id && !isOwner) return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
 
-  const { error } = await db.from('messages').update({ deleted: true, deleted_at: new Date().toISOString() }).eq('id', messageId);
+  let { error } = await db.from('messages').update({ deleted: true, deleted_at: new Date().toISOString() }).eq('id', messageId);
+  if (error && isModernChatSchemaError(error)) {
+    ({ error } = await db.from('messages').update({ deleted: true }).eq('id', messageId));
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
