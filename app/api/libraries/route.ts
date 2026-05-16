@@ -1,5 +1,5 @@
 // app/api/libraries/route.ts — Canonical. Uses libraries + library_members tables.
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 export async function GET() {
@@ -29,7 +29,14 @@ export async function POST(req: Request) {
 
   const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
 
-  const { data: library, error: libError } = await supabase
+  // Use admin client for creation sequence to bypass RLS restrictions
+  // during bootstrap (user isn't a member yet, so regular SELECT fails)
+  const adminSupabase = createAdminClient();
+  if (!adminSupabase) {
+    return NextResponse.json({ error: 'System configuration error' }, { status: 500 });
+  }
+
+  const { data: library, error: libError } = await adminSupabase
     .from('libraries')
     .insert({ name: name.slice(0, 64), owner_id: user.id, invite_code: inviteCode })
     .select()
@@ -37,13 +44,13 @@ export async function POST(req: Request) {
 
   if (libError) return NextResponse.json({ error: libError.message }, { status: 500 });
 
-  const { error: memberError } = await supabase
+  const { error: memberError } = await adminSupabase
     .from('library_members')
     .insert({ library_id: library.id, user_id: user.id, role: 'owner' });
 
   if (memberError) return NextResponse.json({ error: memberError.message }, { status: 500 });
 
-  const { error: roomError } = await supabase
+  const { error: roomError } = await adminSupabase
     .from('rooms')
     .insert({ library_id: library.id, name: 'general', type: 'pdf', position: 0 });
 
