@@ -1,15 +1,13 @@
-// types/index.ts — canonical shared types for ReadRoom
+// types/index.ts — Canonical ReadRoom types. No legacy aliases.
 
 // ── User / Profile ────────────────────────────────────────────────────────────
 
-/** Persistent profile stored in Supabase `users` table */
 export interface UserProfile {
-  id: string;           // UUID — matches auth.users.id
+  id: string;
   email: string | null;
   displayName: string;
   avatarUrl: string | null;
   bio?: string | null;
-  username?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -18,10 +16,10 @@ export interface UserProfile {
 export interface UserMeta {
   userId: string;
   userName: string;
-  avatarColor: string;       // hex
+  avatarColor: string;
   avatarInitials: string;
-  avatarUrl?: string | null; // from UserProfile.avatarUrl
-  joinedAt: number;          // epoch ms
+  avatarUrl?: string | null;
+  joinedAt: number;
   isFollowing: boolean;
   page?: number;
   scroll?: number;
@@ -32,32 +30,34 @@ export interface UserMeta {
   lastSeen?: number;
 }
 
-// ── Library / Room ────────────────────────────────────────────────────────────
+// ── Library ───────────────────────────────────────────────────────────────────
 
-/** A library (was "server" in DB) */
 export interface LibraryData {
   id: string;
   name: string;
-  iconUrl: string | null;
-  ownerId: string;
-  inviteCode: string;
-  createdAt: string;
+  icon_url: string | null;
+  owner_id: string;
+  invite_code: string;
+  created_at: string;
 }
 
-/** A room inside a library (was "channel" in DB) */
+// ── Room (was "channel") ──────────────────────────────────────────────────────
+
 export interface RoomData {
   id: string;
-  libraryId: string;
+  library_id: string;
+  /** Kept as server_id for workspaceStore backward compat */
+  server_id: string;
   name: string;
   description: string | null;
   type: 'text' | 'pdf';
   position: number;
-  currentPage: number;
-  scrollPct: number;
+  current_page: number;
+  scroll_pct: number;
   zoom: number;
-  currentPdfId: string | null;
-  createdAt: string;
-  updatedAt: string;
+  current_pdf_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
@@ -69,14 +69,13 @@ export interface PDFMeta {
   thumbnail: string | null;
   totalPages: number | null;
   url?: string | null;
-  folderId?: string | null;
 }
 
+/** Serialized room_pdfs row (frontend shape) */
 export interface ChannelPDF {
   id: string;
-  /** room_id in DB — kept as channelId in frontend for backward compat */
-  channelId: string;
-  roomId?: string;
+  channelId: string;   // = roomId
+  roomId: string;
   driveId: string;
   filename: string;
   thumbnailUrl: string | null;
@@ -87,7 +86,6 @@ export interface ChannelPDF {
   createdAt: string;
 }
 
-/** A folder that can contain PDFs (Google Drive-style) */
 export interface PDFFolder {
   id: string;
   roomId: string;
@@ -95,13 +93,11 @@ export interface PDFFolder {
   name: string;
   position: number;
   createdAt: string;
-  /** Client-side: child folders */
-  children?: PDFFolder[];
-  /** Client-side: PDFs directly in this folder */
-  pdfs?: ChannelPDF[];
+  children: PDFFolder[];
+  pdfs: ChannelPDF[];
 }
 
-// ── Room State ────────────────────────────────────────────────────────────────
+// ── Room state ────────────────────────────────────────────────────────────────
 
 export interface RoomState {
   id: string;
@@ -120,19 +116,18 @@ export interface SyncPayload {
   activePdfId?: string | null;
   activePdfName?: string | null;
   page: number;
-  scroll: number;   // 0.0 – 1.0
+  scroll: number;
   zoom: number;
   ts: number;
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-/** Persistent chat message stored in Supabase `messages` table */
 export interface ChatMessage {
   id: string;
   roomId: string;
-  userId: string;       // sender_id (UUID)
-  userName: string;     // denormalized sender_name
+  userId: string;
+  userName: string;
   avatarColor: string;
   avatarUrl?: string | null;
   content: string;
@@ -140,8 +135,8 @@ export interface ChatMessage {
   attachmentType?: 'image' | 'pdf' | 'link' | null;
   deleted?: boolean;
   editedAt?: string | null;
-  ts: number;           // created_at as epoch ms (for socket compat)
-  createdAt?: string;   // ISO string from DB
+  ts: number;
+  createdAt?: string;
 }
 
 // ── Activity / Notifications ──────────────────────────────────────────────────
@@ -171,28 +166,11 @@ export interface RoomNote {
 
 // ── Connection ────────────────────────────────────────────────────────────────
 
-export type ConnectionStatus =
-  | 'connected'
-  | 'connecting'
-  | 'reconnecting'
-  | 'disconnected'
-  | 'error';
+export type ConnectionStatus = 'connected' | 'connecting' | 'reconnecting' | 'disconnected' | 'error';
+export type PDFLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
-export type PDFLoadState =
-  | 'idle'
-  | 'loading'
-  | 'ready'
-  | 'error';
-
-export interface PageDimension {
-  width: number;
-  height: number;
-}
-
-export interface VisibleRange {
-  start: number;
-  end: number;
-}
+export interface PageDimension { width: number; height: number; }
+export interface VisibleRange { start: number; end: number; }
 
 // ── Google Drive ──────────────────────────────────────────────────────────────
 
@@ -204,14 +182,7 @@ export interface GoogleDriveFile {
   owners?: Array<{ emailAddress: string }>;
 }
 
-export interface GoogleDriveFolder {
-  id: string;
-  name: string;
-  mimeType: 'application/vnd.google-apps.folder';
-  children?: GoogleDriveFile[];
-}
-
-// ── Socket.io typed event maps ────────────────────────────────────────────────
+// ── Socket.io event maps ──────────────────────────────────────────────────────
 
 export interface ClientToServerEvents {
   'room:join':             (payload: { roomId: string; user: UserMeta }) => void;

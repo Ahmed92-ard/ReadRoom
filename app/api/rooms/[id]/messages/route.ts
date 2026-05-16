@@ -1,156 +1,97 @@
 // app/api/rooms/[id]/messages/route.ts
-import { Redis } from '@upstash/redis';
-import { createAdminClient, createClient } from '@/lib/supabase/server';
+// Legacy endpoint kept for rooms that don't have a libraryId/channelId context.
+// Reads from Supabase `messages` table (permanent). Falls back to empty on missing table.
+import { createClient } from '@/lib/supabase/server';
+import { NextResponse } from 'next/server';
 import type { ChatMessage } from '@/types';
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
-
-function asUuid(value: string | null | undefined) {
-  if (!value) return null;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
-    ? value
-    : null;
+function serializeMessage(row: any): ChatMessage {
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    userId: row.sender_id ?? '',
+    userName: row.sender_name ?? 'Reader',
+    avatarColor: row.avatar_color ?? '#6366f1',
+    avatarUrl: row.avatar_url ?? null,
+    content: row.content,
+    attachmentUrl: row.attachment_url ?? null,
+    attachmentType: row.attachment_type ?? null,
+    deleted: row.deleted ?? false,
+    ts: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    createdAt: row.created_at,
+  };
 }
 
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
-  const roomId = params.id;
+  const { id: roomId } = await params;
   const url = new URL(req.url);
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 200);
-  const supabase = createClient();
-  const db = createAdminClient() ?? supabase;
+  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
+  const before = url.searchParams.get('before');
 
-  const { data: rows, error } = await db
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  let query = supabase
     .from('messages')
-    .select('*, sender:users!messages_sender_id_fkey(id, display_name, avatar_url)')
+    .select('*')
     .eq('room_id', roomId)
     .eq('deleted', false)
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (!error) {
-    const messages = (rows ?? []).map((row: any): ChatMessage => ({
-      id: row.id,
-      roomId: row.room_id,
-      userId: row.sender_id ?? '',
-      userName: row.sender?.display_name ?? row.sender_name ?? 'Reader',
-      avatarColor: row.avatar_color ?? '#6366f1',
-      avatarUrl: row.sender?.avatar_url ?? row.avatar_url ?? null,
-      content: row.content,
-      attachmentUrl: row.attachment_url ?? null,
-      attachmentType: row.attachment_type ?? null,
-      deleted: row.deleted ?? false,
-      editedAt: row.edited_at ?? null,
-      ts: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-      createdAt: row.created_at,
-    })).reverse();
-    return Response.json({ messages });
+  if (before) query = query.lt('created_at', before);
+
+  const { data: rows, error } = await query;
+
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json({ messages: [] });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  try {
-    // Get message IDs for this room, sorted by timestamp (newest first)
-    // Upstash REST API uses zrange with rev option instead of zrevrange
-    const messageIds = await redis.zrange<string[]>(
-      `messages:${roomId}`,
-      0,
-      limit - 1,
-      { rev: true }
-    );
-
-    if (!messageIds || messageIds.length === 0) {
-      return Response.json({ messages: [] });
-    }
-
-    // Get message data
-    const messages: ChatMessage[] = [];
-    for (const id of messageIds) {
-      const data = await redis.get<string>(`message:${id}`);
-      if (data) {
-        try {
-          const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-          messages.push(parsed);
-        } catch {
-          // skip malformed messages
-        }
-      }
-    }
-
-    return Response.json({ messages });
-  } catch (error) {
-    console.error('[messages] GET failed:', error);
-    return Response.json({ messages: [], error: 'Failed to load messages' }, { status: 500 });
-  }
+  const messages = (rows ?? []).map(serializeMessage).reverse();
+  return NextResponse.json({ messages });
 }
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
-  const roomId = params.id;
+  const { id: roomId } = await params;
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  try {
-    const payload = await req.json() as ChatMessage;
+  const body = await req.json().catch(() => null);
+  if (!body?.content?.trim()) return NextResponse.json({ error: 'content required' }, { status: 400 });
 
-    // Validate required fields
-    if (!payload.id || !payload.userId || !payload.content || !payload.ts) {
-      return Response.json({ error: 'Missing required fields' }, { status: 400 });
-    }
+  const { data: profile } = await supabase
+    .from('users')
+    .select('display_name, avatar_url')
+    .eq('id', user.id)
+    .maybeSingle();
 
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    const db = createAdminClient() ?? supabase;
-    const senderId = user?.id ?? asUuid(payload.userId?.split('_')[0]) ?? null;
+  const { data: row, error } = await supabase
+    .from('messages')
+    .insert({
+      ...(body.id ? { id: body.id } : {}),
+      room_id: roomId,
+      sender_id: user.id,
+      sender_name: profile?.display_name ?? body.userName ?? 'Reader',
+      avatar_color: body.avatarColor ?? '#6366f1',
+      avatar_url: profile?.avatar_url ?? body.avatarUrl ?? null,
+      content: String(body.content).trim().slice(0, 2000),
+    })
+    .select()
+    .single();
 
-    const { data: profile } = senderId
-      ? await db.from('users').select('display_name, avatar_url').eq('id', senderId).maybeSingle()
-      : { data: null };
-
-    const { data: row, error } = await db
-      .from('messages')
-      .insert({
-        id: payload.id,
-        room_id: roomId,
-        sender_id: senderId,
-        sender_name: profile?.display_name ?? payload.userName,
-        avatar_color: payload.avatarColor,
-        avatar_url: profile?.avatar_url ?? payload.avatarUrl ?? null,
-        content: payload.content.trim().slice(0, 2000),
-      })
-      .select()
-      .single();
-
-    if (!error && row) {
-      const message: ChatMessage = {
-        ...payload,
-        id: row.id,
-        roomId: row.room_id,
-        userId: row.sender_id ?? payload.userId,
-        userName: row.sender_name,
-        avatarUrl: row.avatar_url ?? null,
-        ts: new Date(row.created_at).getTime(),
-        createdAt: row.created_at,
-      };
-      return Response.json({ success: true, message });
-    }
-
-    // Legacy fallback if migration 008 has not been applied yet.
-    const messageKey = `message:${payload.id}`;
-    await redis.set(messageKey, JSON.stringify(payload), { ex: 7 * 24 * 60 * 60 });
-
-    // Add to room's message sorted set (by timestamp)
-    await redis.zadd(`messages:${roomId}`, { score: payload.ts, member: payload.id });
-
-    // Keep room messages TTL fresh
-    await redis.expire(`messages:${roomId}`, 7 * 24 * 60 * 60);
-
-    return Response.json({ success: true, message: payload });
-  } catch (error) {
-    console.error('[messages] POST failed:', error);
-    return Response.json({ error: 'Failed to save message' }, { status: 500 });
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json({ message: { id: body.id ?? crypto.randomUUID(), roomId, userId: user.id, userName: profile?.display_name ?? 'Reader', avatarColor: '#6366f1', content: body.content, ts: Date.now() } });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ message: serializeMessage(row) }, { status: 201 });
 }

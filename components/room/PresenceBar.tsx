@@ -1,6 +1,5 @@
-// components/room/PresenceBar.tsx
 'use client';
-
+// components/room/PresenceBar.tsx — compact avatar row shown in the header.
 import React from 'react';
 import { usePresenceStore } from '@/store/presenceStore';
 import { Avatar } from '@/components/ui/Avatar';
@@ -8,14 +7,13 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { UserMeta } from '@/types';
 
 export function PresenceBar() {
-  const isMobile = useIsMobile();
-  const users = usePresenceStore((s) => Array.from(s.users.values()));
+  const usersMap = usePresenceStore((s) => s.users);
   const self = usePresenceStore((s) => s.self);
   const connectionStatus = usePresenceStore((s) => s.connectionStatus);
 
-  // Group by base userId to avoid showing multiple avatars for same person with multiple tabs
-  const groupedUsers = Array.from(
-    [...(self ? [self] : []), ...users.filter(u => u.userId !== self?.userId)]
+  // Deduplicate by base userId (multiple tabs = one avatar)
+  const grouped = Array.from(
+    [...(self ? [self] : []), ...Array.from(usersMap.values())]
       .reduce((acc, user) => {
         const baseId = user.userId.split('_')[0];
         const existing = acc.get(baseId);
@@ -27,26 +25,24 @@ export function PresenceBar() {
       .values()
   );
 
-  const activeCount = groupedUsers.filter((user) => user.isActive).length;
+  const active = grouped.filter((u) => u.isActive);
+  const MAX_SHOWN = 5;
+  const shown = active.slice(0, MAX_SHOWN);
+  const overflow = active.length - MAX_SHOWN;
 
   return (
-    <div className="flex items-center gap-2 py-1.5 px-3 md:px-4 md:py-2">
+    <div className="flex items-center gap-2">
+      <StatusBadge status={connectionStatus} />
+      <div className="flex items-center -space-x-2">
+        {shown.map((user) => (
+          <Avatar key={user.userId} user={user} size="sm" showTooltip />
+        ))}
+        {overflow > 0 && (
+          <div className="w-7 h-7 rounded-full bg-room-surface border-2 border-room-bg flex items-center justify-center text-[10px] font-bold text-room-muted z-10">
+            +{overflow}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
-// Helper to detect mobile within component if needed, or we can just use CSS.
-// Let's use a simple CSS-based approach or pass it as prop.
-// Actually, RoomShell has useIsMobile. I'll add a simple hook here too for convenience.
-function useIsMobile() {
-  const [m, setM] = React.useState(false);
-  React.useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    setM(mq.matches);
-    const h = (e: any) => setM(e.matches);
-    mq.addEventListener('change', h);
-    return () => mq.removeEventListener('change', h);
-  }, []);
-  return m;
-}
-

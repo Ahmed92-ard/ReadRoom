@@ -1,86 +1,48 @@
-// store/workspaceStore.ts — Library + Room (channel) management
-// Naming: "libraries" (was "servers"), "rooms" (was "channels") in the UI.
-// API routes now use canonical libraries/rooms tables and keep legacy channel
-// field aliases only at the frontend boundary.
+// store/workspaceStore.ts — Canonical workspace state.
+// Entities: libraries → rooms → room_pdfs / pdf_folders
+// No legacy server/channel/server_members aliases.
 
 import { create } from 'zustand';
+import type { LibraryData, RoomData, PDFFolder } from '@/types';
 
-export interface LibraryData {
-  id: string;
-  name: string;
-  icon_url: string | null;
-  owner_id: string;
-  invite_code: string;
-  created_at: string;
-}
-
-export interface ChannelData {
-  id: string;
-  library_id: string;
-  /** Legacy frontend alias returned by the API during the channel -> room transition. */
-  server_id: string;
-  name: string;
-  description: string | null;
-  type: 'text' | 'pdf';
-  position: number;
-  pdf_drive_id: string | null;
-  pdf_name: string | null;
-  pdf_url: string | null;
-  current_page: number;
-  scroll_pct: number;
-  zoom: number;
-  current_pdf_id?: string | null;
-}
-
-export interface PDFFolderData {
-  id: string;
-  roomId: string;
-  parentId: string | null;
-  name: string;
-  position: number;
-  createdAt: string;
-  children: PDFFolderData[];
-  pdfs: any[];
-}
+// Re-export RoomData as ChannelData for components that still use that name
+export type { LibraryData };
+export type ChannelData = RoomData;
 
 interface WorkspaceStore {
-  // State
   libraries: LibraryData[];
-  channels: ChannelData[];
+  channels: RoomData[];          // "channels" kept for component compat
+  folders: PDFFolder[];
   activeLibraryId: string | null;
   activeChannelId: string | null;
   loadingLibraries: boolean;
   loadingChannels: boolean;
-  /** Folders for the active channel */
-  folders: PDFFolderData[];
   error: string | null;
 
-  // Actions
   setActiveLibrary: (libraryId: string) => void;
   setActiveChannel: (channelId: string) => void;
   fetchLibraries: () => Promise<void>;
   fetchChannels: (libraryId: string) => Promise<void>;
-  fetchFolders: (libraryId: string, channelId: string) => Promise<void>;
+  fetchFolders: (libraryId: string, roomId: string) => Promise<void>;
   createLibrary: (name: string) => Promise<LibraryData | null>;
   joinLibrary: (inviteCode: string) => Promise<LibraryData | null>;
   updateLibrary: (libraryId: string, patch: Partial<Pick<LibraryData, 'name' | 'icon_url'>>) => Promise<boolean>;
-  createChannel: (libraryId: string, name: string, type: 'text' | 'pdf') => Promise<ChannelData | null>;
-  updateChannelPDF: (channelId: string, pdf: { driveId: string; name: string; url: string | null }) => Promise<void>;
-  updateChannel: (libraryId: string, channelId: string, patch: Partial<ChannelData>) => Promise<boolean>;
+  createChannel: (libraryId: string, name: string, type?: 'text' | 'pdf') => Promise<RoomData | null>;
+  updateChannel: (libraryId: string, roomId: string, patch: Partial<RoomData>) => Promise<boolean>;
   deleteLibrary: (libraryId: string) => Promise<boolean>;
-  deleteChannel: (libraryId: string, channelId: string) => Promise<boolean>;
-  createFolder: (libraryId: string, channelId: string, name: string, parentId?: string | null) => Promise<PDFFolderData | null>;
-  deleteFolder: (libraryId: string, channelId: string, folderId: string) => Promise<boolean>;
+  deleteChannel: (libraryId: string, roomId: string) => Promise<boolean>;
+  createFolder: (libraryId: string, roomId: string, name: string, parentId?: string | null) => Promise<PDFFolder | null>;
+  deleteFolder: (libraryId: string, roomId: string, folderId: string) => Promise<boolean>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   libraries: [],
   channels: [],
+  folders: [],
   activeLibraryId: null,
   activeChannelId: null,
   loadingLibraries: false,
   loadingChannels: false,
-  folders: [],
   error: null,
 
   setActiveLibrary: (libraryId) => {
@@ -106,17 +68,23 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set({ loadingChannels: true });
     try {
       const res = await fetch(`/api/libraries/${libraryId}/channels`);
-      if (!res.ok) throw new Error('Failed to load channels');
+      if (!res.ok) throw new Error('Failed to load rooms');
       const data = await res.json();
-      set({ channels: data.channels ?? [], loadingChannels: false });
+      // Normalize: add server_id alias for components that still read it
+      const channels = (data.channels ?? []).map((c: any) => ({
+        ...c,
+        server_id: c.library_id ?? c.server_id,
+        library_id: c.library_id ?? c.server_id,
+      }));
+      set({ channels, loadingChannels: false });
     } catch (err) {
       set({ error: String(err), loadingChannels: false });
     }
   },
 
-  fetchFolders: async (libraryId, channelId) => {
+  fetchFolders: async (libraryId, roomId) => {
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`);
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${roomId}/folders`);
       if (!res.ok) return;
       const data = await res.json();
       set({ folders: data.folders ?? [] });
@@ -150,7 +118,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (!res.ok) throw new Error('Invalid invite code');
       const data = await res.json();
       set((s) => ({
-        libraries: s.libraries.some((sv) => sv.id === data.library.id)
+        libraries: s.libraries.some((l) => l.id === data.library.id)
           ? s.libraries
           : [...s.libraries, data.library],
       }));
@@ -171,9 +139,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (!res.ok) throw new Error('Failed to update library');
       const data = await res.json();
       set((s) => ({
-        libraries: s.libraries.map((library) =>
-          library.id === libraryId ? { ...library, ...data.library } : library
-        ),
+        libraries: s.libraries.map((l) => l.id === libraryId ? { ...l, ...data.library } : l),
       }));
       return true;
     } catch (err) {
@@ -182,56 +148,34 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  createChannel: async (libraryId, name, type) => {
+  createChannel: async (libraryId, name, type = 'pdf') => {
     try {
       const res = await fetch(`/api/libraries/${libraryId}/channels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, type }),
       });
-      if (!res.ok) throw new Error('Failed to create channel');
+      if (!res.ok) throw new Error('Failed to create room');
       const data = await res.json();
-      set((s) => ({ channels: [...s.channels, data.channel] }));
-      return data.channel;
+      const channel = { ...data.channel, server_id: data.channel.library_id ?? data.channel.server_id };
+      set((s) => ({ channels: [...s.channels, channel] }));
+      return channel;
     } catch (err) {
       set({ error: String(err) });
       return null;
     }
   },
 
-  updateChannelPDF: async (channelId, pdf) => {
-    const libraryId = get().activeLibraryId;
-    if (!libraryId) return;
-    const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pdfDriveId: pdf.driveId, pdfName: pdf.name, pdfUrl: pdf.url }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.error('[workspace] updateChannelPDF PATCH failed:', res.status, err);
-    }
-    set((s) => ({
-      channels: s.channels.map((ch) =>
-        ch.id === channelId
-          ? { ...ch, pdf_drive_id: pdf.driveId, pdf_name: pdf.name, pdf_url: pdf.url }
-          : ch
-      ),
-    }));
-  },
-
-  updateChannel: async (libraryId, channelId, patch) => {
+  updateChannel: async (libraryId, roomId, patch) => {
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${roomId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      if (!res.ok) throw new Error('Failed to update channel');
+      if (!res.ok) throw new Error('Failed to update room');
       set((s) => ({
-        channels: s.channels.map((ch) =>
-          ch.id === channelId ? { ...ch, ...patch } : ch
-        ),
+        channels: s.channels.map((c) => c.id === roomId ? { ...c, ...patch } : c),
       }));
       return true;
     } catch (err) {
@@ -249,7 +193,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       });
       if (!res.ok) throw new Error('Failed to delete library');
       set((s) => ({
-        libraries: s.libraries.filter((sv) => sv.id !== libraryId),
+        libraries: s.libraries.filter((l) => l.id !== libraryId),
         activeLibraryId: s.activeLibraryId === libraryId ? null : s.activeLibraryId,
         channels: s.activeLibraryId === libraryId ? [] : s.channels,
       }));
@@ -260,15 +204,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  deleteChannel: async (libraryId, channelId) => {
+  deleteChannel: async (libraryId, roomId) => {
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${roomId}`, {
         method: 'DELETE',
       });
-      if (!res.ok) throw new Error('Failed to delete channel');
+      if (!res.ok) throw new Error('Failed to delete room');
       set((s) => ({
-        channels: s.channels.filter((ch) => ch.id !== channelId),
-        activeChannelId: s.activeChannelId === channelId ? null : s.activeChannelId,
+        channels: s.channels.filter((c) => c.id !== roomId),
+        activeChannelId: s.activeChannelId === roomId ? null : s.activeChannelId,
       }));
       return true;
     } catch (err) {
@@ -277,9 +221,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  createFolder: async (libraryId, channelId, name, parentId = null) => {
+  createFolder: async (libraryId, roomId, name, parentId = null) => {
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${roomId}/folders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, parentId }),
@@ -294,9 +238,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  deleteFolder: async (libraryId, channelId, folderId) => {
+  deleteFolder: async (libraryId, roomId, folderId) => {
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${roomId}/folders`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folderId }),

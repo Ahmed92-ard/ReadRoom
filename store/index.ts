@@ -1,7 +1,35 @@
-// store/index.ts — all Zustand stores
+// store/index.ts — Canonical Zustand stores.
+// Includes persisted state versioning to prevent stale-state crashes on deploy.
 
 import { create } from 'zustand';
 import type { UserMeta, PDFMeta, RoomState, ChatMessage, ConnectionStatus } from '@/types';
+
+// ── Store version — bump this when store shape changes to clear stale state ──
+const STORE_VERSION = 3;
+
+function checkStoreVersion() {
+  if (typeof window === 'undefined') return;
+  try {
+    const stored = parseInt(localStorage.getItem('readroom:store-version') ?? '0', 10);
+    if (stored < STORE_VERSION) {
+      // Clear all readroom localStorage keys to prevent stale state crashes
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('readroom:') || key?.startsWith('readroom_')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem('readroom:store-version', String(STORE_VERSION));
+    }
+  } catch { /* localStorage unavailable */ }
+}
+
+// Run version check once on module load
+if (typeof window !== 'undefined') {
+  checkStoreVersion();
+}
 
 // ── Room store ────────────────────────────────────────────────────────────────
 
@@ -38,8 +66,8 @@ interface PDFStore {
   setFollowMode: (follow: boolean, targetId?: string | null) => void;
   pageDimensions: Map<number, { width: number; height: number }>;
   setPageDimension: (page: number, dim: { width: number; height: number }) => void;
-  loadState: "idle" | "loading" | "ready" | "error";
-  setLoadState: (state: "idle" | "loading" | "ready" | "error") => void;
+  loadState: 'idle' | 'loading' | 'ready' | 'error';
+  setLoadState: (state: 'idle' | 'loading' | 'ready' | 'error') => void;
   visibleRange: { start: number; end: number };
   setVisibleRange: (range: { start: number; end: number }) => void;
   rotation: number;
@@ -59,11 +87,11 @@ export const usePDFStore = create<PDFStore>((set) => ({
   setSyncState: (state) => set(state),
   followMode: false,
   followTarget: null,
-  setFollowMode: (followMode, targetId = null) => set({ 
-    followMode, 
-    followTarget: followMode ? targetId : null 
+  setFollowMode: (followMode, targetId = null) => set({
+    followMode,
+    followTarget: followMode ? targetId : null,
   }),
-  loadState: "idle" as const,
+  loadState: 'idle',
   setLoadState: (loadState) => set({ loadState }),
   visibleRange: { start: 1, end: 3 },
   setVisibleRange: (visibleRange) => set({ visibleRange }),
@@ -103,7 +131,6 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
   addUser: (user) => set((s) => {
     const users = new Map(s.users);
     const existing = users.get(user.userId);
-    // Merge if existing, but protect userName from "Reader" fallback
     const userName = (user.userName === 'Reader' && existing?.userName && existing.userName !== 'Reader')
       ? existing.userName
       : user.userName;
@@ -112,14 +139,10 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
   }),
   setMembers: (members) => set((s) => {
     const users = new Map(s.users);
-    members.forEach(m => {
+    members.forEach((m) => {
       const existing = users.get(m.userId);
-      // Don't overwrite active users with offline member data
-      if (!existing) {
-        users.set(m.userId, m);
-      } else {
-        users.set(m.userId, { ...m, ...existing });
-      }
+      if (!existing) users.set(m.userId, m);
+      else users.set(m.userId, { ...m, ...existing });
     });
     return { users };
   }),
@@ -137,7 +160,6 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
         : (patch.userName ?? existing.userName);
       users.set(userId, { ...existing, ...patch, userName });
     } else if (patch.userName) {
-      // If we don't have them but the patch has a name, create them
       users.set(userId, patch as UserMeta);
     }
     return { users };
@@ -148,7 +170,7 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
 
 // ── UI store ──────────────────────────────────────────────────────────────────
 
-type ActivePanel = 'chat' | 'notes' | 'presence' | 'libraries' | 'channels' | 'shelf';
+export type ActivePanel = 'chat' | 'notes' | 'presence' | 'libraries' | 'channels' | 'shelf';
 
 function applyThemeToDOM(theme: 'dark' | 'light') {
   if (typeof window === 'undefined') return;
@@ -158,21 +180,18 @@ function applyThemeToDOM(theme: 'dark' | 'light') {
   html.style.colorScheme = theme;
   document.body.classList.remove('dark', 'light');
   document.body.classList.add(theme);
-  localStorage.setItem('theme', theme);
+  try { localStorage.setItem('theme', theme); } catch {}
 }
 
 interface UIStore {
-  sidebarOpen: boolean; // This corresponds to the right panel/sidebar in RoomShell
+  sidebarOpen: boolean;
   librarySidebarCollapsed: boolean;
   channelSidebarCollapsed: boolean;
   chatSidebarCollapsed: boolean;
   activePanel: ActivePanel;
   theme: 'dark' | 'light';
-  followMode: boolean;
-  
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  setFollowMode: (follow: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
   toggleLibrarySidebar: () => void;
@@ -187,8 +206,6 @@ interface UIStore {
 export const useUIStore = create<UIStore>((set) => ({
   settingsOpen: false,
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
-  followMode: false,
-  setFollowMode: (followMode) => set({ followMode }),
   sidebarOpen: true,
   librarySidebarCollapsed: true,
   channelSidebarCollapsed: true,
@@ -201,10 +218,7 @@ export const useUIStore = create<UIStore>((set) => ({
   toggleChannelSidebar: () => set((s) => ({ channelSidebarCollapsed: !s.channelSidebarCollapsed })),
   toggleChatSidebar: () => set((s) => ({ chatSidebarCollapsed: !s.chatSidebarCollapsed })),
   setActivePanel: (activePanel) => set({ activePanel }),
-  setTheme: (theme) => {
-    applyThemeToDOM(theme);
-    set({ theme });
-  },
+  setTheme: (theme) => { applyThemeToDOM(theme); set({ theme }); },
   toggleTheme: () => set((s) => {
     const next = s.theme === 'dark' ? 'light' : 'dark';
     applyThemeToDOM(next);
@@ -212,6 +226,6 @@ export const useUIStore = create<UIStore>((set) => ({
   }),
   toggleNavigation: () => set((s) => ({
     librarySidebarCollapsed: !s.librarySidebarCollapsed,
-    channelSidebarCollapsed: !s.librarySidebarCollapsed, // Use library state as source of truth for toggle
+    channelSidebarCollapsed: !s.librarySidebarCollapsed,
   })),
 }));

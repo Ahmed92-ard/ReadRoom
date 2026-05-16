@@ -1,37 +1,26 @@
-// app/api/libraries/[libraryId]/channels/route.ts
+// app/api/libraries/[libraryId]/channels/route.ts — Canonical. Uses rooms table.
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+type Params = { libraryId: string };
+
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ libraryId: string }> | { libraryId: string } }
+  { params }: { params: Promise<Params> | Params }
 ) {
-  const resolvedParams = await params;
-  const libraryId = resolvedParams.libraryId;
-  
+  const { libraryId } = await params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  console.log(`[api/channels] GET: Fetching channels for library ${libraryId}`);
-
-  // Verify membership
-  const { data: membership, error: memError } = await supabase
+  const { data: membership } = await supabase
     .from('library_members')
     .select('role')
     .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
-  if (memError) {
-    console.error('[api/channels] GET: Membership check failed:', memError);
-    return NextResponse.json({ error: memError.message }, { status: 500 });
-  }
-
-  if (!membership) {
-    console.warn(`[api/channels] GET: User ${user.id} is not a member of ${libraryId}`);
-    return NextResponse.json({ error: 'Not a member' }, { status: 403 });
-  }
+  if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const { data: channels, error } = await supabase
     .from('rooms')
@@ -39,49 +28,40 @@ export async function GET(
     .eq('library_id', libraryId)
     .order('position', { ascending: true });
 
-  if (error) {
-    console.error('[api/channels] GET: Channel fetch failed:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({
-    channels: (channels ?? []).map((room: any) => ({
-      ...room,
-      server_id: room.library_id,
-    })),
-  });
+  // Add server_id alias for frontend compat
+  const normalized = (channels ?? []).map((c) => ({ ...c, server_id: c.library_id }));
+  return NextResponse.json({ channels: normalized });
 }
 
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ libraryId: string }> | { libraryId: string } }
+  { params }: { params: Promise<Params> | Params }
 ) {
-  const resolvedParams = await params;
-  const libraryId = resolvedParams.libraryId;
-
+  const { libraryId } = await params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Must be owner or admin
-  const { data: membership, error: memError } = await supabase
+  const { data: membership } = await supabase
     .from('library_members')
     .select('role')
     .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
-  if (memError || !membership || !['owner', 'admin'].includes(membership.role)) {
-    console.warn('[api/channels] POST: Access denied or member check failed', { memError, membership });
+  if (!membership || !['owner', 'admin'].includes(membership.role)) {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { name, type = 'pdf', description } = body;
-  
-  if (!name?.trim()) return NextResponse.json({ error: 'Name required' }, { status: 400 });
+  const body = await req.json().catch(() => null);
+  const name = String(body?.name ?? '').trim();
+  const type = body?.type === 'text' ? 'text' : 'pdf';
+  const description = body?.description ? String(body.description).trim().slice(0, 256) : null;
 
-  // Get current max position
+  if (!name) return NextResponse.json({ error: 'Name required' }, { status: 400 });
+
   const { data: last } = await supabase
     .from('rooms')
     .select('position')
@@ -96,18 +76,14 @@ export async function POST(
     .from('rooms')
     .insert({
       library_id: libraryId,
-      name: name.trim().slice(0, 64).toLowerCase().replace(/\s+/g, '-'),
+      name: name.slice(0, 64).toLowerCase().replace(/\s+/g, '-'),
       type,
-      description: description?.trim().slice(0, 256) ?? null,
+      description,
       position,
     })
     .select()
     .single();
 
-  if (error) {
-    console.error('[api/channels] POST: Channel creation failed:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ channel: { ...channel, server_id: channel.library_id } });
 }

@@ -1,36 +1,29 @@
+// app/api/rooms/[id]/notes/route.ts — Canonical. Uses `notes` table.
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 const MAX_NOTE_LENGTH = 20_000;
-const NOTE_TABLES = ['notes', 'room_notes'];
-
-function isMissingTable(error: any) {
-  return error?.code === '42P01' || String(error?.message ?? '').includes('does not exist');
-}
 
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
+  const { id: roomId } = await params;
   const url = new URL(req.url);
-  const page = Number(url.searchParams.get('page') || '1');
-  const supabase = createClient();
+  const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
 
-  let data: any = null;
-  let error: any = null;
-  for (const table of NOTE_TABLES) {
-    const result = await supabase
-      .from(table)
-      .select('id, content, page, user_id, updated_at')
-      .eq('room_id', params.id)
-      .eq('page', page)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    data = result.data;
-    error = result.error;
-    if (!error || !isMissingTable(error)) break;
-  }
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { data, error } = await supabase
+    .from('notes')
+    .select('id, content, page, user_id, updated_at')
+    .eq('room_id', roomId)
+    .eq('page', page)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
     console.error('[api/notes] GET error:', error);
@@ -38,7 +31,7 @@ export async function GET(
   }
 
   return NextResponse.json({
-    roomId: params.id,
+    roomId,
     page,
     content: data?.content ?? '',
     noteId: data?.id ?? null,
@@ -49,42 +42,30 @@ export async function GET(
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
+  const { id: roomId } = await params;
   const body = await req.json().catch(() => ({}));
-  const roomId = params.id;
-  const page = Number(body.pageNum || 1);
+  const page = Math.max(1, Number(body.pageNum ?? 1));
   const content = String(body.content ?? '').trim();
-  const userId = String(body.userId ?? 'anonymous').slice(0, 128);
   const lastUpdatedAt = body.lastUpdatedAt ? String(body.lastUpdatedAt) : null;
-
-  if (!roomId || page < 1) {
-    return NextResponse.json({ error: 'Invalid room or page number.' }, { status: 400 });
-  }
 
   if (content.length > MAX_NOTE_LENGTH) {
     return NextResponse.json({ error: 'Note content is too long.' }, { status: 400 });
   }
 
   const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  let noteTable = 'notes';
-  let existing: any = null;
-  let fetchError: any = null;
-  for (const table of NOTE_TABLES) {
-    const result = await supabase
-      .from(table)
-      .select('id, content, updated_at')
-      .eq('room_id', roomId)
-      .eq('page', page)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    noteTable = table;
-    existing = result.data;
-    fetchError = result.error;
-    if (!fetchError || !isMissingTable(fetchError)) break;
-  }
+  const { data: existing, error: fetchError } = await supabase
+    .from('notes')
+    .select('id, content, updated_at')
+    .eq('room_id', roomId)
+    .eq('page', page)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (fetchError) {
     console.error('[api/notes] POST fetch error:', fetchError);
@@ -92,41 +73,33 @@ export async function POST(
   }
 
   if (existing) {
+    // Conflict detection: reject if server version is newer than client's last-known version
     if (lastUpdatedAt && new Date(existing.updated_at).getTime() > new Date(lastUpdatedAt).getTime()) {
-      return NextResponse.json(
-        {
-          conflict: true,
-          message: 'This note was updated from another session.',
-          libraryContent: existing.content,
-          libraryUpdatedAt: existing.updated_at,
-        },
-        { status: 409 }
-      );
+      return NextResponse.json({
+        conflict: true,
+        message: 'This note was updated from another session.',
+        libraryContent: existing.content,
+        libraryUpdatedAt: existing.updated_at,
+      }, { status: 409 });
     }
 
     const { data, error } = await supabase
-      .from(noteTable)
-      .update({ content, user_id: userId })
+      .from('notes')
+      .update({ content, user_id: user.id })
       .eq('id', existing.id)
       .select()
       .single();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ note: data });
   }
 
   const { data, error } = await supabase
-    .from(noteTable)
-    .insert({ room_id: roomId, page, content, user_id: userId })
+    .from('notes')
+    .insert({ room_id: roomId, page, content, user_id: user.id })
     .select()
     .single();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ note: data });
 }

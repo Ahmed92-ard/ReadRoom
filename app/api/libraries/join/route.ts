@@ -1,4 +1,4 @@
-// app/api/libraries/join/route.ts
+// app/api/libraries/join/route.ts — Canonical. Uses libraries + library_members.
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -7,18 +7,18 @@ export async function POST(req: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { inviteCode } = await req.json();
+  const body = await req.json().catch(() => null);
+  const inviteCode = String(body?.inviteCode ?? '').trim().toUpperCase();
   if (!inviteCode) return NextResponse.json({ error: 'Invite code required' }, { status: 400 });
 
   const { data: library, error } = await supabase
     .from('libraries')
     .select('*')
-    .eq('invite_code', inviteCode.trim().toUpperCase())
+    .eq('invite_code', inviteCode)
     .single();
 
   if (error || !library) return NextResponse.json({ error: 'Invalid invite code' }, { status: 404 });
 
-  // Check if already a member
   const { data: existing } = await supabase
     .from('library_members')
     .select('user_id')
