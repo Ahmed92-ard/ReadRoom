@@ -54,12 +54,17 @@ const nextConfig = {
         ],
       },
       {
+        // Global headers for all routes
         source: '/(.*)',
         headers: [
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          // Allow Google OAuth popup to communicate back
-          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
+          // 'unsafe-none' is required for Google Identity Services (GIS) popup auth.
+          // GIS polls popup.closed to detect when the user completes authorization.
+          // 'same-origin-allow-popups' blocks that window.closed read on cross-origin popups.
+          // Primary auth flow uses Supabase session provider_token (no popup needed),
+          // but the GIS fallback requires this header to be 'unsafe-none'.
+          { key: 'Cross-Origin-Opener-Policy', value: 'unsafe-none' },
         ],
       },
     ];

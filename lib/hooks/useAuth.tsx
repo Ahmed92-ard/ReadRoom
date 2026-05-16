@@ -1,7 +1,15 @@
 'use client';
 
 // useAuth.tsx — Centralized auth + profile management.
-// Exported as AuthProvider (context) + useAuth (hook).
+//
+// Drive token strategy:
+//   We request the Drive scope during the initial Supabase Google OAuth sign-in.
+//   Supabase returns the provider_token (Google access token) in the session.
+//   This eliminates the GIS popup entirely — no popup, no COOP issue.
+//
+//   Fallback: if provider_token is missing (e.g. user signed in before Drive
+//   scope was added), we fall back to the GIS token client with ux_mode implicit.
+//   The COOP header is set to 'unsafe-none' to allow the GIS popup to work.
 
 import {
   useState, useEffect, useCallback, useMemo, useRef,
@@ -28,12 +36,12 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-// ── Module-level Drive token state ────────────────────────────────────────────
-// Kept outside React so it survives re-renders and component remounts.
+// ── Module-level Drive token ──────────────────────────────────────────────────
+// Token value is mirrored into React state so components re-render when it changes.
 
 let _driveToken: string | null = null;
 let _driveTokenExpiresAt = 0;
-let _driveTokenClient: any = null;
+let _gisTokenClient: any = null;
 const _driveSubscribers = new Set<() => void>();
 
 function notifyDriveSubscribers() {
@@ -44,9 +52,13 @@ function avatarKey(userId: string) {
   return `readroom_avatar_url_${userId}`;
 }
 
+function driveTokenKey(userId: string) {
+  return `readroom_drive_token_${userId}`;
+}
+
 function readStoredDriveToken(userId: string) {
   try {
-    const raw = localStorage.getItem(`readroom_drive_token_${userId}`);
+    const raw = localStorage.getItem(driveTokenKey(userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (typeof parsed === 'string') return { token: parsed, expiresAt: 0 };
@@ -66,7 +78,7 @@ function storeDriveToken(userId: string, token: string, expiresIn?: number) {
     : 0;
   try {
     localStorage.setItem(
-      `readroom_drive_token_${userId}`,
+      driveTokenKey(userId),
       JSON.stringify({ token, expiresAt: _driveTokenExpiresAt })
     );
   } catch {}
@@ -77,8 +89,7 @@ function clearDriveToken(userId?: string) {
   _driveToken = null;
   _driveTokenExpiresAt = 0;
   try {
-    if (userId) localStorage.removeItem(`readroom_drive_token_${userId}`);
-    localStorage.removeItem('readroom_drive_token');
+    if (userId) localStorage.removeItem(driveTokenKey(userId));
   } catch {}
   notifyDriveSubscribers();
 }
@@ -90,12 +101,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [, forceRender] = useState(0);
+  // driveToken as React state so components re-render when it changes
+  const [driveToken, setDriveToken] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>('Reader');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const userRef = useRef<User | null>(null);
 
-  // ── Profile sync from DB ────────────────────────────────────────────────
+  // Keep module-level var in sync with state (for non-React callers like storeDriveToken)
+  // The subscriber pattern in the Drive token effect handles the reverse direction.
+
+  // ── Profile sync ──────────────────────────────────────────────────────────
   const syncProfileFromDB = useCallback(async (u: User) => {
     try {
       const { data: profile } = await supabase
@@ -121,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { name, url };
       }
     } catch {
-      // DB may not exist yet (schema not applied) — non-fatal
+      // DB may not exist yet — non-fatal
     }
     return null;
   }, [supabase]);
@@ -134,11 +149,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAvatarUrl(null);
       return;
     }
-
     setUser(u);
     userRef.current = u;
 
-    // Fast path: cached values while DB fetch is in-flight
     try {
       const cached = localStorage.getItem(`readroom_user_name_${u.id}`);
       const cachedAvatar = localStorage.getItem(avatarKey(u.id));
@@ -146,10 +159,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (cachedAvatar) setAvatarUrl(cachedAvatar);
     } catch {}
 
-    // Authoritative DB fetch
     const profile = await syncProfileFromDB(u);
 
-    // Bootstrap: if no DB profile yet, derive name from OAuth metadata
     if (!profile || profile.name === 'Reader') {
       const metaName =
         u.user_metadata?.full_name ||
@@ -160,7 +171,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (metaName !== 'Reader') {
         setUserName(metaName);
         try { localStorage.setItem(`readroom_user_name_${u.id}`, metaName); } catch {}
-        // Persist to DB in background — non-blocking
         fetch('/api/user/settings', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -170,6 +180,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [syncProfileFromDB]);
 
+  // ── Extract Drive token from Supabase session (primary method) ────────────
+  // When the user signs in with Google and we request the Drive scope,
+  // Supabase returns the Google access token as session.provider_token.
+  // This is the cleanest approach — no popup, no COOP issues.
+  const extractDriveTokenFromSession = useCallback((s: Session | null) => {
+    if (!s?.provider_token || !s.user?.id) return;
+
+    // provider_token is the Google access token
+    const token = s.provider_token;
+    const expiresAt = s.expires_at ? s.expires_at * 1000 : 0;
+    const expiresIn = expiresAt ? Math.max(0, (expiresAt - Date.now()) / 1000) : 3600;
+
+    console.log('[AuthProvider] Drive token extracted from Supabase session');
+    storeDriveToken(s.user.id, token, expiresIn);
+  }, []);
+
   // ── Session initialization ────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -178,7 +204,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!mounted) return;
       if (error) console.warn('[AuthProvider] getSession error:', error.message);
 
-      // Refresh if close to expiry
       let activeSession = s;
       if (s?.expires_at) {
         const expiresAt = s.expires_at * 1000;
@@ -189,10 +214,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       setSession(activeSession);
+      extractDriveTokenFromSession(activeSession);
       await updateIdentity(activeSession?.user ?? null);
       if (mounted) setLoading(false);
     }).catch(() => {
-      // getSession itself failed (network error, etc.) — don't hang forever
       if (mounted) setLoading(false);
     });
 
@@ -200,6 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async (event, s) => {
         if (!mounted) return;
         setSession(s);
+        extractDriveTokenFromSession(s);
         await updateIdentity(s?.user ?? null);
         setLoading(false);
       }
@@ -209,10 +235,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [supabase, updateIdentity]);
+  }, [supabase, updateIdentity, extractDriveTokenFromSession]);
 
-  // ── Supabase Realtime: profile changes from other sessions ────────────────
-  // RULE: ALL .on() handlers MUST be attached BEFORE .subscribe()
+  // ── Supabase Realtime: profile changes ────────────────────────────────────
   useEffect(() => {
     if (!user?.id) return;
 
@@ -236,61 +261,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       )
-      .subscribe(); // ← subscribe AFTER .on()
+      .subscribe(); // .on() before .subscribe() — correct order
 
     return () => { supabase.removeChannel(channel); };
   }, [supabase, user?.id]);
 
-  // ── Drive token: load from storage + subscribe to changes ────────────────
+  // ── Drive token: load from storage + subscribe to module-level changes ──────
   useEffect(() => {
     if (!user?.id) return;
 
-    const rerender = () => forceRender((n) => n + 1);
-    _driveSubscribers.add(rerender);
+    // Subscribe: when module-level token changes (GIS callback, session extract),
+    // mirror it into React state so components re-render.
+    const sync = () => setDriveToken(_driveToken);
+    _driveSubscribers.add(sync);
 
-    const stored = readStoredDriveToken(user.id);
-    if (stored?.token) {
-      if (!stored.expiresAt || stored.expiresAt > Date.now()) {
-        _driveToken = stored.token;
-        _driveTokenExpiresAt = stored.expiresAt;
-        notifyDriveSubscribers();
-      } else {
-        // Token expired — clear it; user will need to re-authorize
-        clearDriveToken(user.id);
+    // Load cached token if not already set from session
+    if (!_driveToken) {
+      const stored = readStoredDriveToken(user.id);
+      if (stored?.token) {
+        if (!stored.expiresAt || stored.expiresAt > Date.now()) {
+          _driveToken = stored.token;
+          _driveTokenExpiresAt = stored.expiresAt;
+          setDriveToken(stored.token);
+        } else {
+          clearDriveToken(user.id);
+        }
       }
     } else {
-      _driveToken = null;
-      _driveTokenExpiresAt = 0;
-      notifyDriveSubscribers();
+      // Already set (e.g. from session) — sync into state
+      setDriveToken(_driveToken);
     }
 
-    return () => { _driveSubscribers.delete(rerender); };
+    return () => { _driveSubscribers.delete(sync); };
   }, [user?.id]);
 
-  // ── Google Identity Services: Drive token client ──────────────────────────
-  // Uses the implicit token flow (no popup — opens a consent page in the same tab
-  // or a small overlay). This avoids the Cross-Origin-Opener-Policy popup issue.
+  // ── GIS fallback: initialize token client for re-authorization ───────────
+  // Only used when the session doesn't have a provider_token (e.g. user signed
+  // in before Drive scope was added to the OAuth flow).
+  // The COOP header is set to 'unsafe-none' in next.config.mjs to allow this.
   useEffect(() => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     if (!clientId || typeof window === 'undefined') return;
 
-    const initDriveClient = () => {
-      // Don't re-initialize if already set up
-      if (_driveTokenClient) return;
+    const initGisClient = () => {
+      if (_gisTokenClient) return;
       if (!window.google?.accounts?.oauth2) return;
 
-      _driveTokenClient = window.google.accounts.oauth2.initTokenClient({
+      _gisTokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: 'https://www.googleapis.com/auth/drive.readonly',
-        // Use 'none' prompt for silent refresh when we already have a token;
-        // the caller passes 'consent' for first-time authorization.
         callback: (response: any) => {
-          const currentUser = userRef.current;
           if (response.error) {
-            console.warn('[AuthProvider] Drive token error:', response.error, response.error_description);
+            console.warn('[AuthProvider] GIS Drive token error:', response.error);
             return;
           }
+          const currentUser = userRef.current;
           if (response.access_token && currentUser?.id) {
+            console.log('[AuthProvider] GIS Drive token obtained');
             storeDriveToken(
               currentUser.id,
               response.access_token,
@@ -299,41 +326,102 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         },
         error_callback: (err: any) => {
-          console.warn('[AuthProvider] Drive token client error:', err);
+          console.warn('[AuthProvider] GIS token client error:', err);
         },
       });
     };
 
     if (window.google?.accounts?.oauth2) {
-      initDriveClient();
+      initGisClient();
     } else {
-      // Load GSI script if not already present
       const existing = document.querySelector(
         'script[src="https://accounts.google.com/gsi/client"]'
       );
       if (existing) {
-        existing.addEventListener('load', initDriveClient, { once: true });
+        existing.addEventListener('load', initGisClient, { once: true });
       } else {
         const script = document.createElement('script');
         script.src = 'https://accounts.google.com/gsi/client';
         script.async = true;
         script.defer = true;
-        script.onload = initDriveClient;
+        script.onload = initGisClient;
         document.head.appendChild(script);
       }
     }
-  }, []); // run once on mount
+  }, []);
 
-  // ── Auto-refresh Drive token before expiry ────────────────────────────────
-  useEffect(() => {
-    if (!_driveToken || !_driveTokenExpiresAt) return;
-    const delay = Math.max(10_000, _driveTokenExpiresAt - Date.now() - 60_000);
-    const timer = window.setTimeout(() => {
-      // Silent refresh — no consent prompt
-      _driveTokenClient?.requestAccessToken({ prompt: '' });
-    }, delay);
-    return () => window.clearTimeout(timer);
-  });
+  // ── Auth actions ──────────────────────────────────────────────────────────
+
+  const signInWithGoogle = useCallback(async () => {
+    const redirectTo = `${window.location.origin}/auth/callback`;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'select_account consent', // 'consent' ensures Drive scope is granted
+          // Request Drive scope alongside the default profile/email scopes.
+          // Supabase will include this in the OAuth request to Google.
+          scope: [
+            'openid',
+            'email',
+            'profile',
+            'https://www.googleapis.com/auth/drive.readonly',
+          ].join(' '),
+        },
+      },
+    });
+    if (error) {
+      console.error('[AuthProvider] signInWithOAuth error:', error.message);
+      return;
+    }
+    if (data?.url) window.location.assign(data.url);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const signOut = useCallback(async () => {
+    _gisTokenClient = null;
+    clearDriveToken(userRef.current?.id);
+    await supabase.auth.signOut().catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // requestDriveAccess: tries session token first, falls back to GIS popup
+  const requestDriveAccess = useCallback(() => {
+    // If we already have a valid token, nothing to do
+    if (_driveToken && (!_driveTokenExpiresAt || _driveTokenExpiresAt > Date.now())) {
+      notifyDriveSubscribers();
+      return;
+    }
+
+    // Try to get token from current session first (no popup needed)
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (s?.provider_token && userRef.current?.id) {
+        const expiresIn = s.expires_at
+          ? Math.max(0, s.expires_at - Date.now() / 1000)
+          : 3600;
+        storeDriveToken(userRef.current.id, s.provider_token, expiresIn);
+        return;
+      }
+
+      // Session doesn't have provider_token — fall back to GIS popup.
+      // This requires the user to re-authorize with Drive scope.
+      // The COOP header must be 'unsafe-none' for this to work.
+      if (_gisTokenClient) {
+        console.log('[AuthProvider] Requesting Drive access via GIS popup');
+        _gisTokenClient.requestAccessToken({ prompt: 'consent' });
+      } else {
+        // GIS not loaded yet — trigger a full re-sign-in with Drive scope
+        console.log('[AuthProvider] GIS not ready, triggering full re-sign-in');
+        signInWithGoogle();
+      }
+    }).catch(() => {
+      if (_gisTokenClient) {
+        _gisTokenClient.requestAccessToken({ prompt: 'consent' });
+      }
+    });
+  }, [supabase, signInWithGoogle]);
 
   // ── Profile update helpers ────────────────────────────────────────────────
 
@@ -352,10 +440,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUserName(trimmed);
       try {
         localStorage.setItem(`readroom_user_name_${uid}`, trimmed);
-        localStorage.setItem('readroom_user_name', trimmed); // cross-tab sync
+        localStorage.setItem('readroom_user_name', trimmed);
       } catch {}
 
-      // Broadcast via socket
       const { getSocket } = await import('@/lib/socket/client');
       const { usePresenceStore } = await import('@/store/presenceStore');
       const { stringToColor, makeInitials } = await import('@/lib/utils/avatar');
@@ -423,42 +510,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // ── Auth actions ──────────────────────────────────────────────────────────
-
-  const signInWithGoogle = useCallback(async () => {
-    const redirectTo = `${window.location.origin}/auth/callback`;
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo,
-        queryParams: { access_type: 'offline', prompt: 'select_account' },
-      },
-    });
-    if (error) {
-      console.error('[AuthProvider] signInWithOAuth error:', error.message);
-      return;
-    }
-    if (data?.url) window.location.assign(data.url);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const signOut = useCallback(async () => {
-    _driveTokenClient = null;
-    clearDriveToken(userRef.current?.id);
-    await supabase.auth.signOut().catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const requestDriveAccess = useCallback(() => {
-    if (!_driveTokenClient) {
-      console.warn('[AuthProvider] Drive token client not ready yet');
-      return;
-    }
-    // Use 'consent' for first-time auth, '' for silent refresh
-    const prompt = _driveToken ? '' : 'consent';
-    _driveTokenClient.requestAccessToken({ prompt });
-  }, []);
-
   // ── Context value ─────────────────────────────────────────────────────────
 
   const value = useMemo<AuthState>(() => ({
@@ -469,12 +520,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     signInWithGoogle,
     signOut,
-    driveToken: _driveToken,
+    driveToken,          // ← React state, not module-level var
     requestDriveAccess,
     updateDisplayName,
     updateAvatarUrl,
   }), [
-    user, session, userName, avatarUrl, loading,
+    user, session, userName, avatarUrl, loading, driveToken,
     signInWithGoogle, signOut, requestDriveAccess,
     updateDisplayName, updateAvatarUrl,
   ]);
