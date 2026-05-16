@@ -772,9 +772,15 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
         {messages.map((msg, index) => {
           const prev = messages[index - 1];
+          const next = messages[index + 1];
           const sameUser = prev?.userId === msg.userId;
           const closeTime = prev ? msg.ts - prev.ts < 2 * 60 * 1000 : false;
           const grouped = sameUser && closeTime && formatDay(prev.ts) === formatDay(msg.ts);
+
+          const sameUserNext = next?.userId === msg.userId;
+          const closeTimeNext = next ? next.ts - msg.ts < 2 * 60 * 1000 : false;
+          const nextGrouped = sameUserNext && closeTimeNext && formatDay(next.ts) === formatDay(msg.ts);
+
           const showDay = !prev || formatDay(prev.ts) !== formatDay(msg.ts);
           const isSelf = Boolean(self?.userId && msg.userId.startsWith(self.userId.split('_')[0]));
           const displayName = isSelf ? self?.userName ?? msg.userName : msg.userName;
@@ -783,6 +789,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const selfBaseId = self?.userId.split('_')[0];
           const read = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && r.readAt);
           const delivered = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && (r.deliveredAt || r.readAt));
+
+          // Border radius logic for connected bubbles
+          const bubbleRadius = isSelf
+            ? `${grouped ? 'rounded-tr-sm' : 'rounded-tr-xl'} ${nextGrouped ? 'rounded-br-sm' : 'rounded-br-xl'} rounded-l-xl`
+            : `${grouped ? 'rounded-tl-sm' : 'rounded-tl-xl'} ${nextGrouped ? 'rounded-bl-sm' : 'rounded-bl-xl'} rounded-r-xl`;
 
           return (
             <React.Fragment key={msg.id}>
@@ -801,15 +812,21 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 }}
                 onTouchMove={cancelLongPress}
                 onTouchEnd={cancelLongPress}
-                className={`group flex gap-2.5 rounded-lg px-1.5 py-1 outline-none transition ${grouped ? 'mt-0.5' : 'mt-3'} ${isSelf ? 'flex-row-reverse' : ''}`}
+                className={`group flex gap-x-2 px-1 outline-none transition ${grouped ? 'mt-[1.5px] py-0' : 'mt-2.5 py-0.5'} ${isSelf ? 'flex-row-reverse' : ''}`}
               >
-                {!grouped ? (
-                  <div className="mt-0.5 h-7 w-7 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-room-border" style={avatar?.avatarUrl ? {} : { backgroundColor: avatar?.avatarColor ?? msg.avatarColor }}>
-                    {avatar?.avatarUrl || msg.avatarUrl ? <img src={avatar?.avatarUrl ?? msg.avatarUrl ?? ''} alt={displayName} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[11px] font-semibold text-white">{avatar?.avatarInitials ?? '?'}</div>}
-                  </div>
-                ) : <div className="h-7 w-7 flex-shrink-0" />}
+                <div className="flex w-8 flex-shrink-0 flex-col items-center">
+                  {!grouped ? (
+                    <div className="mt-0.5 h-8 w-8 overflow-hidden rounded-full ring-1 ring-room-border" style={avatar?.avatarUrl ? {} : { backgroundColor: avatar?.avatarColor ?? msg.avatarColor }}>
+                      {avatar?.avatarUrl || msg.avatarUrl ? <img src={avatar?.avatarUrl ?? msg.avatarUrl ?? ''} alt={displayName} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[11px] font-semibold text-white">{avatar?.avatarInitials ?? '?'}</div>}
+                    </div>
+                  ) : (
+                    <div className="invisible flex h-full items-center justify-center text-[9px] text-room-muted/60 group-hover:visible">
+                      {new Date(msg.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: false })}
+                    </div>
+                  )}
+                </div>
 
-                <div className={`min-w-0 max-w-[86%] ${isSelf ? 'items-end' : 'items-start'} flex flex-col`}>
+                <div className={`min-w-0 max-w-[85%] ${isSelf ? 'items-end' : 'items-start'} flex flex-col`}>
                   {!grouped && (
                     <div className={`mb-0.5 flex items-baseline gap-2 ${isSelf ? 'flex-row-reverse' : ''}`}>
                       <span className="truncate text-sm font-semibold text-room-text">{isSelf ? 'You' : displayName}</span>
@@ -817,42 +834,39 @@ export function Chat({ roomId, onClose }: ChatProps) {
                     </div>
                   )}
                   <div className={`relative flex items-start gap-1 ${isSelf ? 'flex-row-reverse' : ''}`}>
-                    <div className={`rounded-lg border px-2.5 py-1.5 text-sm leading-relaxed shadow-sm ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
+                    <div className={`border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
                       {msg.replyTo && (
-                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1.5 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-1 text-left">
-                          <span className="block truncate text-[11px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
-                          <span className="line-clamp-2 text-xs text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
+                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-0.5 text-left">
+                          <span className="block truncate text-[10px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
+                          <span className="line-clamp-2 text-[11px] text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
                         </button>
                       )}
                       {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
                       {renderAttachment(msg)}
-                      <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-room-muted">
+                      <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-room-muted">
                         {msg.editedAt && <span>edited</span>}
-                        {grouped && <span>{formatTime(msg.ts)}</span>}
-                        {isSelf && (read ? <CheckCheck size={13} className="text-blue-300" /> : delivered ? <CheckCheck size={13} /> : <Check size={13} />)}
+                        {isSelf && (read ? <CheckCheck size={11} className="text-blue-300" /> : delivered ? <CheckCheck size={11} /> : <Check size={11} />)}
                       </div>
                     </div>
 
-                    {canUseAdvancedApi && (
-                      <div className="relative flex shrink-0 items-center gap-0.5 pt-0.5">
-                        <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Reply">
-                          <Reply size={13} />
-                        </button>
-                        <button
-                          onClick={(e) => openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect())}
-                          className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text"
-                          aria-label="Message actions"
-                        >
-                          <MoreVertical size={13} />
-                        </button>
-                      </div>
-                    )}
+                    <div className="invisible relative flex shrink-0 items-center gap-0.5 pt-0.5 group-hover:visible">
+                      <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text" aria-label="Reply">
+                        <Reply size={12} />
+                      </button>
+                      <button
+                        onClick={(e) => openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect())}
+                        className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text"
+                        aria-label="Message actions"
+                      >
+                        <MoreVertical size={12} />
+                      </button>
                     </div>
+                  </div>
 
                   {reactionGroups(msg.reactions).length > 0 && (
                     <div className={`mt-0.5 flex flex-wrap gap-1 ${isSelf ? 'justify-end' : 'justify-start'}`}>
                       {reactionGroups(msg.reactions).map(([emoji, items]) => (
-                        <button key={emoji} onClick={() => toggleReaction(msg, emoji)} className="rounded-full border border-room-border bg-room-bg px-2 py-0.5 text-xs text-room-text">{emoji} {items.length}</button>
+                        <button key={emoji} onClick={() => toggleReaction(msg, emoji)} className="rounded-full border border-room-border bg-room-bg px-1.5 py-0.5 text-[10px] text-room-text">{emoji} {items.length}</button>
                       ))}
                     </div>
                   )}
