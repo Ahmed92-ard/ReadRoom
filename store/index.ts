@@ -185,9 +185,9 @@ interface UIStore {
 export const useUIStore = create<UIStore>((set) => ({
   followMode: false,
   setFollowMode: (followMode) => set({ followMode }),
-  sidebarOpen: false,
-  librarySidebarCollapsed: false,
-  channelSidebarCollapsed: false,
+  sidebarOpen: true,
+  librarySidebarCollapsed: true,
+  channelSidebarCollapsed: true,
   chatSidebarCollapsed: false,
   activePanel: 'presence',
   theme: 'dark',

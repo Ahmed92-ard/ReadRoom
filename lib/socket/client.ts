@@ -35,3 +35,27 @@ export function disconnectSocket(): void {
   socket = null;
 }
 
+// ── Mobile background reconnect ───────────────────────────────────────────────
+// Mobile browsers suspend JS/WebSocket connections when the app is backgrounded.
+// Socket.IO's built-in reconnect only fires after a TCP-level timeout, which can
+// take minutes. Instead, actively reconnect as soon as the page regains visibility.
+if (typeof window !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      const s = getSocket();
+      if (!s.connected) {
+        console.log('[socket] page became visible — reconnecting socket');
+        s.connect();
+      }
+    }
+  });
+
+  window.addEventListener('focus', () => {
+    const s = getSocket();
+    if (!s.connected) {
+      console.log('[socket] window focused — reconnecting socket');
+      s.connect();
+    }
+  });
+}
+

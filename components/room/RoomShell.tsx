@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Menu, X, MessageSquare, LayoutDashboard, FileText, FolderOpen, LayoutGrid, Pencil, Trash2 } from 'lucide-react';
+import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, Trash2, GripVertical } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
 import { useRoomStore } from '@/store/roomStore';
@@ -227,18 +227,69 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const touchStartY = useRef<number | null>(null);
   const isMobile = useIsMobile();
   const mainContainerRef = useRef<HTMLDivElement>(null);
+
+  // ── Resizable right sidebar ─────────────────────────────────────────────────
+  const SIDEBAR_MIN = 200;
+  const SIDEBAR_MAX = 520;
+  const SIDEBAR_DEFAULT = 256;
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return SIDEBAR_DEFAULT;
+    const stored = parseInt(localStorage.getItem('readroom:sidebar-width') ?? '', 10);
+    return isNaN(stored) ? SIDEBAR_DEFAULT : Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, stored));
+  });
+  const isResizingRef = useRef(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(0);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = sidebarWidth;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+
+    let currentWidth = sidebarWidth;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const delta = resizeStartXRef.current - ev.clientX;
+      currentWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, resizeStartWidthRef.current + delta));
+      setSidebarWidth(currentWidth);
+    };
+    const onMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try { localStorage.setItem('readroom:sidebar-width', String(currentWidth)); } catch {}
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [sidebarWidth]);
+
+  // Persist width on change (debounced via ref)
+  const widthPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (widthPersistTimer.current) clearTimeout(widthPersistTimer.current);
+    widthPersistTimer.current = setTimeout(() => {
+      try { localStorage.setItem('readroom:sidebar-width', String(sidebarWidth)); } catch {}
+    }, 300);
+    return () => { if (widthPersistTimer.current) clearTimeout(widthPersistTimer.current); };
+  }, [sidebarWidth]);
   const desktopTabs = [
-    { id: 'shelf' as const,    Icon: FolderOpen,        label: 'Shelf' },
-    { id: 'notes' as const,    Icon: FileText,          label: 'Notes' },
-    { id: 'presence' as const, Icon: LayoutDashboard,   label: 'Workspace' },
+    { id: 'shelf' as const,    Icon: FolderOpen, label: 'Shelf' },
+    { id: 'notes' as const,    Icon: FileText,   label: 'Notes' },
+    { id: 'presence' as const, Icon: Users,      label: 'People' },
   ];
 
   const mobileTabs = [
-    { id: 'libraries' as const,  Icon: LayoutGrid,      label: 'Libraries' },
-    { id: 'channels' as const,   Icon: Menu,            label: 'Rooms' },
-    { id: 'shelf' as const,      Icon: FolderOpen,      label: 'Shelf' },
-    { id: 'notes' as const,      Icon: FileText,        label: 'Notes' },
-    { id: 'presence' as const,   Icon: LayoutDashboard, label: 'Workspace' },
+    { id: 'libraries' as const, Icon: LayoutGrid, label: 'Libraries' },
+    { id: 'channels' as const,  Icon: Menu,       label: 'Rooms' },
+    { id: 'shelf' as const,     Icon: FolderOpen, label: 'Shelf' },
+    { id: 'notes' as const,     Icon: FileText,   label: 'Notes' },
+    { id: 'presence' as const,  Icon: Users,      label: 'People' },
   ];
 
   const activeTabs = isMobile ? mobileTabs : desktopTabs;
@@ -315,14 +366,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     }
   }, [isMobile, activePanel, setActivePanel]);
 
-  // First-visit: open Libraries tab so new users discover the workspace
+  // First-visit: open Library + Channel sidebars so new users can find their content.
+  // Existing users default to Chat + People (right panel) only — library sidebar stays closed.
   useEffect(() => {
     try {
       const visited = localStorage.getItem('readroom:visited');
       if (!visited) {
         localStorage.setItem('readroom:visited', '1');
-        setSidebarOpen(true);
-        setActivePanel('libraries');
+        // Open the left navigation sidebars for brand-new users
+        useUIStore.getState().toggleNavigation();
       }
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1201,7 +1253,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                   active={sidebarOpen} 
                   onClick={() => setSidebarOpen(!sidebarOpen)} 
                   title="Workspace"
-                  icon={<LayoutDashboard size={16} />}
+                  icon={<Layers size={16} />}
                 />
                 <SidebarToggle 
                   active={!chatSidebarCollapsed} 
@@ -1308,7 +1360,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         <>
           <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} />
           {sidebarOpen && (
-            <aside className="flex-none w-60 xl:w-72 border-l border-room-border bg-room-surface flex flex-col">
+            <aside
+              className="flex-none border-l border-room-border bg-room-surface flex flex-col relative"
+              style={{ width: sidebarWidth }}
+            >
+              {/* Drag-to-resize handle on left edge */}
+              <div
+                className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize z-10 group flex items-center justify-center hover:bg-blue-500/20 transition-colors"
+                onMouseDown={handleResizeMouseDown}
+                title="Drag to resize"
+              >
+                <GripVertical
+                  size={12}
+                  className="text-room-border group-hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+                />
+              </div>
               {RightSidebarContent}
             </aside>
           )}

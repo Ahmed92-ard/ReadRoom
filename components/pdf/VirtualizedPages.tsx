@@ -327,16 +327,27 @@ export function VirtualizedPages({
       suppressScrollPageUntil.current = Date.now() + 450;
     }
 
-    // Set guard BEFORE scrollTo so the resulting scroll event is ignored
+    // Set guard BEFORE scrollTo so the resulting scroll event is ignored.
+    // Follow mode uses 'auto' (instant) — smooth scroll fires many intermediate
+    // scroll events that would trigger handleScroll before the guard expires,
+    // causing a feedback loop that resets the follower to page 1.
     isProgrammaticScrollRef.current = true;
-    container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+    container.scrollTo({ top: targetScrollTop, behavior: followMode ? 'auto' : 'smooth' });
 
-    // Reset guard after the scroll event has had time to fire
-    requestAnimationFrame(() => {
+    // Reset guard after scroll events have had time to fire.
+    // For follow mode (instant scroll) 2 rAFs is sufficient.
+    // For smooth scroll we use a longer timeout to cover the animation duration.
+    if (followMode) {
       requestAnimationFrame(() => {
-        isProgrammaticScrollRef.current = false;
+        requestAnimationFrame(() => {
+          isProgrammaticScrollRef.current = false;
+        });
       });
-    });
+    } else {
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 400);
+    }
 
     setVisibleStart(boundedPage);
     setVisibleEnd(boundedPage);
