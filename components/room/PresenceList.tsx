@@ -30,10 +30,20 @@ export function PresenceList({ roomId }: PresenceListProps) {
     // Update local state immediately
     updateSelf({ avatarUrl: url });
     // Persist so it survives page reloads
-    try { localStorage.setItem('readroom:avatar-url', url); } catch {}
-    // Broadcast to all connected clients in the room
     const currentSelf = usePresenceStore.getState().self;
+    const baseUserId = currentSelf?.userId.split('_')[0];
+    try {
+      if (baseUserId) localStorage.setItem(`readroom_avatar_url_${baseUserId}`, url);
+    } catch {}
+    // Broadcast to all connected clients in the room
     if (currentSelf && roomId) {
+      getSocket().emit('profile:updated', {
+        userId: currentSelf.userId,
+        userName: currentSelf.userName,
+        avatarUrl: url,
+        avatarColor: currentSelf.avatarColor,
+        avatarInitials: currentSelf.avatarInitials,
+      });
       getSocket().emit('presence:update', {
         roomId,
         user: { ...currentSelf, avatarUrl: url },

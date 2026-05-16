@@ -1,13 +1,18 @@
 'use client';
 
+// usePresence.ts — Manages real-time presence for a room.
+// Profile data (name, avatar) is sourced from Supabase `users` table (canonical).
+// The `profile:updated` socket event propagates profile changes to all connected users.
+
 import { useEffect, useRef } from 'react';
 import { getSocket } from '@/lib/socket/client';
+import { createClient } from '@/lib/supabase/client';
 import { usePresenceStore } from '@/store/presenceStore';
 import { usePDFStore } from '@/store/pdfStore';
+import { stringToColor, makeInitials } from '@/lib/utils/avatar';
 import type { UserMeta } from '@/types';
 
 // Generate a stable per-tab ID (survives re-renders, not re-mounts)
-// This is critical to allow multiple tabs of the same user to sync with each other.
 function makeTabId(userId: string) {
   const key = '__readroom_tab_id__';
   if (typeof sessionStorage === 'undefined') return userId;
@@ -17,16 +22,6 @@ function makeTabId(userId: string) {
     sessionStorage.setItem(key, tabId);
   }
   return tabId;
-}
-
-function makeInitials(name: string) {
-  const initials = name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('');
-  return initials || (name === 'Reader' ? 'RD' : name.slice(0, 2).toUpperCase() || 'RD');
 }
 
 export function usePresence(
@@ -39,55 +34,102 @@ export function usePresence(
 ) {
   const { setSelf, updateSelf, addUser, updateUser, setMembers, setConnectionStatus } = usePresenceStore();
   const tabId = useRef(makeTabId(userId)).current;
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  if (!supabaseRef.current) supabaseRef.current = createClient();
   const activePdfIdRef = useRef(activePdfId);
   const activePdfNameRef = useRef(activePdfName);
+  const userNameRef = useRef(userName);
 
   activePdfIdRef.current = activePdfId;
   activePdfNameRef.current = activePdfName;
+  userNameRef.current = userName;
 
-  // Fetch all library members on mount to show offline users
+  // ── Fetch all library members from Supabase (offline users) ──────────────
   useEffect(() => {
     if (!libraryId) return;
 
     fetch(`/api/libraries/${libraryId}/members`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.members) {
-          const members: UserMeta[] = data.members.map((m: any) => ({
-            userId: m.user_id, // Note: real-time uses tabId, persistent uses user_id. We'll merge them.
-            userName: m.users.display_name || m.users.email?.split('@')[0] || 'Reader',
-            avatarColor: stringToColor(m.user_id),
-            avatarInitials: makeInitials(m.users.display_name || m.users.email || 'Reader'),
-            avatarUrl: m.users.avatar_url,
-            joinedAt: new Date(m.joined_at).getTime(),
-            isFollowing: false,
-            page: 1,
-            scroll: 0,
-            zoom: 1,
-            activePdfId: null,
-            activePdfName: null,
-            isActive: false, // Default to offline until presence list arrives
-            lastSeen: Date.now(), // Fallback
-          }));
-          setMembers(members);
-        }
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.members) return;
+        const members: UserMeta[] = data.members.map((m: any) => ({
+          userId: m.user_id,
+          userName: m.users?.display_name || m.users?.email?.split('@')[0] || 'Reader',
+          avatarColor: stringToColor(m.user_id),
+          avatarInitials: makeInitials(m.users?.display_name || m.users?.email || 'Reader'),
+          avatarUrl: m.users?.avatar_url ?? null,
+          joinedAt: new Date(m.joined_at).getTime(),
+          isFollowing: false,
+          page: 1,
+          scroll: 0,
+          zoom: 1,
+          activePdfId: null,
+          activePdfName: null,
+          isActive: false,
+          lastSeen: Date.now(),
+        }));
+        setMembers(members);
       })
-      .catch(err => console.error('[presence] failed to fetch members', err));
+      .catch((err) => console.error('[presence] failed to fetch members:', err));
   }, [libraryId, setMembers]);
 
-  // Initial join
+  // ── Supabase Realtime profile updates (settings page / other devices) ───
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!supabase) return;
+    const channel = supabase
+      .channel(`profiles:room:${roomId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'users',
+      }, (payload) => {
+        const updated = payload.new as any;
+        const updatedUserId = updated?.id as string | undefined;
+        if (!updatedUserId) return;
+
+        const userName = updated.display_name || updated.email?.split('@')[0] || 'Reader';
+        const patch = {
+          userName,
+          avatarUrl: updated.avatar_url ?? null,
+          avatarColor: stringToColor(updatedUserId),
+          avatarInitials: makeInitials(userName),
+        };
+
+        const store = usePresenceStore.getState();
+        if (store.self?.userId.split('_')[0] === updatedUserId) {
+          updateSelf(patch);
+          try {
+            if (updated.avatar_url) localStorage.setItem(`readroom_avatar_url_${updatedUserId}`, updated.avatar_url);
+            else localStorage.removeItem(`readroom_avatar_url_${updatedUserId}`);
+          } catch {}
+        }
+
+        store.users.forEach((u, uid) => {
+          if (u.userId.split('_')[0] === updatedUserId) {
+            updateUser(uid, patch);
+          }
+        });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [roomId, updateSelf, updateUser]);
+
+  // ── Join room and subscribe to socket events ──────────────────────────────
   useEffect(() => {
     const socket = getSocket();
     if (!socket.connected) socket.connect();
 
     const buildSelf = (): UserMeta => {
+      // Fast-path avatar cache is per user to avoid cross-account stale avatars.
       let avatarUrl: string | null = null;
-      try { avatarUrl = localStorage.getItem('readroom:avatar-url'); } catch {}
+      try { avatarUrl = localStorage.getItem(`readroom_avatar_url_${userId}`); } catch {}
       return {
         userId: tabId,
-        userName,
+        userName: userNameRef.current,
         avatarColor: stringToColor(tabId),
-        avatarInitials: makeInitials(userName),
+        avatarInitials: makeInitials(userNameRef.current),
         avatarUrl,
         joinedAt: Date.now(),
         isFollowing: false,
@@ -101,54 +143,30 @@ export function usePresence(
       };
     };
 
-    const self = buildSelf();
-    setSelf(self);
-
     const joinRoom = () => {
       const currentSelf = buildSelf();
       setSelf(currentSelf);
-      console.log('[presence] joining room', roomId);
       socket.emit('room:join', { roomId, user: currentSelf });
       setConnectionStatus('connected');
     };
 
-    if (socket.connected) {
-      joinRoom();
-    }
+    if (socket.connected) joinRoom();
 
     const pingInterval = setInterval(() => {
       socket.emit('presence:ping', { roomId, userId: tabId });
     }, 15_000);
 
+    // ── Presence event handlers ───────────────────────────────────────────
+
     const handlePresenceList = (users: UserMeta[]) => {
       users.forEach((user) => {
-        if (user.userId !== tabId) {
-          addUser({ ...user, isActive: true });
-          // Remove from offline cache if they're now active
-          try {
-            const stored = localStorage.getItem(`presence:offline:${roomId}`);
-            if (stored) {
-              const offline: UserMeta[] = JSON.parse(stored);
-              const filtered = offline.filter((u) => u.userId !== user.userId);
-              localStorage.setItem(`presence:offline:${roomId}`, JSON.stringify(filtered));
-            }
-          } catch {}
-        }
+        if (user.userId !== tabId) addUser({ ...user, isActive: true });
       });
     };
 
     const handlePresenceJoin = (user: UserMeta) => {
       if (user.userId === tabId) return;
       addUser({ ...user, isActive: true });
-      // Remove from offline cache — they're back
-      try {
-        const stored = localStorage.getItem(`presence:offline:${roomId}`);
-        if (stored) {
-          const offline: UserMeta[] = JSON.parse(stored);
-          const filtered = offline.filter((u) => u.userId !== user.userId);
-          localStorage.setItem(`presence:offline:${roomId}`, JSON.stringify(filtered));
-        }
-      } catch {}
     };
 
     const handlePresenceUpdate = (user: UserMeta) => {
@@ -157,25 +175,42 @@ export function usePresence(
     };
 
     const handlePresenceLeft = ({ userId: uid }: { userId: string }) => {
-      const lastSeen = Date.now();
-      // Mark offline in store
-      updateUser(uid, { isActive: false, lastSeen });
-      // Persist to localStorage so it survives reload
-      try {
-        const stored = localStorage.getItem(`presence:offline:${roomId}`);
-        const offline: UserMeta[] = stored ? JSON.parse(stored) : [];
-        const existing = usePresenceStore.getState().users.get(uid);
-        if (existing) {
-          const updated = { ...existing, isActive: false, lastSeen };
-          const filtered = offline.filter((u) => u.userId !== uid);
-          localStorage.setItem(`presence:offline:${roomId}`, JSON.stringify([...filtered, updated]));
-        }
-      } catch {}
+      updateUser(uid, { isActive: false, lastSeen: Date.now() });
     };
 
-    // Re-join room on reconnect
+    // ── Profile update: propagate name/avatar changes to all users ────────
+    const handleProfileUpdated = (payload: {
+      userId: string;
+      userName: string;
+      avatarUrl: string | null;
+      avatarColor: string;
+      avatarInitials: string;
+    }) => {
+      const baseId = payload.userId.split('_')[0];
+      // Update all presence entries for this user (they may have multiple tabs)
+      const store = usePresenceStore.getState();
+      store.users.forEach((u, uid) => {
+        if (u.userId.startsWith(baseId)) {
+          updateUser(uid, {
+            userName: payload.userName,
+            avatarUrl: payload.avatarUrl,
+            avatarColor: payload.avatarColor,
+            avatarInitials: payload.avatarInitials,
+          });
+        }
+      });
+      // Update self if it's our own profile update from another tab
+      if (store.self?.userId.startsWith(baseId)) {
+        updateSelf({
+          userName: payload.userName,
+          avatarUrl: payload.avatarUrl,
+          avatarColor: payload.avatarColor,
+          avatarInitials: payload.avatarInitials,
+        });
+      }
+    };
+
     const handleConnect = () => {
-      console.log('[presence] reconnected — rejoining room', roomId);
       joinRoom();
     };
     const handleDisconnect = () => setConnectionStatus('disconnected');
@@ -185,6 +220,7 @@ export function usePresence(
     socket.on('presence:join', handlePresenceJoin);
     socket.on('presence:update', handlePresenceUpdate);
     socket.on('presence:left', handlePresenceLeft);
+    socket.on('profile:updated', handleProfileUpdated);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('connect_error', handleConnectError);
@@ -195,14 +231,15 @@ export function usePresence(
       socket.off('presence:join', handlePresenceJoin);
       socket.off('presence:update', handlePresenceUpdate);
       socket.off('presence:left', handlePresenceLeft);
+      socket.off('profile:updated', handleProfileUpdated);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('connect_error', handleConnectError);
       clearInterval(pingInterval);
     };
-  }, [roomId, tabId, userName, addUser, setSelf, setConnectionStatus, updateUser]);
+  }, [roomId, tabId, addUser, setSelf, setConnectionStatus, updateUser, updateSelf]);
 
-  // Track PDF state changes and update self + emit presence updates
+  // ── Track PDF state changes → emit presence:update ───────────────────────
   useEffect(() => {
     let prev = {
       page: usePDFStore.getState().page,
@@ -232,10 +269,7 @@ export function usePresence(
       ) return;
       prev = current;
 
-      const self = selfNow;
-      if (!self) return;
-
-      // Update local self immediately
+      if (!selfNow) return;
       const patch = {
         page: current.page,
         scroll: current.scroll,
@@ -247,20 +281,13 @@ export function usePresence(
       };
       updateSelf(patch);
 
-      // Throttle network emission
       if (throttleTimer) clearTimeout(throttleTimer);
       throttleTimer = setTimeout(() => {
         const socket = getSocket();
         if (socket.connected) {
-          socket.emit('presence:update', {
-            roomId,
-            user: {
-              ...self,
-              ...patch,
-            },
-          });
+          socket.emit('presence:update', { roomId, user: { ...selfNow, ...patch } });
         }
-      }, 500); // 500ms throttle for presence (lower priority than sync:state)
+      }, 500);
     });
 
     return () => {
@@ -269,91 +296,43 @@ export function usePresence(
     };
   }, [roomId, tabId, updateSelf]);
 
-  // Track visibility changes for active/inactive state
+  // ── Track visibility changes ──────────────────────────────────────────────
   useEffect(() => {
     const handleVisibility = () => {
       const self = usePresenceStore.getState().self;
       if (!self) return;
-
       const isActive = document.visibilityState === 'visible';
       const lastSeen = Date.now();
       updateSelf({ isActive, lastSeen });
-
       const socket = getSocket();
-      socket.emit('presence:update', {
-        roomId,
-        user: {
-          ...self,
-          isActive,
-          lastSeen,
-        },
-      });
+      socket.emit('presence:update', { roomId, user: { ...self, isActive, lastSeen } });
     };
-
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [roomId, tabId, updateSelf]);
-  // Handle userName resolution after initial join (fixes "Reader" fallback race condition)
+  }, [roomId, updateSelf]);
+
+  // ── Resolve userName after initial join (fixes "Reader" race condition) ───
   useEffect(() => {
     const self = usePresenceStore.getState().self;
     if (!self || userName === 'Reader' || self.userName !== 'Reader') return;
-
-    console.log('[presence] userName resolved, updating self:', userName);
-    const patch = {
-      userName,
-      avatarInitials: makeInitials(userName),
-    };
+    const patch = { userName, avatarInitials: makeInitials(userName) };
     updateSelf(patch);
-
     const socket = getSocket();
-    socket.emit('presence:update', {
-      roomId,
-      user: {
-        ...self,
-        ...patch,
-      },
-    });
+    socket.emit('presence:update', { roomId, user: { ...self, ...patch } });
   }, [roomId, userName, updateSelf]);
 
-  // Sync name changes from other tabs (e.g. Settings page)
+  // ── Sync name changes from other tabs (Settings page) ────────────────────
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'readroom_user_name' && e.newValue) {
-        const self = usePresenceStore.getState().self;
-        if (!self) return;
-
-        console.log('[presence] name changed in another tab:', e.newValue);
-        const patch = {
-          userName: e.newValue,
-          avatarInitials: makeInitials(e.newValue),
-        };
-        updateSelf(patch);
-
-        const socket = getSocket();
-        socket.emit('presence:update', {
-          roomId,
-          user: {
-            ...self,
-            ...patch,
-          },
-        });
-      }
+      if (e.key !== 'readroom_user_name' || !e.newValue) return;
+      const self = usePresenceStore.getState().self;
+      if (!self) return;
+      const patch = { userName: e.newValue, avatarInitials: makeInitials(e.newValue) };
+      updateSelf(patch);
+      const socket = getSocket();
+      socket.emit('presence:update', { roomId, user: { ...self, ...patch } });
     };
-
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, [roomId, updateSelf]);
-}
-
-function stringToColor(str: string): string {
-  const colors = [
-    '#6366f1', '#8b5cf6', '#ec4899', '#f43f5e',
-    '#f97316', '#eab308', '#22c55e', '#14b8a6',
-    '#3b82f6', '#06b6d4',
-  ];
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
 }

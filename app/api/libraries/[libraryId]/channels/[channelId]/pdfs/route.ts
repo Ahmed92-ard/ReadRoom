@@ -8,13 +8,14 @@ const PDF_BUCKET = 'room-pdfs';
 function serializePdf(pdf: any) {
   return {
     id: pdf.id,
-    channelId: pdf.channel_id,
+    channelId: pdf.room_id,
     driveId: pdf.drive_id,
     filename: pdf.filename,
     thumbnailUrl: pdf.thumbnail_url ?? null,
     storagePath: pdf.storage_path ?? null,
-    url: pdf.storage_path ? `/api/libraries/${pdf.server_id ?? ''}/channels/${pdf.channel_id}/pdfs/${pdf.id}/file` : null,
+    url: pdf.storage_path ? `/api/libraries/${pdf.library_id ?? ''}/channels/${pdf.room_id}/pdfs/${pdf.id}/file` : null,
     position: pdf.position ?? 0,
+    folderId: pdf.folder_id ?? null,
     createdAt: pdf.created_at,
   };
 }
@@ -24,7 +25,7 @@ function serializePdfForRoute(pdf: any, libraryId: string) {
   return {
     ...serialized,
     url: pdf.storage_path
-      ? `/api/libraries/${libraryId}/channels/${pdf.channel_id}/pdfs/${pdf.id}/file`
+      ? `/api/libraries/${libraryId}/channels/${pdf.room_id}/pdfs/${pdf.id}/file`
       : null,
   };
 }
@@ -67,9 +68,9 @@ export async function GET(
 
   // Verify user is a member of the library
   const { data: membership, error: membershipError } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -80,7 +81,7 @@ export async function GET(
   const { data: pdfs, error } = await db
     .from('channel_pdfs')
     .select('*')
-    .eq('channel_id', channelId)
+    .eq('room_id', channelId)
     .order('position', { ascending: true });
 
   if (error) {
@@ -113,9 +114,9 @@ export async function POST(
   // Verify user is a member of the library. After this point use the admin
   // client when available so RLS policy drift cannot block metadata writes.
   const { data: membership, error: membershipError } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -123,10 +124,10 @@ export async function POST(
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const { data: channel, error: channelError } = await db
-    .from('channels')
-    .select('id, server_id')
+    .from('rooms')
+    .select('id, library_id')
     .eq('id', channelId)
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .maybeSingle();
 
   if (channelError) return NextResponse.json({ error: channelError.message }, { status: 500 });
@@ -137,6 +138,7 @@ export async function POST(
   const filename = String(body?.filename ?? '').trim();
   const thumbnailUrl = body?.thumbnailUrl ? String(body.thumbnailUrl) : null;
   const driveAccessToken = body?.driveAccessToken ? String(body.driveAccessToken) : null;
+  const folderId = body?.folderId ? String(body.folderId) : null;
 
   if (!driveId || !filename) {
     return NextResponse.json({ error: 'driveId and filename are required' }, { status: 400 });
@@ -149,13 +151,25 @@ export async function POST(
     }, { status: 401 });
   }
 
+  if (folderId) {
+    const { data: folder } = await db
+      .from('pdf_folders')
+      .select('id')
+      .eq('id', folderId)
+      .eq('room_id', channelId)
+      .maybeSingle();
+    if (!folder) return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
+  }
+
   // Get the next position
-  const { data: pdfs, error: positionError } = await db
+  let positionQuery = db
     .from('channel_pdfs')
     .select('position')
-    .eq('channel_id', channelId)
+    .eq('room_id', channelId)
     .order('position', { ascending: false })
     .limit(1);
+  positionQuery = folderId ? positionQuery.eq('folder_id', folderId) : positionQuery.is('folder_id', null);
+  const { data: pdfs, error: positionError } = await positionQuery;
 
   if (positionError) {
     const status = isMissingPdfLibrary(positionError) ? 501 : 500;
@@ -207,7 +221,7 @@ export async function POST(
   const { data: pdf, error } = await db
     .from('channel_pdfs')
     .insert({
-      channel_id: channelId,
+      room_id: channelId,
       drive_id: driveId,
       filename,
       thumbnail_url: thumbnailUrl,
@@ -215,6 +229,7 @@ export async function POST(
       size_bytes: sizeBytes,
       uploader_id: user.id,
       position: nextPosition,
+      folder_id: folderId,
     })
     .select()
     .single();
@@ -231,7 +246,7 @@ export async function POST(
   }
 
   await db
-    .from('channels')
+    .from('rooms')
     .update({ current_pdf_id: pdf.id })
     .eq('id', channelId)
     .is('current_pdf_id', null);

@@ -2,15 +2,18 @@
 // components/room/SettingsOverlay.tsx
 // In-room settings panel rendered as an overlay so navigating to settings
 // does NOT unmount RoomShell / PDF viewer / socket connections.
+//
+// Profile changes go through useAuth.updateDisplayName / updateAvatarUrl which:
+//   1. Persist to Supabase (permanent)
+//   2. Broadcast via socket profile:updated (real-time propagation to all users)
+//   3. Update localStorage cache
 
 import React, { useState, useEffect } from 'react';
-import { X, LogOut, User, Shield, Bell, Palette, Globe, ArrowLeft } from 'lucide-react';
-import { useParams } from 'next/navigation';
+import { X, LogOut, User, Bell, Palette, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { usePresenceStore } from '@/store/presenceStore';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
-import { getSocket } from '@/lib/socket/client';
 
 interface UserProfile {
   id: string;
@@ -20,11 +23,9 @@ interface UserProfile {
 }
 
 export function SettingsOverlay() {
-  const { setSettingsOpen } = useUIStore();
-  const { theme, setTheme } = useUIStore();
-  const { user, signOut } = useAuth();
-  const { self, updateSelf } = usePresenceStore();
-  const { getState } = useUIStore;
+  const { setSettingsOpen, theme, setTheme } = useUIStore();
+  const { user, signOut, updateDisplayName, updateAvatarUrl } = useAuth();
+  const { self } = usePresenceStore();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -33,6 +34,7 @@ export function SettingsOverlay() {
   const [newName, setNewName] = useState('');
   const [showUploadAvatar, setShowUploadAvatar] = useState(false);
   const [notifications, setNotifications] = useState(true);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -41,7 +43,7 @@ export function SettingsOverlay() {
         if (res.ok) {
           const data = await res.json();
           setProfile(data.profile);
-          setNewName(data.profile.display_name);
+          setNewName(data.profile?.display_name ?? '');
         }
       } catch { /* best effort */ }
       finally { setLoading(false); }
@@ -50,46 +52,33 @@ export function SettingsOverlay() {
   }, []);
 
   const handleUpdateName = async () => {
-    if (!newName.trim()) return;
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === profile?.display_name) {
+      setEditingName(false);
+      return;
+    }
     setSaving(true);
+    setSaveError(null);
     try {
-      const res = await fetch('/api/user/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: newName.trim() }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProfile(data.profile);
+      const ok = await updateDisplayName(trimmed);
+      if (ok) {
+        setProfile((p) => p ? { ...p, display_name: trimmed } : p);
         setEditingName(false);
-        try {
-          localStorage.setItem('readroom_user_name', data.profile.display_name);
-          localStorage.setItem('readroom_name_update_ts', Date.now().toString());
-        } catch {}
+      } else {
+        setSaveError('Failed to save name. Please try again.');
       }
-    } catch { /* best effort */ }
-    finally { setSaving(false); }
+    } catch {
+      setSaveError('Failed to save name. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const params = useParams();
-  const roomId = params.id as string;
-
-  const handleAvatarUploaded = (avatarUrl: string) => {
+  const handleAvatarUploaded = async (avatarUrl: string) => {
     setProfile((p) => p ? { ...p, avatar_url: avatarUrl } : p);
     setShowUploadAvatar(false);
-    // Persist for presence sync
-    try { localStorage.setItem('readroom:avatar-url', avatarUrl); } catch {}
-    // Update self in room immediately
-    updateSelf({ avatarUrl });
-    
-    // Broadcast to other users in the room
-    const currentSelf = usePresenceStore.getState().self;
-    if (currentSelf && roomId) {
-      getSocket().emit('presence:update', {
-        roomId,
-        user: { ...currentSelf, avatarUrl },
-      });
-    }
+    // Persist to DB + broadcast via socket (centralized)
+    await updateAvatarUrl(avatarUrl);
   };
 
   const close = () => setSettingsOpen(false);
@@ -153,25 +142,51 @@ export function SettingsOverlay() {
                           type="text"
                           value={newName}
                           onChange={(e) => setNewName(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') handleUpdateName(); if (e.key === 'Escape') setEditingName(false); }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleUpdateName();
+                            if (e.key === 'Escape') { setEditingName(false); setNewName(profile?.display_name ?? ''); }
+                          }}
                           className="flex-1 min-w-0 bg-room-bg border border-room-border rounded-lg px-3 py-2 text-room-text outline-none focus:border-blue-500"
+                          maxLength={64}
                         />
-                        <button onClick={handleUpdateName} disabled={saving} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 transition-colors">Save</button>
-                        <button onClick={() => { setEditingName(false); setNewName(profile?.display_name || ''); }} className="px-4 py-2 border border-room-border rounded-lg text-sm text-room-muted hover:text-room-text transition-colors">Cancel</button>
+                        <button
+                          onClick={handleUpdateName}
+                          disabled={saving}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+                        >
+                          {saving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => { setEditingName(false); setNewName(profile?.display_name ?? ''); setSaveError(null); }}
+                          className="px-4 py-2 border border-room-border rounded-lg text-sm text-room-muted hover:text-room-text transition-colors"
+                        >
+                          Cancel
+                        </button>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-bold text-room-text">{profile?.display_name || 'Reader'}</span>
-                        <button onClick={() => setEditingName(true)} className="text-xs px-2 py-1 text-room-muted hover:text-room-text hover:bg-room-hover rounded transition-colors">Edit</button>
+                        <button
+                          onClick={() => setEditingName(true)}
+                          className="text-xs px-2 py-1 text-room-muted hover:text-room-text hover:bg-room-hover rounded transition-colors"
+                        >
+                          Edit
+                        </button>
                       </div>
                     )}
+                    {saveError && (
+                      <p className="text-xs text-red-400 mt-1">{saveError}</p>
+                    )}
                     <p className="text-room-muted text-sm mt-1">{profile?.email}</p>
+                    <p className="text-xs text-room-muted mt-0.5">
+                      Changes are saved permanently and visible to all room members instantly.
+                    </p>
                   </div>
                 </div>
               </div>
             </section>
 
-            {/* App Settings */}
+            {/* Preferences */}
             <section>
               <h2 className="text-xs font-semibold text-room-muted uppercase tracking-wider mb-4">Preferences</h2>
               <div className="bg-room-surface border border-room-border rounded-2xl overflow-hidden">

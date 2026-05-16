@@ -17,9 +17,9 @@ export async function GET(
 
   // Verify membership
   const { data: membership, error: memError } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -34,9 +34,9 @@ export async function GET(
   }
 
   const { data: channels, error } = await supabase
-    .from('channels')
+    .from('rooms')
     .select('*')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .order('position', { ascending: true });
 
   if (error) {
@@ -44,7 +44,12 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ channels });
+  return NextResponse.json({
+    channels: (channels ?? []).map((room: any) => ({
+      ...room,
+      server_id: room.library_id,
+    })),
+  });
 }
 
 export async function POST(
@@ -60,9 +65,9 @@ export async function POST(
 
   // Must be owner or admin
   const { data: membership, error: memError } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -78,9 +83,9 @@ export async function POST(
 
   // Get current max position
   const { data: last } = await supabase
-    .from('channels')
+    .from('rooms')
     .select('position')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .order('position', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -88,9 +93,9 @@ export async function POST(
   const position = (last?.position ?? -1) + 1;
 
   const { data: channel, error } = await supabase
-    .from('channels')
+    .from('rooms')
     .insert({
-      server_id: libraryId,
+      library_id: libraryId,
       name: name.trim().slice(0, 64).toLowerCase().replace(/\s+/g, '-'),
       type,
       description: description?.trim().slice(0, 256) ?? null,
@@ -104,5 +109,5 @@ export async function POST(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ channel });
+  return NextResponse.json({ channel: { ...channel, server_id: channel.library_id } });
 }

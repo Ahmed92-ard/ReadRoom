@@ -1,5 +1,9 @@
+// store/workspaceStore.ts — Library + Room (channel) management
+// Naming: "libraries" (was "servers"), "rooms" (was "channels") in the UI.
+// API routes now use canonical libraries/rooms tables and keep legacy channel
+// field aliases only at the frontend boundary.
+
 import { create } from 'zustand';
-import { createClient } from '@/lib/supabase/client';
 
 export interface LibraryData {
   id: string;
@@ -12,7 +16,9 @@ export interface LibraryData {
 
 export interface ChannelData {
   id: string;
-  server_id: string; // Internal DB field name remains server_id for now to avoid migration
+  library_id: string;
+  /** Legacy frontend alias returned by the API during the channel -> room transition. */
+  server_id: string;
   name: string;
   description: string | null;
   type: 'text' | 'pdf';
@@ -26,6 +32,17 @@ export interface ChannelData {
   current_pdf_id?: string | null;
 }
 
+export interface PDFFolderData {
+  id: string;
+  roomId: string;
+  parentId: string | null;
+  name: string;
+  position: number;
+  createdAt: string;
+  children: PDFFolderData[];
+  pdfs: any[];
+}
+
 interface WorkspaceStore {
   // State
   libraries: LibraryData[];
@@ -34,6 +51,8 @@ interface WorkspaceStore {
   activeChannelId: string | null;
   loadingLibraries: boolean;
   loadingChannels: boolean;
+  /** Folders for the active channel */
+  folders: PDFFolderData[];
   error: string | null;
 
   // Actions
@@ -41,6 +60,7 @@ interface WorkspaceStore {
   setActiveChannel: (channelId: string) => void;
   fetchLibraries: () => Promise<void>;
   fetchChannels: (libraryId: string) => Promise<void>;
+  fetchFolders: (libraryId: string, channelId: string) => Promise<void>;
   createLibrary: (name: string) => Promise<LibraryData | null>;
   joinLibrary: (inviteCode: string) => Promise<LibraryData | null>;
   updateLibrary: (libraryId: string, patch: Partial<Pick<LibraryData, 'name' | 'icon_url'>>) => Promise<boolean>;
@@ -49,6 +69,8 @@ interface WorkspaceStore {
   updateChannel: (libraryId: string, channelId: string, patch: Partial<ChannelData>) => Promise<boolean>;
   deleteLibrary: (libraryId: string) => Promise<boolean>;
   deleteChannel: (libraryId: string, channelId: string) => Promise<boolean>;
+  createFolder: (libraryId: string, channelId: string, name: string, parentId?: string | null) => Promise<PDFFolderData | null>;
+  deleteFolder: (libraryId: string, channelId: string, folderId: string) => Promise<boolean>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -58,10 +80,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   activeChannelId: null,
   loadingLibraries: false,
   loadingChannels: false,
+  folders: [],
   error: null,
 
   setActiveLibrary: (libraryId) => {
-    set({ activeLibraryId: libraryId, activeChannelId: null, channels: [] });
+    set({ activeLibraryId: libraryId, activeChannelId: null, channels: [], folders: [] });
     get().fetchChannels(libraryId);
   },
 
@@ -89,6 +112,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch (err) {
       set({ error: String(err), loadingChannels: false });
     }
+  },
+
+  fetchFolders: async (libraryId, channelId) => {
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`);
+      if (!res.ok) return;
+      const data = await res.json();
+      set({ folders: data.folders ?? [] });
+    } catch { /* non-critical */ }
   },
 
   createLibrary: async (name) => {
@@ -169,11 +201,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   updateChannelPDF: async (channelId, pdf) => {
     const libraryId = get().activeLibraryId;
-    console.log('[workspace] updateChannelPDF — libraryId:', libraryId, 'channelId:', channelId, 'pdf:', pdf);
-    if (!libraryId) {
-      console.warn('[workspace] updateChannelPDF SKIPPED — activeLibraryId is null!');
-      return;
-    }
+    if (!libraryId) return;
     const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -182,8 +210,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.error('[workspace] updateChannelPDF PATCH failed:', res.status, err);
-    } else {
-      console.log('[workspace] updateChannelPDF PATCH success');
     }
     set((s) => ({
       channels: s.channels.map((ch) =>
@@ -193,7 +219,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ),
     }));
   },
- 
+
   updateChannel: async (libraryId, channelId, patch) => {
     try {
       const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
@@ -244,6 +270,39 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         channels: s.channels.filter((ch) => ch.id !== channelId),
         activeChannelId: s.activeChannelId === channelId ? null : s.activeChannelId,
       }));
+      return true;
+    } catch (err) {
+      set({ error: String(err) });
+      return false;
+    }
+  },
+
+  createFolder: async (libraryId, channelId, name, parentId = null) => {
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parentId }),
+      });
+      if (!res.ok) throw new Error('Failed to create folder');
+      const data = await res.json();
+      set((s) => ({ folders: [...s.folders, data.folder] }));
+      return data.folder;
+    } catch (err) {
+      set({ error: String(err) });
+      return null;
+    }
+  },
+
+  deleteFolder: async (libraryId, channelId, folderId) => {
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+      });
+      if (!res.ok) throw new Error('Failed to delete folder');
+      set((s) => ({ folders: s.folders.filter((f) => f.id !== folderId) }));
       return true;
     } catch (err) {
       set({ error: String(err) });

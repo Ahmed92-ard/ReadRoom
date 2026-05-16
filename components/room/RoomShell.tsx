@@ -744,10 +744,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => { delete (window as any).__readroom_roomId; };
   }, [roomId]);
 
-  // Restore saved avatar URL from localStorage into self on mount
+  // Restore saved avatar URL from the per-user fast cache into self on mount.
   useEffect(() => {
     try {
-      const savedUrl = localStorage.getItem('readroom:avatar-url');
+      const savedUrl = localStorage.getItem(`readroom_avatar_url_${initialUserId}`);
       if (savedUrl) {
         usePresenceStore.getState().updateSelf({ avatarUrl: savedUrl });
       }

@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   if (!inviteCode) return NextResponse.json({ error: 'Invite code required' }, { status: 400 });
 
   const { data: library, error } = await supabase
-    .from('servers')
+    .from('libraries')
     .select('*')
     .eq('invite_code', inviteCode.trim().toUpperCase())
     .single();
@@ -20,15 +20,15 @@ export async function POST(req: Request) {
 
   // Check if already a member
   const { data: existing } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('user_id')
-    .eq('server_id', library.id)
+    .eq('library_id', library.id)
     .eq('user_id', user.id)
     .single();
 
   if (!existing) {
-    await supabase.from('server_members').insert({
-      server_id: library.id,
+    await supabase.from('library_members').insert({
+      library_id: library.id,
       user_id: user.id,
       role: 'member',
     });

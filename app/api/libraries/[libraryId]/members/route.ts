@@ -4,18 +4,18 @@ import { NextResponse } from 'next/server';
 
 export async function GET(
   _req: Request,
-  { params }: { params: { libraryId: string } }
+  { params }: { params: Promise<{ libraryId: string }> | { libraryId: string } }
 ) {
-  const libraryId = params.libraryId;
+  const { libraryId } = await params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   // Verify requester is a member of the library
   const { data: membership, error: memError } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -25,7 +25,7 @@ export async function GET(
 
   // Fetch all members with their user details
   const { data: members, error } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select(`
       role,
       joined_at,
@@ -37,7 +37,7 @@ export async function GET(
         avatar_url
       )
     `)
-    .eq('server_id', libraryId);
+    .eq('library_id', libraryId);
 
   if (error) {
     console.error('[api/members] GET failed:', error);

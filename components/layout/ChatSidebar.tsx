@@ -1,5 +1,11 @@
-// components/layout/ChatSidebar.tsx
 'use client';
+
+// ChatSidebar.tsx
+// The Chat component is ALWAYS mounted (never unmounted) to preserve:
+//   - scroll position
+//   - loaded messages
+//   - active socket subscriptions
+// Visibility is controlled via CSS (display:none / flex) rather than conditional rendering.
 
 import React from 'react';
 import { useUIStore } from '@/store/uiStore';
@@ -20,15 +26,15 @@ export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown }: ChatS
   const { chatSidebarCollapsed } = useUIStore();
   const isMobile = useIsMobile();
 
-  if (!isMobile && chatSidebarCollapsed) {
-    return null;
-  }
+  // On desktop: hide via CSS when collapsed so Chat stays mounted.
+  // On mobile: the parent controls visibility via a slide-in drawer; always render.
+  const hidden = !isMobile && chatSidebarCollapsed;
 
   return (
     <div
       className={`flex flex-col bg-room-surface flex-shrink-0 border-r border-room-border h-full relative ${
         isMobile ? 'w-full' : ''
-      }`}
+      } ${hidden ? 'hidden' : 'flex'}`}
       style={!isMobile && width ? { width } : undefined}
     >
       {/* Header */}
@@ -41,13 +47,14 @@ export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown }: ChatS
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-room-hover text-room-muted transition-colors"
+            aria-label="Close chat"
           >
             <X size={18} />
           </button>
         )}
       </div>
 
-      {/* Chat content */}
+      {/* Chat — always mounted, never unmounted */}
       <div className="flex-1 min-h-0">
         <Chat roomId={roomId} onClose={onClose} />
       </div>

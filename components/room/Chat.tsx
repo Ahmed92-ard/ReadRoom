@@ -1,60 +1,109 @@
-// components/room/Chat.tsx
 'use client';
 
+// Chat.tsx — Permanent Supabase-backed chat with stable mount lifecycle.
+// Key design decisions:
+//   1. Messages are loaded from Supabase (permanent) via the channel messages API.
+//   2. The component is intentionally kept mounted via CSS visibility, not unmounted,
+//      so scroll position and loaded messages survive panel open/close.
+//   3. Realtime updates come via Socket.IO (same as before).
+//   4. Profile data (name, avatar) is resolved from the centralized presence store
+//      which is kept in sync with Supabase profiles.
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Trash2 } from 'lucide-react';
 import { usePresenceStore } from '@/store/presenceStore';
 import { getSocket } from '@/lib/socket/client';
 import type { ChatMessage } from '@/types';
+import { useParams } from 'next/navigation';
 
 interface ChatProps {
   roomId: string;
   onClose?: () => void;
 }
 
+// ── Message cache: survives panel open/close without remounting ───────────────
+// Keyed by roomId so switching rooms still fetches fresh data.
+const messageCache = new Map<string, ChatMessage[]>();
+const loadedRooms = new Set<string>();
+
 export function Chat({ roomId, onClose }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
   const users = usePresenceStore((s) => s.users);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const params = useParams();
+  const libraryId = params?.libraryId as string | undefined;
+  const channelId = params?.channelId as string | undefined;
+
+  const [messages, setMessages] = useState<ChatMessage[]>(() => messageCache.get(roomId) ?? []);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!loadedRooms.has(roomId));
   const [error, setError] = useState<string | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
-  // Use getSocket() directly — the module-level singleton is always the same instance
-  const sentIdsRef = useRef(new Set<string>());
-  // Ref to restore focus after send (keeps mobile keyboard open)
+  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load initial messages from API
+  // ── Determine the messages API endpoint ──────────────────────────────────
+  // Prefer the new Supabase-backed channel messages endpoint when we have
+  // libraryId + channelId. Fall back to the legacy Redis endpoint otherwise.
+  const messagesEndpoint = libraryId && channelId
+    ? `/api/libraries/${libraryId}/channels/${channelId}/messages`
+    : `/api/rooms/${roomId}/messages`;
+
+  // ── Load initial messages ─────────────────────────────────────────────────
   useEffect(() => {
-    const loadMessages = async () => {
+    if (loadedRooms.has(roomId)) {
+      setMessages(messageCache.get(roomId) ?? []);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    const load = async () => {
       try {
-        setLoading(true);
-        const res = await fetch(`/api/rooms/${roomId}/messages?limit=50`);
+        const res = await fetch(`${messagesEndpoint}?limit=100`);
         if (!res.ok) throw new Error('Failed to load messages');
         const { messages: loaded } = await res.json();
-        setMessages(loaded.sort((a: ChatMessage, b: ChatMessage) => a.ts - b.ts));
+        if (cancelled) return;
+        const sorted = (loaded as ChatMessage[]).sort((a, b) => a.ts - b.ts);
+        messageCache.set(roomId, sorted);
+        loadedRooms.add(roomId);
+        setMessages(sorted);
         setError(null);
       } catch (err) {
-        console.error('[chat] load failed:', err);
-        setError('Failed to load messages');
+        if (!cancelled) {
+          console.error('[chat] load failed:', err);
+          setError('Failed to load messages');
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    loadMessages();
-  }, [roomId]);
+    load();
+    return () => { cancelled = true; };
+  }, [roomId, messagesEndpoint]);
 
-  // Listen for new messages — always uses the singleton socket
+  // ── Socket listener — stable, never torn down while roomId is the same ────
   useEffect(() => {
     const socket = getSocket();
 
-    // On reconnect (e.g. after mobile background suspension), catch up on
-    // any messages that were sent while the socket was disconnected.
+    const handleMessage = (msg: ChatMessage) => {
+      if (msg.roomId !== roomId) return;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        const next = [...prev, msg];
+        const trimmed = next.length > 500 ? next.slice(-500) : next;
+        messageCache.set(roomId, trimmed);
+        return trimmed;
+      });
+    };
+
+    // On reconnect: fetch any messages missed while disconnected
     const handleReconnect = async () => {
       try {
-        const res = await fetch(`/api/rooms/${roomId}/messages?limit=20`);
+        const res = await fetch(`${messagesEndpoint}?limit=30`);
         if (!res.ok) return;
         const { messages: refreshed } = await res.json();
         setMessages((prev) => {
@@ -62,39 +111,58 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const newMsgs = (refreshed as ChatMessage[]).filter((m) => !existingIds.has(m.id));
           if (newMsgs.length === 0) return prev;
           const merged = [...prev, ...newMsgs].sort((a, b) => a.ts - b.ts);
-          return merged.length > 500 ? merged.slice(-500) : merged;
+          const trimmed = merged.length > 500 ? merged.slice(-500) : merged;
+          messageCache.set(roomId, trimmed);
+          return trimmed;
         });
-      } catch { /* reconnect catch-up is best-effort */ }
+      } catch { /* best-effort */ }
     };
 
-    const handler = (msg: ChatMessage) => {
-      console.log('[chat] received message:', msg.id, 'room:', msg.roomId);
-      if (msg.roomId !== roomId) return;
-      // Skip messages we sent optimistically (already in the list)
-      if (sentIdsRef.current.has(msg.id)) {
-        sentIdsRef.current.delete(msg.id);
-        return;
-      }
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        const next = [...prev, msg];
-        return next.length > 500 ? next.slice(-500) : next;
-      });
-    };
-
-    socket.on('chat:message', handler);
+    socket.on('chat:message', handleMessage);
     socket.on('connect', handleReconnect);
     return () => {
-      socket.off('chat:message', handler);
+      socket.off('chat:message', handleMessage);
       socket.off('connect', handleReconnect);
     };
+  }, [roomId, messagesEndpoint]);
+
+  // ── Profile updates: refresh displayed names/avatars in real time ─────────
+  useEffect(() => {
+    const socket = getSocket();
+    const handleProfileUpdate = (payload: { userId: string; userName: string; avatarUrl: string | null }) => {
+      // Update any messages from this user with the new name/avatar
+      setMessages((prev) => {
+        const baseId = payload.userId.split('_')[0];
+        const needsUpdate = prev.some((m) => m.userId.startsWith(baseId) && (m.userName !== payload.userName || m.avatarUrl !== payload.avatarUrl));
+        if (!needsUpdate) return prev;
+        const next = prev.map((m) =>
+          m.userId.startsWith(baseId)
+            ? { ...m, userName: payload.userName, avatarUrl: payload.avatarUrl }
+            : m
+        );
+        messageCache.set(roomId, next);
+        return next;
+      });
+    };
+    socket.on('profile:updated', handleProfileUpdate);
+    return () => { socket.off('profile:updated', handleProfileUpdate); };
   }, [roomId]);
 
-  // Auto-scroll to bottom on new messages
+  // ── Auto-scroll to bottom on new messages (only if already at bottom) ─────
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (isAtBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isAtBottom]);
 
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setIsAtBottom(atBottom);
+  }, []);
+
+  // ── Send message ──────────────────────────────────────────────────────────
   const send = useCallback(async () => {
     if (!self || !input.trim()) return;
 
@@ -107,48 +175,68 @@ export function Chat({ roomId, onClose }: ChatProps) {
       userId: self.userId,
       userName: self.userName,
       avatarColor: self.avatarColor,
-      avatarUrl: self.avatarUrl ?? undefined,
-      content: input.trim().slice(0, 500),
+      avatarUrl: self.avatarUrl ?? null,
+      content: input.trim().slice(0, 2000),
       ts: now,
     };
 
+    // Optimistic UI
+    setMessages((prev) => {
+      const next = [...prev, payload];
+      messageCache.set(roomId, next);
+      return next;
+    });
+    setInput('');
+    setIsAtBottom(true);
+
+    requestAnimationFrame(() => { inputRef.current?.focus(); });
+
+    // Persist first so the canonical DB row and realtime payload share one ID.
     try {
-      sentIdsRef.current.add(messageId);
-
-      // Optimistic UI update
-      setMessages((prev) => [...prev, payload]);
-      setInput('');
-
-      // Restore focus so mobile keyboard stays open
-      // requestAnimationFrame ensures the state update has flushed first
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-
-      console.log('[chat] emitting message:', messageId, 'to room:', roomId);
-      getSocket().emit('chat:message', payload);
-
-      // Persist to database
-      const res = await fetch(`/api/rooms/${roomId}/messages`, {
+      const res = await fetch(messagesEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          content: payload.content,
+          userName: payload.userName,
+          avatarColor: payload.avatarColor,
+          avatarUrl: payload.avatarUrl,
+        }),
       });
 
       if (!res.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== messageId));
-        sentIdsRef.current.delete(messageId);
+        // Rollback optimistic update
+        setMessages((prev) => {
+          const next = prev.filter((m) => m.id !== messageId);
+          messageCache.set(roomId, next);
+          return next;
+        });
         setError('Failed to send message');
         setTimeout(() => setError(null), 3000);
+        return;
       }
+
+      const { message: persisted } = await res.json();
+      const finalMessage: ChatMessage = persisted ?? payload;
+      setMessages((prev) => {
+        const next = prev.map((m) => (m.id === messageId ? finalMessage : m));
+        messageCache.set(roomId, next);
+        return next;
+      });
+
+      // Broadcast the persisted message to other users after the DB write.
+      getSocket().emit('chat:message', finalMessage);
     } catch (err) {
       console.error('[chat] send failed:', err);
-      setMessages((prev) => prev.filter((m) => m.id !== messageId));
-      sentIdsRef.current.delete(messageId);
+      setMessages((prev) => {
+        const next = prev.filter((m) => m.id !== messageId);
+        messageCache.set(roomId, next);
+        return next;
+      });
       setError('Failed to send message');
       setTimeout(() => setError(null), 3000);
     }
-  }, [self, input, roomId]);
+  }, [self, input, roomId, messagesEndpoint]);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -157,55 +245,54 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }
   };
 
+  // ── Name / avatar resolution (live from presence store) ──────────────────
+  const resolveName = useCallback((msgUserId: string, fallback: string) => {
+    const baseId = msgUserId.split('_')[0];
+    if (self?.userId.startsWith(baseId)) return self.userName;
+    for (const u of users.values()) {
+      if (u.userId.startsWith(baseId) && u.userName !== 'Reader') return u.userName;
+    }
+    return fallback;
+  }, [self, users]);
+
+  const resolveAvatar = useCallback((msgUserId: string, fallbackColor: string, fallbackUrl?: string | null) => {
+    const baseId = msgUserId.split('_')[0];
+    if (self?.userId.startsWith(baseId)) {
+      return { color: self.avatarColor, initials: self.avatarInitials, url: self.avatarUrl };
+    }
+    for (const u of users.values()) {
+      if (u.userId.startsWith(baseId)) {
+        return { color: u.avatarColor, initials: u.avatarInitials, url: u.avatarUrl };
+      }
+    }
+    return { color: fallbackColor, initials: '?', url: fallbackUrl };
+  }, [self, users]);
+
   return (
     <div className="flex flex-col h-full bg-room-surface">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-3 py-3 space-y-3"
+      >
         {loading && (
-          <p className="text-center text-xs text-room-muted py-8">
-            Loading messages...
-          </p>
+          <p className="text-center text-xs text-room-muted py-8">Loading messages…</p>
         )}
 
         {!loading && messages.length === 0 && (
-          <p className="text-center text-xs text-room-muted py-8">
-            No messages yet. Say hello!
-          </p>
+          <p className="text-center text-xs text-room-muted py-8">No messages yet. Say hello!</p>
         )}
 
         {messages.map((msg) => {
-          const selfState = self;
-
-          const resolveName = (id: string, fallback: string) => {
-            const baseId = id.split('_')[0];
-            if (selfState?.userId.startsWith(baseId)) return selfState.userName;
-            const userList = Array.from(users.values());
-            for (const u of userList) {
-              if (u.userId.startsWith(baseId) && u.userName !== 'Reader') return u.userName;
-            }
-            return fallback;
-          };
-
-          const resolveAvatar = (id: string): { color: string; initials: string; url?: string | null } => {
-            const baseId = id.split('_')[0];
-            if (selfState?.userId.startsWith(baseId)) {
-              return { color: selfState.avatarColor, initials: selfState.avatarInitials, url: selfState.avatarUrl };
-            }
-            const userList = Array.from(users.values());
-            for (const u of userList) {
-              if (u.userId.startsWith(baseId)) {
-                return { color: u.avatarColor, initials: u.avatarInitials, url: u.avatarUrl };
-              }
-            }
-            return { color: msg.avatarColor, initials: (msg.userName?.[0] ?? '?').toUpperCase(), url: msg.avatarUrl };
-          };
-
+          if (msg.deleted) return null;
           const currentName = resolveName(msg.userId, msg.userName);
-          const av = resolveAvatar(msg.userId);
+          const av = resolveAvatar(msg.userId, msg.avatarColor, msg.avatarUrl);
+          const isSelf = self?.userId.startsWith(msg.userId.split('_')[0]);
 
           return (
-            <div key={msg.id} className="flex items-start gap-2.5">
-              {/* Avatar — shows uploaded photo or initials fallback */}
+            <div key={msg.id} className="flex items-start gap-2.5 group">
+              {/* Avatar */}
               <div
                 className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0 mt-0.5 overflow-hidden ring-1 ring-room-border"
                 style={av.url ? {} : { backgroundColor: av.color }}
@@ -216,6 +303,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                   av.initials
                 )}
               </div>
+
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
                   <span className="text-sm font-semibold text-room-text truncate">{currentName}</span>
@@ -226,6 +314,16 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 <p className="text-sm text-room-text/90 mt-0.5 break-words whitespace-pre-wrap leading-relaxed">
                   {msg.content}
                 </p>
+                {msg.attachmentUrl && (
+                  <a
+                    href={msg.attachmentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-xs text-blue-400 hover:underline"
+                  >
+                    📎 Attachment
+                  </a>
+                )}
               </div>
             </div>
           );
@@ -234,7 +332,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Error message */}
+      {/* Error */}
       {error && (
         <div className="flex-none px-3 py-2 bg-red-900/20 border-t border-red-900/50 text-xs text-red-200">
           {error}
@@ -251,12 +349,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Message the room…"
-            maxLength={500}
+            maxLength={2000}
             className="flex-1 bg-transparent py-2.5 text-sm text-room-text placeholder:text-room-muted outline-none"
           />
           <button
             onClick={send}
-            // Prevent button from stealing focus from the input on click
             onMouseDown={(e) => e.preventDefault()}
             disabled={!input.trim()}
             className="p-2 rounded-xl text-blue-400 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors min-w-[36px] min-h-[36px] md:min-w-[40px] md:min-h-[40px] flex items-center justify-center"

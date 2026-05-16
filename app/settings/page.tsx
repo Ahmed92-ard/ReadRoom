@@ -81,7 +81,9 @@ export default function SettingsPage() {
     setProfile((p) => p ? { ...p, avatar_url: avatarUrl } : p);
     setShowUploadAvatar(false);
     // Persist for room presence sync
-    try { localStorage.setItem('readroom:avatar-url', avatarUrl); } catch {}
+    try {
+      if (user?.id) localStorage.setItem(`readroom_avatar_url_${user.id}`, avatarUrl);
+    } catch {}
   };
 
   const handleBack = () => {

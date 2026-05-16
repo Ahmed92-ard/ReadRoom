@@ -17,9 +17,9 @@ export async function DELETE(
 
   // Verify user is admin/owner
   const { data: membership } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -32,7 +32,7 @@ export async function DELETE(
     .from('channel_pdfs')
     .select('storage_path')
     .eq('id', pdfId)
-    .eq('channel_id', channelId)
+    .eq('room_id', channelId)
     .maybeSingle();
 
   // Delete the PDF
@@ -40,13 +40,13 @@ export async function DELETE(
     .from('channel_pdfs')
     .delete()
     .eq('id', pdfId)
-    .eq('channel_id', channelId);
+    .eq('room_id', channelId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // If this was the current PDF, set the next one
   const { data: channel } = await supabase
-    .from('channels')
+    .from('rooms')
     .select('current_pdf_id')
     .eq('id', channelId)
     .single();
@@ -55,12 +55,12 @@ export async function DELETE(
     const { data: firstPdf } = await supabase
       .from('channel_pdfs')
       .select('id')
-      .eq('channel_id', channelId)
+      .eq('room_id', channelId)
       .order('position', { ascending: true })
       .limit(1);
 
     await supabase
-      .from('channels')
+      .from('rooms')
       .update({ current_pdf_id: firstPdf?.[0]?.id ?? null })
       .eq('id', channelId);
   }
@@ -94,9 +94,9 @@ export async function PATCH(
 
   // Verify user is a member
   const { data: membership } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -107,7 +107,7 @@ export async function PATCH(
   // Update channel's current PDF
   if (body.setCurrent) {
     const { error } = await supabase
-      .from('channels')
+      .from('rooms')
       .update({ current_pdf_id: pdfId })
       .eq('id', channelId);
 

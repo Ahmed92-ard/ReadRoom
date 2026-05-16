@@ -24,7 +24,7 @@ const redis = new Redis({
 
 const supabase = createSupabaseClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 function normalizeOrigin() {
@@ -245,7 +245,7 @@ app.prepare().then(() => {
       Promise.all([
         redis.set(`room:sync:${cleanRoomId}`, JSON.stringify(syncPayload), { ex: 3600 }),
         supabase
-          .from('channels')
+          .from('rooms')
           .update({
             current_page: page,
             scroll_pct: scroll,
@@ -275,15 +275,14 @@ app.prepare().then(() => {
         userName: sanitizeString(payload.userName, 64),
         avatarColor: payload.avatarColor || '#6366f1',
         avatarUrl: payload.avatarUrl || null,
-        content: sanitizeString(payload.content, 500),
+        content: sanitizeString(payload.content, 2000),
         ts: payload.ts || Date.now(),
       };
 
       // Broadcast message to all other users in room
-      console.log(`[chat] broadcasting message ${message.id} to room ${cleanRoomId}`);
       socket.to(cleanRoomId).emit('chat:message', message);
 
-      // Also emit as a notification:activity so UI can show badge/toast
+      // Notification activity for badges/toasts
       const activity = {
         id: `chat:${message.id}`,
         roomId: cleanRoomId,
@@ -295,15 +294,55 @@ app.prepare().then(() => {
         ts: message.ts,
         metadata: { messageId: message.id },
       };
-      console.log(`[chat] broadcasting activity for message ${message.id} to room ${cleanRoomId}`);
       socket.to(cleanRoomId).emit('notification:activity', activity);
 
-      // Persist in background
+      // Cache to Redis for fast recent-message lookup. Permanent storage happens
+      // in the messages API before this socket event is emitted.
       Promise.all([
         redis.set(`message:${message.id}`, JSON.stringify(message), { ex: 7 * 24 * 60 * 60 }),
         redis.zadd(`messages:${cleanRoomId}`, { score: message.ts, member: message.id }),
-        redis.expire(`messages:${cleanRoomId}`, 7 * 24 * 60 * 60)
+        redis.expire(`messages:${cleanRoomId}`, 7 * 24 * 60 * 60),
       ]).catch(() => {});
+    });
+
+    // ── Profile updates: broadcast to all rooms the user is in ───────────────
+    socket.on('profile:updated', async (payload: {
+      userId: string;
+      userName: string;
+      avatarUrl: string | null;
+      avatarColor: string;
+      avatarInitials: string;
+    }) => {
+      if (!payload.userId) return;
+      const cleanUserId = sanitizeString(payload.userId, 64);
+      const cleanName = sanitizeString(payload.userName ?? 'Reader', 64);
+
+      // Update Redis presence for this user in the current room
+      if (socket.data.roomId) {
+        const presenceKey = `presence:${socket.data.roomId}:${cleanUserId}`;
+        const existing = await redis.get(presenceKey).catch(() => null);
+        if (existing) {
+          try {
+            const parsed = typeof existing === 'string' ? JSON.parse(existing) : existing;
+            const updated = {
+              ...parsed,
+              userName: cleanName,
+              avatarUrl: payload.avatarUrl,
+              avatarColor: payload.avatarColor,
+              avatarInitials: payload.avatarInitials,
+            };
+            await redis.set(presenceKey, JSON.stringify(updated), { ex: 60 }).catch(() => {});
+          } catch {}
+        }
+        // Broadcast to all users in the room
+        socket.to(socket.data.roomId).emit('profile:updated', {
+          userId: cleanUserId,
+          userName: cleanName,
+          avatarUrl: payload.avatarUrl,
+          avatarColor: payload.avatarColor,
+          avatarInitials: payload.avatarInitials,
+        });
+      }
     });
 
     // ── PDF Library events ── broadcast to all room members ──────────────────

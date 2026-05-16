@@ -14,9 +14,9 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: membership } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -54,10 +54,10 @@ export async function PATCH(
   }
 
   const { data: channel, error } = await supabase
-    .from('channels')
+    .from('rooms')
     .update(updates)
     .eq('id', channelId)
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .select()
     .single();
 
@@ -66,7 +66,7 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ channel });
+  return NextResponse.json({ channel: { ...channel, server_id: channel.library_id } });
 }
 
 export async function DELETE(
@@ -81,9 +81,9 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: membership } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -92,10 +92,10 @@ export async function DELETE(
   }
 
   const { error } = await supabase
-    .from('channels')
+    .from('rooms')
     .delete()
     .eq('id', channelId)
-    .eq('server_id', libraryId);
+    .eq('library_id', libraryId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

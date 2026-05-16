@@ -8,13 +8,13 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: memberships, error } = await supabase
-    .from('server_members')
-    .select('server_id, role, servers(*)')
+    .from('library_members')
+    .select('library_id, role, libraries(*)')
     .eq('user_id', user.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const libraries = memberships?.map((m: any) => ({ ...m.servers, role: m.role })) ?? [];
+  const libraries = memberships?.map((m: any) => ({ ...m.libraries, role: m.role })) ?? [];
   return NextResponse.json({ libraries });
 }
 
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
   console.log('[api/libraries] POST: Creating library for user', user.id);
 
   const { data: library, error: serverError } = await supabase
-    .from('servers')
+    .from('libraries')
     .insert({ 
       name: name.trim().slice(0, 64), 
       owner_id: user.id, 
@@ -59,8 +59,8 @@ export async function POST(req: Request) {
   console.log('[api/libraries] POST: Library created', library.id, '- Adding owner...');
 
   // Add owner as member
-  const { error: memberError } = await supabase.from('server_members').insert({
-    server_id: library.id,
+  const { error: memberError } = await supabase.from('library_members').insert({
+    library_id: library.id,
     user_id: user.id,
     role: 'owner',
   });
@@ -73,8 +73,8 @@ export async function POST(req: Request) {
   console.log('[api/libraries] POST: Creating general channel...');
 
   // Create a default "general" channel
-  const { error: channelError } = await supabase.from('channels').insert({
-    server_id: library.id,
+  const { error: channelError } = await supabase.from('rooms').insert({
+    library_id: library.id,
     name: 'general',
     type: 'text',
     position: 0,
@@ -102,9 +102,9 @@ export async function PATCH(req: Request) {
   if (!name) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
 
   const { data: membership } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -113,7 +113,7 @@ export async function PATCH(req: Request) {
   }
 
   const { data: library, error } = await supabase
-    .from('servers')
+    .from('libraries')
     .update({ name: name.slice(0, 64) })
     .eq('id', libraryId)
     .select()
@@ -140,7 +140,7 @@ export async function DELETE(req: Request) {
 
   // Check if user is the owner
   const { data: library } = await supabase
-    .from('servers')
+    .from('libraries')
     .select('owner_id')
     .eq('id', libraryId)
     .single();
@@ -150,7 +150,7 @@ export async function DELETE(req: Request) {
 
   // Delete server (cascades to channels, messages, etc.)
   const { error } = await supabase
-    .from('servers')
+    .from('libraries')
     .delete()
     .eq('id', libraryId);
 

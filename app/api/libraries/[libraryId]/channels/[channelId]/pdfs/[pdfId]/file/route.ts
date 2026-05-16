@@ -31,9 +31,9 @@ export async function GET(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { data: membership, error: membershipError } = await supabase
-    .from('server_members')
+    .from('library_members')
     .select('role')
-    .eq('server_id', libraryId)
+    .eq('library_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -46,9 +46,9 @@ export async function GET(
   const db = createAdminClient() ?? supabase;
   const { data: pdf, error: pdfError } = await db
     .from('channel_pdfs')
-    .select('id, channel_id, filename, storage_path')
+    .select('id, room_id, filename, storage_path')
     .eq('id', pdfId)
-    .eq('channel_id', channelId)
+    .eq('room_id', channelId)
     .maybeSingle();
 
   if (pdfError) {
