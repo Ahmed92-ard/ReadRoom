@@ -79,21 +79,26 @@ export function usePresence(
     const socket = getSocket();
     if (!socket.connected) socket.connect();
 
-    const buildSelf = (): UserMeta => ({
-      userId: tabId,
-      userName,
-      avatarColor: stringToColor(tabId),
-      avatarInitials: makeInitials(userName),
-      joinedAt: Date.now(),
-      isFollowing: false,
-      page: usePDFStore.getState().page,
-      scroll: usePDFStore.getState().scroll,
-      zoom: usePDFStore.getState().zoom,
-      activePdfId: activePdfIdRef.current,
-      activePdfName: activePdfNameRef.current,
-      isActive: true,
-      lastSeen: Date.now(),
-    });
+    const buildSelf = (): UserMeta => {
+      let avatarUrl: string | null = null;
+      try { avatarUrl = localStorage.getItem('readroom:avatar-url'); } catch {}
+      return {
+        userId: tabId,
+        userName,
+        avatarColor: stringToColor(tabId),
+        avatarInitials: makeInitials(userName),
+        avatarUrl,
+        joinedAt: Date.now(),
+        isFollowing: false,
+        page: usePDFStore.getState().page,
+        scroll: usePDFStore.getState().scroll,
+        zoom: usePDFStore.getState().zoom,
+        activePdfId: activePdfIdRef.current,
+        activePdfName: activePdfNameRef.current,
+        isActive: true,
+        lastSeen: Date.now(),
+      };
+    };
 
     const self = buildSelf();
     setSelf(self);

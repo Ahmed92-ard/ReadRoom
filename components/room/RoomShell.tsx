@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, Trash2, GripVertical } from 'lucide-react';
+import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, Trash2, GripVertical, Settings } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
 import { useRoomStore } from '@/store/roomStore';
@@ -17,6 +17,7 @@ import { useAuth } from '@/lib/hooks/useAuth';
 import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { ChatSidebar } from '@/components/layout/ChatSidebar';
+import { SettingsOverlay } from '@/components/room/SettingsOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
 import { usePresence } from '@/lib/hooks/usePresence';
 import { getSocket } from '@/lib/socket/client';
@@ -184,7 +185,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     sidebarOpen, setSidebarOpen, activePanel, setActivePanel,
     librarySidebarCollapsed, channelSidebarCollapsed, toggleLibrarySidebar, toggleChannelSidebar,
     chatSidebarCollapsed, toggleChatSidebar,
-    toggleNavigation
+    toggleNavigation,
+    settingsOpen, setSettingsOpen,
   } = useUIStore();
 
   const params = useParams();
@@ -278,6 +280,58 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     }, 300);
     return () => { if (widthPersistTimer.current) clearTimeout(widthPersistTimer.current); };
   }, [sidebarWidth]);
+
+  // ── Resizable chat sidebar ───────────────────────────────────────────────────
+  const CHAT_MIN = 220;
+  const CHAT_MAX = 500;
+  const CHAT_DEFAULT = 288;
+  const [chatWidth, setChatWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return CHAT_DEFAULT;
+    const stored = parseInt(localStorage.getItem('readroom:chat-width') ?? '', 10);
+    return isNaN(stored) ? CHAT_DEFAULT : Math.min(CHAT_MAX, Math.max(CHAT_MIN, stored));
+  });
+  const isChatResizingRef = useRef(false);
+  const chatResizeStartXRef = useRef(0);
+  const chatResizeStartWidthRef = useRef(0);
+
+  const handleChatResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isChatResizingRef.current = true;
+    chatResizeStartXRef.current = e.clientX;
+    chatResizeStartWidthRef.current = chatWidth;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+
+    let currentChatWidth = chatWidth;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isChatResizingRef.current) return;
+      // Handle is on RIGHT edge of chat — dragging right increases width
+      const delta = ev.clientX - chatResizeStartXRef.current;
+      currentChatWidth = Math.min(CHAT_MAX, Math.max(CHAT_MIN, chatResizeStartWidthRef.current + delta));
+      setChatWidth(currentChatWidth);
+    };
+    const onMouseUp = () => {
+      isChatResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try { localStorage.setItem('readroom:chat-width', String(currentChatWidth)); } catch {}
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [chatWidth]);
+
+  const chatWidthPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (chatWidthPersistTimer.current) clearTimeout(chatWidthPersistTimer.current);
+    chatWidthPersistTimer.current = setTimeout(() => {
+      try { localStorage.setItem('readroom:chat-width', String(chatWidth)); } catch {}
+    }, 300);
+    return () => { if (chatWidthPersistTimer.current) clearTimeout(chatWidthPersistTimer.current); };
+  }, [chatWidth]);
+
   const desktopTabs = [
     { id: 'shelf' as const,    Icon: FolderOpen, label: 'Shelf' },
     { id: 'notes' as const,    Icon: FileText,   label: 'Notes' },
@@ -548,14 +602,20 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   useEffect(() => {
     if (initialRoom && !room) {
-      setRoom(initialRoom);
+      // In a library/channel context, the active PDF comes from fetchChannelPDFs —
+      // not from the server-rendered initialRoom.pdf. Using initialRoom.pdf would
+      // briefly show a deleted/stale PDF while the fetch is in-flight (ghost loading).
+      const safeRoom = (libraryId && channelId)
+        ? { ...initialRoom, pdf: null }
+        : initialRoom;
+      setRoom(safeRoom);
       setSyncState({
         page: Math.max(1, Number(initialRoom.currentPage ?? 1) || 1),
         scroll: Math.max(0, Number(initialRoom.scrollPct ?? 0) || 0),
         zoom: Math.max(0.5, Number(initialRoom.zoom ?? 1) || 1),
       });
     }
-  }, [initialRoom, room, setRoom, setSyncState]);
+  }, [initialRoom, room, setRoom, setSyncState, libraryId, channelId]);
 
   useEffect(() => {
     if (initialRoom?.name && room?.name !== initialRoom.name) {
@@ -736,6 +796,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       if (!isChatVisibleRef.current || nextActivity.type !== 'chat:message') {
         pushToast(nextActivity);
+      }
+
+      // Show browser notification whenever the tab is not actively visible —
+      // regardless of whether chat was open before the window was minimized.
+      const tabIsHidden = document.visibilityState !== 'visible';
+      if (tabIsHidden || !isChatVisibleRef.current) {
         showBrowserNotification(nextActivity);
       }
 
@@ -1228,6 +1294,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       onTouchStart={handleTouchStartGlobal}
       onTouchEnd={handleTouchEndGlobal}
     >
+      {/* Settings overlay — rendered in-place, keeps RoomShell mounted */}
+      {settingsOpen && <SettingsOverlay />}
       {/* Desktop Sidebars (Libraries & Rooms) */}
       {!isMobile && (
         <>
@@ -1301,6 +1369,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             <div className="hidden md:block">
               <PresenceBar />
             </div>
+            {/* Settings gear — opens overlay instead of navigating away */}
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover transition-colors"
+              title="Settings"
+              aria-label="Open settings"
+            >
+              <Settings size={16} />
+            </button>
           </div>
         </header>
 
@@ -1389,7 +1466,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {/* Desktop Right Sidebars */}
       {!isMobile && (
         <>
-          <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} />
+          <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} width={chatWidth} onResizeMouseDown={handleChatResizeMouseDown} />
           {sidebarOpen && (
             <aside
               className="flex-none border-l border-room-border bg-room-surface flex flex-col relative"

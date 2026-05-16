@@ -170,6 +170,8 @@ interface UIStore {
   theme: 'dark' | 'light';
   followMode: boolean;
   
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
   setFollowMode: (follow: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
@@ -183,6 +185,8 @@ interface UIStore {
 }
 
 export const useUIStore = create<UIStore>((set) => ({
+  settingsOpen: false,
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   followMode: false,
   setFollowMode: (followMode) => set({ followMode }),
   sidebarOpen: true,

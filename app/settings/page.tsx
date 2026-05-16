@@ -3,10 +3,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, LogOut, User, Shield, Bell, Palette, Globe, Upload, X } from 'lucide-react';
+import { ArrowLeft, LogOut, User, Shield, Bell, Palette, Globe } from 'lucide-react';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { AvatarUpload } from '@/components/ui/AvatarUpload';
 
 interface UserProfile {
   id: string;
@@ -76,29 +77,11 @@ export default function SettingsPage() {
     }
   };
 
-  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setSaving(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/user/avatar', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setProfile(data.profile);
-        setShowUploadAvatar(false);
-      }
-    } catch (err) {
-      console.error('Failed to upload avatar:', err);
-    } finally {
-      setSaving(false);
-    }
+  const handleAvatarUploaded = (avatarUrl: string) => {
+    setProfile((p) => p ? { ...p, avatar_url: avatarUrl } : p);
+    setShowUploadAvatar(false);
+    // Persist for room presence sync
+    try { localStorage.setItem('readroom:avatar-url', avatarUrl); } catch {}
   };
 
   const handleBack = () => {
@@ -150,7 +133,7 @@ export default function SettingsPage() {
                     className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
                     title="Change avatar"
                   >
-                    <Upload size={20} className="text-white" />
+                    <User size={20} className="text-white" />
                   </button>
                 </div>
 
@@ -285,29 +268,14 @@ export default function SettingsPage() {
         <p className="mt-1 opacity-50">Version 1.2.0-stable</p>
       </footer>
 
-      {/* Avatar Upload Modal */}
-      {showUploadAvatar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowUploadAvatar(false)}>
-          <div className="bg-room-surface border border-room-border rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold">Change Avatar</h2>
-              <button onClick={() => setShowUploadAvatar(false)} className="text-room-muted hover:text-room-text">
-                <X size={20} />
-              </button>
-            </div>
-            <p className="text-sm text-room-muted mb-5">Upload an image (JPG, PNG, max 5MB)</p>
-            <div className="relative">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleAvatarUpload}
-                disabled={saving}
-                className="w-full px-4 py-3 border-2 border-dashed border-room-border rounded-xl cursor-pointer hover:border-blue-500 transition-colors"
-              />
-              {saving && <p className="text-xs text-room-muted mt-2">Uploading...</p>}
-            </div>
-          </div>
-        </div>
+      {showUploadAvatar && profile && (
+        <AvatarUpload
+          currentUrl={profile.avatar_url}
+          currentColor="#2563eb"
+          currentInitials={profile.email?.[0]?.toUpperCase() ?? '?'}
+          onUploaded={handleAvatarUploaded}
+          onClose={() => setShowUploadAvatar(false)}
+        />
       )}
     </div>
   );
