@@ -1,4 +1,4 @@
-# PDF Reading Room
+# ReadRoom
 
 A production-ready real-time collaborative PDF workspace — an installable PWA where users read PDFs together in sync, like a "voice channel but for reading."
 

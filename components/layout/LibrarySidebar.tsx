@@ -274,40 +274,6 @@ export function LibrarySidebar({ inBottomSheet = false, onClose }: { inBottomShe
           })}
         </div>
         
-        {/* User Profile Section for Mobile */}
-        <div className="mt-auto border-t border-room-border bg-room-surface/30 p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold overflow-hidden border border-white/10 shadow-sm">
-                {user?.user_metadata?.avatar_url
-                  ? <img src={user.user_metadata.avatar_url} alt="avatar" className="w-full h-full object-cover" />
-                  : user?.email?.[0].toUpperCase()
-                }
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-room-text truncate">{user?.user_metadata?.full_name || 'Reader'}</p>
-                <p className="text-[10px] text-room-muted truncate">{user?.email}</p>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => { onClose?.(); router.push('/settings'); }}
-                className="p-2.5 rounded-xl bg-room-bg text-room-muted hover:text-room-text transition-colors border border-room-border active:scale-95"
-                title="Settings"
-              >
-                <Settings size={18} />
-              </button>
-              <button 
-                onClick={() => signOut()}
-                className="p-2.5 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all border border-red-500/20 active:scale-95"
-                title="Sign Out"
-              >
-                <LogOut size={18} />
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
     );
   }
@@ -341,44 +307,6 @@ export function LibrarySidebar({ inBottomSheet = false, onClose }: { inBottomShe
         {/* Theme toggle */}
         <ThemeToggle />
 
-        {/* User avatar - NO LONGER LOGS OUT ON CLICK */}
-        <div className="relative group flex-shrink-0">
-          <button
-            onClick={() => setShowUserMenu(!showUserMenu)}
-            title={`Library settings (${user?.email})`}
-            className="w-10 h-10 rounded-full flex items-center justify-center bg-room-surface hover:ring-2 hover:ring-blue-500/50 transition-all overflow-hidden"
-          >
-            {user?.user_metadata?.avatar_url
-              ? <img src={user.user_metadata.avatar_url} alt="avatar" className="w-full h-full object-cover" />
-              : <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
-                  {user?.email?.[0].toUpperCase()}
-                </div>
-            }
-          </button>
-          
-          {showUserMenu && (
-            <div className="absolute bottom-0 left-full ml-4 w-48 bg-room-surface border border-room-border rounded-xl shadow-2xl z-[100] p-2 animate-in fade-in slide-in-from-left-2">
-              <div className="px-2 py-1.5 border-b border-room-border mb-1">
-                <p className="text-xs font-bold text-room-text truncate">{user?.user_metadata?.full_name || 'Reader'}</p>
-                <p className="text-[10px] text-room-muted truncate">{user?.email}</p>
-              </div>
-              <button 
-                onClick={() => { setShowUserMenu(false); router.push('/settings'); }}
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-room-muted hover:text-room-text hover:bg-room-hover rounded-lg transition-colors"
-              >
-                <Settings size={14} />
-                <span>Settings</span>
-              </button>
-              <button 
-                onClick={() => { setShowUserMenu(false); signOut(); }}
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/10 rounded-lg transition-colors mt-1"
-              >
-                <LogOut size={14} />
-                <span>Sign Out</span>
-              </button>
-            </div>
-          )}
-        </div>
       </div>
 
 

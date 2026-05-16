@@ -1,16 +1,9 @@
-const CACHE_NAME = 'reading-room-v1';
+const CACHE_NAME = 'readroom-v2';
 const ASSETS = [
   '/',
   '/manifest.json',
   '/favicon.ico',
-  '/icons/icon-72.png',
-  '/icons/icon-96.png',
-  '/icons/icon-128.png',
-  '/icons/icon-144.png',
-  '/icons/icon-152.png',
-  '/icons/icon-192.png',
-  '/icons/icon-384.png',
-  '/icons/icon-512.png',
+  '/icons/app_icon.jpeg',
 ];
 
 self.addEventListener('install', (event) => {

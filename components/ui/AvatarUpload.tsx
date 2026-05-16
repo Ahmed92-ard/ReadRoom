@@ -58,7 +58,8 @@ export function AvatarUpload({ currentUrl, currentColor, currentInitials, onUplo
       const res = await fetch('/api/user/avatar', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
-      const url = data.profile?.avatar_url;
+      // Server returns avatarUrl directly; fall back to profile.avatar_url
+      const url: string = data.avatarUrl ?? data.profile?.avatar_url;
       if (!url) throw new Error('No URL returned from server');
       onUploaded(url);
       onClose();

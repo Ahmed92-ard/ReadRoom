@@ -66,6 +66,7 @@ export interface ChatMessage {
   userId: string;
   userName: string;
   avatarColor: string;
+  avatarUrl?: string | null;
   content: string;
   ts: number;
 }

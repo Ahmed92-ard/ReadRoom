@@ -8,6 +8,7 @@ import { useUIStore } from '@/store/uiStore';
 import { useRoomStore } from '@/store/roomStore';
 import { usePDFStore } from '@/store/pdfStore';
 import { PDFViewer, type PDFViewerState } from '@/components/pdf/PDFViewer';
+import { Avatar } from '@/components/ui/Avatar';
 import { PresenceBar } from './PresenceBar';
 import { Chat } from './Chat';
 import { Notes } from './Notes';
@@ -401,10 +402,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     if (tabIsVisible && isChatVisibleRef.current) return;
 
     try {
+      let icon = '/icons/icon-192.png';
+      if (activity.userId) {
+        const users = usePresenceStore.getState().users;
+        const self = usePresenceStore.getState().self;
+        const baseId = activity.userId.split('_')[0];
+        const target = self?.userId.startsWith(baseId) ? self : Array.from(users.values()).find(u => u.userId.startsWith(baseId));
+        if (target?.avatarUrl) icon = target.avatarUrl;
+      }
+
       new Notification(activity.title, {
         body: activity.body,
         tag: activity.id,
-        icon: '/icons/icon-192.png',
+        icon,
       });
     } catch {}
   }, []);
@@ -1123,7 +1133,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             />
           ) : (
             <h1 className="text-sm font-semibold text-room-text truncate flex-1">
-              {room?.name ?? 'Reading Room'}
+              {room?.name ?? 'ReadRoom'}
             </h1>
           )}
           <button
@@ -1173,7 +1183,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
 
         <div className={activePanel === 'presence' ? 'flex flex-col h-full' : 'hidden'}>
-          <PresenceList />
+          <PresenceList roomId={roomId} />
         </div>
 
         <div className={activePanel === 'shelf' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
@@ -1326,7 +1336,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
           <div className="flex-1 min-w-0">
             <h1 className="text-xs md:text-sm font-semibold text-room-text truncate">
-              {room?.pdf?.filename ?? (room?.name ?? 'Reading Room')}
+              {room?.pdf?.filename ?? (room?.name ?? 'ReadRoom')}
             </h1>
           </div>
 
@@ -1574,11 +1584,25 @@ const SecondaryViewerSection = React.memo(({
   return (
     <section className="min-h-0 flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
       <div className="flex-none flex items-center justify-between gap-3 px-3 py-2 border-b border-room-border bg-room-surface">
-        <div className="min-w-0">
-          <p className="truncate text-xs font-semibold text-room-text">{viewer.title}</p>
-          <p className="text-[10px] text-room-muted">
-            {viewer.followUserId ? 'Synced follow viewer' : 'Secondary viewer'}
-          </p>
+        <div className="flex items-center gap-2 min-w-0">
+          {viewer.followUserId && (
+            <div className="flex-shrink-0">
+              {(() => {
+                const users = usePresenceStore.getState().users;
+                const self = usePresenceStore.getState().self;
+                const baseId = viewer.followUserId.split('_')[0];
+                const target = self?.userId.startsWith(baseId) ? self : Array.from(users.values()).find(u => u.userId.startsWith(baseId));
+                if (target) return <Avatar user={target} size="xs" showTooltip={false} />;
+                return null;
+              })()}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="truncate text-xs font-semibold text-room-text">{viewer.title}</p>
+            <p className="text-[10px] text-room-muted">
+              {viewer.followUserId ? 'Synced follow viewer' : 'Secondary viewer'}
+            </p>
+          </div>
         </div>
         <button
           onClick={onClose}

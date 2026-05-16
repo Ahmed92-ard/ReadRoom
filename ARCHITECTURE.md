@@ -1,4 +1,4 @@
-# PDF Reading Room — System Architecture
+# ReadRoom — System Architecture
 
 ## 1. System Architecture
 

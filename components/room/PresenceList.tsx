@@ -17,7 +17,11 @@ function formatLastSeen(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-export function PresenceList() {
+interface PresenceListProps {
+  roomId?: string;
+}
+
+export function PresenceList({ roomId }: PresenceListProps) {
   const { users: usersMap, self, connectionStatus, updateSelf } = usePresenceStore();
   const { followMode, followTarget, setFollowMode } = usePDFStore();
   const [showAvatarUpload, setShowAvatarUpload] = useState(false);
@@ -29,14 +33,11 @@ export function PresenceList() {
     try { localStorage.setItem('readroom:avatar-url', url); } catch {}
     // Broadcast to all connected clients in the room
     const currentSelf = usePresenceStore.getState().self;
-    if (currentSelf) {
-      const roomId = (window as any).__readroom_roomId as string | undefined;
-      if (roomId) {
-        getSocket().emit('presence:update', {
-          roomId,
-          user: { ...currentSelf, avatarUrl: url },
-        });
-      }
+    if (currentSelf && roomId) {
+      getSocket().emit('presence:update', {
+        roomId,
+        user: { ...currentSelf, avatarUrl: url },
+      });
     }
   };
 
@@ -68,6 +69,7 @@ export function PresenceList() {
           activePdfId: user.activePdfId,
           activePdfName: user.activePdfName,
           userName: user.userName,
+          avatarUrl: user.avatarUrl,
         } : {}),
       });
     }

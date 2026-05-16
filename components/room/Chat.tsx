@@ -106,6 +106,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       userId: self.userId,
       userName: self.userName,
       avatarColor: self.avatarColor,
+      avatarUrl: self.avatarUrl ?? undefined,
       content: input.trim().slice(0, 500),
       ts: now,
     };
@@ -172,7 +173,6 @@ export function Chat({ roomId, onClose }: ChatProps) {
         )}
 
         {messages.map((msg) => {
-          // Read presence state ONCE outside the loop — not called as a hook
           const users = usePresenceStore.getState().users;
           const selfState = usePresenceStore.getState().self;
 
@@ -181,34 +181,49 @@ export function Chat({ roomId, onClose }: ChatProps) {
             if (selfState?.userId.startsWith(baseId)) return selfState.userName;
             const userList = Array.from(users.values());
             for (const u of userList) {
-              if (u.userId.startsWith(baseId) && u.userName !== 'Reader') {
-                return u.userName;
-              }
+              if (u.userId.startsWith(baseId) && u.userName !== 'Reader') return u.userName;
             }
             return fallback;
           };
 
+          const resolveAvatar = (id: string): { color: string; initials: string; url?: string | null } => {
+            const baseId = id.split('_')[0];
+            if (selfState?.userId.startsWith(baseId)) {
+              return { color: selfState.avatarColor, initials: selfState.avatarInitials, url: selfState.avatarUrl };
+            }
+            const userList = Array.from(users.values());
+            for (const u of userList) {
+              if (u.userId.startsWith(baseId)) {
+                return { color: u.avatarColor, initials: u.avatarInitials, url: u.avatarUrl };
+              }
+            }
+            return { color: msg.avatarColor, initials: (msg.userName?.[0] ?? '?').toUpperCase(), url: msg.avatarUrl };
+          };
+
           const currentName = resolveName(msg.userId, msg.userName);
+          const av = resolveAvatar(msg.userId);
 
           return (
-            <div key={msg.id} className="flex items-start gap-2">
+            <div key={msg.id} className="flex items-start gap-2.5">
+              {/* Avatar — shows uploaded photo or initials fallback */}
               <div
-                className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-semibold flex-shrink-0 mt-0.5"
-                style={{ backgroundColor: msg.avatarColor }}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0 mt-0.5 overflow-hidden ring-1 ring-room-border"
+                style={av.url ? {} : { backgroundColor: av.color }}
               >
-                {currentName[0]?.toUpperCase()}
+                {av.url ? (
+                  <img src={av.url} alt={currentName} className="w-full h-full object-cover" />
+                ) : (
+                  av.initials
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-xs font-medium text-room-text truncate">{currentName}</span>
+                  <span className="text-sm font-semibold text-room-text truncate">{currentName}</span>
                   <span className="text-[10px] text-room-muted flex-shrink-0">
-                    {new Date(msg.ts).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                    {new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
-                <p className="text-xs text-room-text mt-1 break-words whitespace-pre-wrap">
+                <p className="text-sm text-room-text/90 mt-0.5 break-words whitespace-pre-wrap leading-relaxed">
                   {msg.content}
                 </p>
               </div>

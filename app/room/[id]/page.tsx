@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: RoomPageProps) {
     .eq('id', params.id)
     .single();
   return {
-    title: data?.name ?? 'Reading Room',
+    title: data?.name ?? 'ReadRoom',
     description: data?.pdf_name
       ? `Reading "${data.pdf_name}" together`
       : 'Collaborative PDF reading room',

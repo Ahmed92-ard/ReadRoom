@@ -2,7 +2,7 @@ import '../styles/globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
 
 export const metadata = {
-  title: 'ReadRoom — Read PDFs Together',
+  title: 'ReadRoom',
   description: 'A real-time collaborative PDF reading app',
   manifest: '/manifest.json',
 };
