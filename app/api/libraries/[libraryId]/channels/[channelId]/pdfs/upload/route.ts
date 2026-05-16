@@ -19,6 +19,10 @@ export const runtime = 'nodejs';
 
 type Params = { libraryId: string; channelId: string };
 
+function fileBasename(name: string) {
+  return name.split(/[\\/]/).pop() || name;
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<Params> | Params }
@@ -98,7 +102,7 @@ export async function POST(
     }, { status: 500 });
   }
 
-  const filename = sanitizePdfFilename(file.name);
+  const filename = sanitizePdfFilename(fileBasename(file.name));
 
   const { data: pdf, error: insertError } = await db
     .from(PDF_TABLE)

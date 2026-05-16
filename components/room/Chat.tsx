@@ -669,6 +669,21 @@ export function Chat({ roomId, onClose }: ChatProps) {
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
+  const focusComposer = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    const cursor = input.value.length;
+    input.setSelectionRange(cursor, cursor);
+  }, []);
+
+  const beginReply = useCallback((msg: ChatMessage) => {
+    setReplyTo(msg);
+    setEditing(null);
+    focusComposer();
+    requestAnimationFrame(focusComposer);
+  }, [focusComposer]);
+
   const openMessageMenu = useCallback((messageId: string, anchor: DOMRect | { left: number; right: number; top: number; bottom: number }) => {
     setActiveMenu((current) => (
       current?.messageId === messageId
@@ -850,7 +865,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                     </div>
 
                     <div className="invisible relative flex shrink-0 items-center gap-0.5 pt-0.5 group-hover:visible">
-                      <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text" aria-label="Reply">
+                      <button onClick={() => beginReply(msg)} className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text" aria-label="Reply">
                         <Reply size={12} />
                       </button>
                       <button
@@ -908,7 +923,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 </button>
               ))}
             </div>
-            <button onClick={() => { setReplyTo(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+            <button onClick={() => { beginReply(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
               <Reply size={13} /> Reply
             </button>
             {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (

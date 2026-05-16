@@ -875,7 +875,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         ? { ...activity, type: 'mention' as const, title: `${activity.userName ?? 'Someone'} mentioned you` }
         : activity;
 
-      if (!isChatVisibleRef.current || nextActivity.type !== 'chat:message') {
+      // Show toast if: chat is not visible, OR we're in fullscreen (chat is hidden behind PDF), OR it's a non-chat event
+      const isFullscreen = Boolean(document.fullscreenElement);
+      if (!isChatVisibleRef.current || isFullscreen || nextActivity.type !== 'chat:message') {
         pushToast(nextActivity);
       }
 
@@ -1400,7 +1402,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
 
         <div className={activePanel === 'presence' ? 'flex flex-col h-full' : 'hidden'}>
-          <PresenceList roomId={roomId} />
+          <PresenceList roomId={roomId} roomName={room?.name ?? 'ReadRoom'} />
         </div>
 
         <div className={activePanel === 'shelf' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
@@ -1643,7 +1645,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       {/* Mobile Sheet Backdrop & Container handled via MobileBottomSheet component */}
 
-      <div className="pointer-events-none fixed right-4 top-20 z-[90] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2">
+      {/* Toast notifications — z-[2147483647] ensures visibility above fullscreen PDF */}
+      <div className="pointer-events-none fixed right-4 top-20 z-[2147483647] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2">
         {toasts.map((toast) => (
           <button
             key={toast.toastId}
@@ -1651,6 +1654,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             onClick={() => {
               setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
               if (toast.type === 'chat:message' || toast.type === 'mention') {
+                // Exit fullscreen if active so the user can see chat
+                if (document.fullscreenElement) {
+                  document.exitFullscreen().catch(() => {});
+                }
                 if (isMobile) setMobileChatOpen(true);
                 else if (chatSidebarCollapsed) toggleChatSidebar();
                 clearUnread();
@@ -1669,6 +1676,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 <span className="block truncate text-sm font-semibold text-room-text">{toast.title}</span>
                 {toast.body && (
                   <span className="mt-0.5 block line-clamp-2 text-xs text-room-muted">{toast.body}</span>
+                )}
+                {/* Room name label — helps identify which room when multiple are open */}
+                {room?.name && (toast.type === 'chat:message' || toast.type === 'mention') && (
+                  <span className="mt-1 block text-[10px] text-room-muted/60 truncate">
+                    #{room.name}
+                  </span>
                 )}
               </span>
             </div>

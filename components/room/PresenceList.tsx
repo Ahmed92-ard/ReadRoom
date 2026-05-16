@@ -19,10 +19,11 @@ function formatLastSeen(ts: number): string {
 
 interface PresenceListProps {
   roomId?: string;
+  roomName?: string;
 }
 
-export function PresenceList({ roomId }: PresenceListProps) {
-  const { users: usersMap, self, connectionStatus, updateSelf } = usePresenceStore();
+export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProps) {
+  const { users: usersMap, self, updateSelf } = usePresenceStore();
   const { followMode, followTarget, setFollowMode } = usePDFStore();
   const [showAvatarUpload, setShowAvatarUpload] = useState(false);
 
@@ -91,8 +92,6 @@ export function PresenceList({ roomId }: PresenceListProps) {
     return (b.lastSeen ?? 0) - (a.lastSeen ?? 0);
   });
 
-  const activeCount = all.filter(u => u.isActive).length;
-
   return (
     <div className="flex flex-col h-full bg-room-surface">
       {showAvatarUpload && self && (
@@ -105,33 +104,8 @@ export function PresenceList({ roomId }: PresenceListProps) {
         />
       )}
 
-      {/* Member Summary */}
-      <div className="p-4 border-b border-room-border bg-room-bg/30 flex-none">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-bold text-room-text">Room Members</span>
-          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
-            {all.length} total
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-[10px]">
-          <div className="text-room-muted">
-            {activeCount} active now • {all.length - activeCount} away
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className={`w-1.5 h-1.5 rounded-full ${
-              connectionStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' :
-              connectionStatus === 'error' ? 'bg-red-500' :
-              'bg-yellow-500 animate-pulse'
-            }`} />
-            <span className={
-              connectionStatus === 'connected' ? 'text-green-500/80' :
-              connectionStatus === 'error' ? 'text-red-400' :
-              'text-yellow-500/80'
-            }>
-              {connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
-            </span>
-          </div>
-        </div>
+      <div className="flex-none border-b border-room-border bg-room-bg/30 px-4 py-3">
+        <p className="truncate text-sm font-semibold text-room-text">{roomName}</p>
       </div>
 
       <div className="flex-1 p-3 space-y-1 overflow-y-auto">

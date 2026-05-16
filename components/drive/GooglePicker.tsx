@@ -47,11 +47,16 @@ export function GooglePicker({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  const uploadFilename = (file: File) => {
+    const relativePath = (file as any).webkitRelativePath as string | undefined;
+    return relativePath?.split('/').pop() || file.name;
+  };
+
   // ── Upload a single file to the server ───────────────────────────────────
   const uploadFile = async (file: File, folderId: string | null): Promise<any> => {
     if (!libraryId || !channelId) throw new Error('Room context required for upload');
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file, uploadFilename(file));
     if (folderId) formData.append('folderId', folderId);
 
     const res = await fetch(
