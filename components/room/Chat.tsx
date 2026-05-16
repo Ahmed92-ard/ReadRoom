@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useParams } from 'next/navigation';
 import { getSocket } from '@/lib/socket/client';
+import { createClient } from '@/lib/supabase/client';
 import { usePresenceStore } from '@/store/presenceStore';
 import type { ChatAttachment, ChatMessage, ChatReaction } from '@/types';
 
@@ -89,6 +90,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const [mediaMessages, setMediaMessages] = useState<ChatMessage[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+  const [hasOlder, setHasOlder] = useState(true);
+  const [activeActionsId, setActiveActionsId] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -96,11 +99,20 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingThrottleRef = useRef(0);
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAtBottomRef = useRef(isAtBottom);
+  const selfRef = useRef(self);
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
 
   const messagesEndpoint = canUseAdvancedApi
     ? `/api/libraries/${libraryId}/channels/${channelId}/messages`
     : `/api/rooms/${roomId}/messages`;
   const attachmentsEndpoint = `/api/libraries/${libraryId}/channels/${channelId}/messages/attachments`;
+
+  if (!supabaseRef.current) supabaseRef.current = createClient();
+
+  useEffect(() => { isAtBottomRef.current = isAtBottom; }, [isAtBottom]);
+  useEffect(() => { selfRef.current = self; }, [self]);
 
   const updateMessages = useCallback((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
     setMessages((prev) => {
@@ -136,6 +148,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
           loadedRooms.add(roomId);
         }
         setMessages(loaded);
+        setHasOlder(loaded.length >= 80);
         setError(null);
       })
       .catch((err) => {
@@ -153,18 +166,19 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   useEffect(() => {
     const socket = getSocket();
+    if (!socket.connected) socket.connect();
 
     const upsert = (msg: ChatMessage) => {
       if (msg.roomId !== roomId) return;
       updateMessages((prev) => {
         const existing = prev.find((m) => m.id === msg.id);
-        const next = existing
+        return existing
           ? prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m))
           : [...prev, msg].sort((a, b) => a.ts - b.ts);
-        return next.length > 500 ? next.slice(-500) : next;
       });
-      const own = self?.userId && msg.userId.startsWith(self.userId.split('_')[0]);
-      if (!own && !isAtBottom) {
+      const currentSelf = selfRef.current;
+      const own = currentSelf?.userId && msg.userId.startsWith(currentSelf.userId.split('_')[0]);
+      if (!own && !isAtBottomRef.current) {
         setUnreadCount((n) => n + 1);
         setFirstUnreadId((id) => id ?? msg.id);
       }
@@ -206,7 +220,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
 
     const handleTyping = (payload: { roomId: string; userId: string; userName: string; typing: boolean; ts: number }) => {
-      if (payload.roomId !== roomId || payload.userId.split('_')[0] === self?.userId.split('_')[0]) return;
+      const currentSelf = selfRef.current;
+      if (payload.roomId !== roomId || payload.userId.split('_')[0] === currentSelf?.userId.split('_')[0]) return;
       setTyping((prev) => {
         const next = { ...prev };
         if (payload.typing) next[payload.userId] = { name: payload.userName, ts: payload.ts };
@@ -216,6 +231,18 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
 
     const handleUpdate = (payload: { roomId: string; message: ChatMessage }) => upsert(payload.message);
+    const handleConnect = async () => {
+      try {
+        const refreshed = await loadMessages();
+        updateMessages((prev) => {
+          const byId = new Map(prev.map((m) => [m.id, m]));
+          refreshed.forEach((m) => byId.set(m.id, { ...(byId.get(m.id) ?? {}), ...m }));
+          return Array.from(byId.values()).sort((a, b) => a.ts - b.ts);
+        });
+      } catch {
+        // Reconnect refresh is best-effort; the normal API load still owns errors.
+      }
+    };
 
     socket.on('chat:message', upsert);
     socket.on('chat:update', handleUpdate);
@@ -224,6 +251,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     socket.on('chat:delivered', handleDelivered);
     socket.on('chat:read', handleRead);
     socket.on('chat:typing', handleTyping);
+    socket.on('connect', handleConnect);
     return () => {
       socket.off('chat:message', upsert);
       socket.off('chat:update', handleUpdate);
@@ -232,8 +260,65 @@ export function Chat({ roomId, onClose }: ChatProps) {
       socket.off('chat:delivered', handleDelivered);
       socket.off('chat:read', handleRead);
       socket.off('chat:typing', handleTyping);
+      socket.off('connect', handleConnect);
     };
-  }, [isAtBottom, roomId, self?.userId, updateMessages]);
+  }, [loadMessages, roomId, updateMessages]);
+
+  useEffect(() => {
+    const supabase = supabaseRef.current;
+    if (!supabase) return;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshRecent = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => {
+        try {
+          const refreshed = await loadMessages();
+          updateMessages((prev) => {
+            const byId = new Map(prev.map((m) => [m.id, m]));
+            refreshed.forEach((m) => byId.set(m.id, { ...(byId.get(m.id) ?? {}), ...m }));
+            return Array.from(byId.values()).filter((m) => !m.deleted).sort((a, b) => a.ts - b.ts);
+          });
+        } catch {
+          // Socket.IO remains the primary realtime path; this is a quiet fallback.
+        }
+      }, 150);
+    };
+
+    const channel = supabase
+      .channel(`chat-messages:${roomId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
+        refreshRecent
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const next = payload.new as any;
+          if (next?.deleted) {
+            updateMessages((prev) => prev.filter((m) => m.id !== next.id));
+            return;
+          }
+          refreshRecent();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const old = payload.old as any;
+          if (old?.id) updateMessages((prev) => prev.filter((m) => m.id !== old.id));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [loadMessages, roomId, updateMessages]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -241,6 +326,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
       setTyping((prev) => Object.fromEntries(Object.entries(prev).filter(([, v]) => v.ts > cutoff)));
     }, 1500);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => () => {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+    if (typingStopRef.current) clearTimeout(typingStopRef.current);
   }, []);
 
   useEffect(() => {
@@ -309,21 +399,15 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }).catch(() => {});
   }, [canUseAdvancedApi, messages, messagesEndpoint, roomId, self, updateMessages]);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    setIsAtBottom(atBottom);
-  }, []);
-
   const loadOlder = useCallback(async () => {
     const first = messages[0];
-    if (!first?.createdAt || loadingOlder || search) return;
+    if (!first?.createdAt || loadingOlder || search || !hasOlder) return;
     const el = scrollRef.current;
     const previousHeight = el?.scrollHeight ?? 0;
     setLoadingOlder(true);
     try {
       const older = await loadMessages({ before: first.createdAt });
+      setHasOlder(older.length >= 80);
       updateMessages((prev) => {
         const ids = new Set(prev.map((m) => m.id));
         return [...older.filter((m) => !ids.has(m.id)), ...prev].sort((a, b) => a.ts - b.ts);
@@ -334,7 +418,17 @@ export function Chat({ roomId, onClose }: ChatProps) {
     } finally {
       setLoadingOlder(false);
     }
-  }, [loadMessages, loadingOlder, messages, search, updateMessages]);
+  }, [hasOlder, loadMessages, loadingOlder, messages, search, updateMessages]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setIsAtBottom(atBottom);
+    if (el.scrollTop < 120 && hasOlder && !loadingOlder && !search) {
+      loadOlder();
+    }
+  }, [hasOlder, loadingOlder, loadOlder, search]);
 
   const emitTyping = useCallback((value: string) => {
     if (!self) return;
@@ -352,13 +446,16 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const uploadAttachment = useCallback(async () => {
     if (!attachment || !canUseAdvancedApi) return null;
     setUploading(true);
-    const form = new FormData();
-    form.append('file', attachment);
-    const res = await fetch(attachmentsEndpoint, { method: 'POST', body: form });
-    setUploading(false);
-    if (!res.ok) throw new Error('Failed to upload attachment');
-    const data = await res.json();
-    return data.attachment;
+    try {
+      const form = new FormData();
+      form.append('file', attachment);
+      const res = await fetch(attachmentsEndpoint, { method: 'POST', body: form });
+      if (!res.ok) throw new Error('Failed to upload attachment');
+      const data = await res.json();
+      return data.attachment;
+    } finally {
+      setUploading(false);
+    }
   }, [attachment, attachmentsEndpoint, canUseAdvancedApi]);
 
   const send = useCallback(async () => {
@@ -404,6 +501,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     setAttachment(null);
     setReplyTo(null);
     setIsAtBottom(true);
+    if (fileRef.current) fileRef.current.value = '';
 
     try {
       const uploaded = await uploadAttachment();
@@ -430,6 +528,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
       setError('Failed to send message');
       setTimeout(() => setError(null), 3000);
     } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [attachment, editing, input, messagesEndpoint, roomId, self, updateMessages, uploadAttachment, uploading, replyTo]);
@@ -497,6 +597,26 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }
   }, []);
 
+  const clearComposerContext = useCallback(() => {
+    setReplyTo(null);
+    setEditing(null);
+    setAttachment(null);
+    setInput('');
+    if (fileRef.current) fileRef.current.value = '';
+  }, []);
+
+  const startLongPress = useCallback((messageId: string) => {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+    longPressRef.current = setTimeout(() => setActiveActionsId(messageId), 450);
+  }, []);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressRef.current) {
+      clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+    }
+  }, []);
+
   const resolvedTyping = Object.values(typing).map((t) => t.name).slice(0, 2).join(', ');
 
   const mediaByKind = useMemo(() => ({
@@ -505,13 +625,17 @@ export function Chat({ roomId, onClose }: ChatProps) {
     files: mediaMessages.filter((m) => m.attachmentType === 'file'),
     pdfs: mediaMessages.filter((m) => m.attachmentType === 'pdf'),
   }), [mediaMessages]);
+  const visibleMediaSections = useMemo(() => (
+    (['images', 'videos', 'pdfs', 'files'] as const).filter((kind) => mediaByKind[kind].length > 0)
+  ), [mediaByKind]);
 
   const renderAttachment = (msg: ChatMessage) => {
     const attachmentData = msg.attachments?.[0];
+    const hasAttachment = Boolean(attachmentData || msg.attachmentUrl || msg.attachmentName || msg.storagePath || msg.attachmentType);
+    if (!hasAttachment) return null;
     const url = attachmentData?.url ?? msg.attachmentUrl;
     const name = attachmentData?.name ?? msg.attachmentName ?? 'Attachment';
     const kind = attachmentData?.kind ?? msg.attachmentType;
-    if (!url && !name) return null;
     if (kind === 'image' && url) {
       return <a href={url} target="_blank" rel="noopener noreferrer"><img src={url} alt={name} loading="lazy" className="mt-2 max-h-56 rounded-lg object-cover border border-room-border" /></a>;
     }
@@ -520,10 +644,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }
     const Icon = attachmentIcon(kind);
     return (
-      <a href={url ?? '#'} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg/70 px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
+      <a href={url ?? '#'} target={url ? '_blank' : undefined} rel={url ? 'noopener noreferrer' : undefined} className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg/70 px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
         <Icon size={16} className="text-blue-300" />
         <span className="min-w-0 flex-1 truncate">{name}</span>
-        <Download size={14} className="text-room-muted" />
+        {url && <Download size={14} className="text-room-muted" />}
       </a>
     );
   };
@@ -547,7 +671,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       )}
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-3">
-        {!search && messages.length > 0 && (
+        {!search && messages.length > 0 && hasOlder && (
           <button onClick={loadOlder} disabled={loadingOlder} className="mx-auto mb-3 block rounded-full border border-room-border px-3 py-1 text-xs text-room-muted hover:text-room-text disabled:opacity-50">
             {loadingOlder ? 'Loading…' : 'Load older'}
           </button>
@@ -567,12 +691,28 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const receipts = msg.receipts ?? [];
           const read = isSelf && receipts.some((r) => r.userId !== self?.userId && r.readAt);
           const delivered = isSelf && receipts.some((r) => r.userId !== self?.userId && (r.deliveredAt || r.readAt));
+          const actionsOpen = activeActionsId === msg.id;
 
           return (
             <React.Fragment key={msg.id}>
               {showDay && <div className="sticky top-2 z-10 mx-auto my-3 w-fit rounded-full bg-room-bg/90 px-3 py-1 text-[10px] font-medium text-room-muted shadow-sm">{formatDay(msg.ts)}</div>}
               {firstUnreadId === msg.id && <div className="my-3 border-t border-blue-400/40 pt-2 text-center text-[10px] font-semibold uppercase tracking-wide text-blue-300">Unread</div>}
-              <div id={`chat-msg-${msg.id}`} className={`group flex gap-2.5 rounded-lg px-1.5 py-1 transition ${grouped ? 'mt-0.5' : 'mt-3'} ${isSelf ? 'flex-row-reverse' : ''}`}>
+              <div
+                id={`chat-msg-${msg.id}`}
+                tabIndex={0}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setActiveActionsId((id) => (id === msg.id ? null : msg.id));
+                }}
+                onTouchStart={() => startLongPress(msg.id)}
+                onTouchMove={cancelLongPress}
+                onTouchEnd={cancelLongPress}
+                onFocus={() => setActiveActionsId(msg.id)}
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActiveActionsId(null);
+                }}
+                className={`group flex gap-2.5 rounded-lg px-1.5 py-1 outline-none transition ${grouped ? 'mt-0.5' : 'mt-3'} ${isSelf ? 'flex-row-reverse' : ''}`}
+              >
                 {!grouped ? (
                   <div className="mt-0.5 h-7 w-7 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-room-border" style={avatar?.avatarUrl ? {} : { backgroundColor: avatar?.avatarColor ?? msg.avatarColor }}>
                     {avatar?.avatarUrl || msg.avatarUrl ? <img src={avatar?.avatarUrl ?? msg.avatarUrl ?? ''} alt={displayName} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[11px] font-semibold text-white">{avatar?.avatarInitials ?? '?'}</div>}
@@ -602,13 +742,19 @@ export function Chat({ roomId, onClose }: ChatProps) {
                     </div>
                   </div>
 
-                  <div className={`mt-1 flex flex-wrap items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 ${isSelf ? 'justify-end' : 'justify-start'}`}>
-                    {canUseAdvancedApi && <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Reply"><Reply size={13} /></button>}
-                    {canUseAdvancedApi && isSelf && <button onClick={() => { setEditing(msg); setInput(msg.content); inputRef.current?.focus(); }} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Edit"><Edit3 size={13} /></button>}
-                    {canUseAdvancedApi && isSelf && <button onClick={() => removeMessage(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-red-300" aria-label="Delete"><Trash2 size={13} /></button>}
-                    {canUseAdvancedApi && <div className="flex rounded-full bg-room-bg px-1">
-                      {EMOJIS.map((emoji) => <button key={emoji} onClick={() => toggleReaction(msg, emoji)} className="px-1 py-0.5 text-xs" aria-label={`React ${emoji}`}>{emoji}</button>)}
-                    </div>}
+                  <div className={`mt-1 flex flex-wrap items-center gap-1 ${isSelf ? 'justify-end' : 'justify-start'}`}>
+                    {canUseAdvancedApi && (
+                      <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Reply">
+                        <Reply size={13} />
+                      </button>
+                    )}
+                    <div className={`${actionsOpen ? 'flex' : 'hidden md:group-hover:flex md:group-focus-within:flex'} flex-wrap items-center gap-1`}>
+                      {canUseAdvancedApi && isSelf && <button onClick={() => { setEditing(msg); setInput(msg.content); setActiveActionsId(null); inputRef.current?.focus(); }} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Edit"><Edit3 size={13} /></button>}
+                      {canUseAdvancedApi && isSelf && <button onClick={() => { setActiveActionsId(null); removeMessage(msg); }} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-red-300" aria-label="Delete"><Trash2 size={13} /></button>}
+                      {canUseAdvancedApi && <div className="flex rounded-full bg-room-bg px-1">
+                        {EMOJIS.map((emoji) => <button key={emoji} onClick={() => { setActiveActionsId(null); toggleReaction(msg, emoji); }} className="px-1 py-0.5 text-xs" aria-label={`React ${emoji}`}>{emoji}</button>)}
+                      </div>}
+                    </div>
                   </div>
 
                   {reactionGroups(msg.reactions).length > 0 && (
@@ -637,14 +783,14 @@ export function Chat({ roomId, onClose }: ChatProps) {
             {editing ? <span>Editing message</span> : replyTo ? <span>Replying to <b className="text-room-text">{replyTo.userName}</b>: {summarize(replyTo)}</span> : null}
             {attachment && <span className="block truncate text-room-text"><Paperclip size={12} className="mr-1 inline" />{attachment.name}</span>}
           </div>
-          <button onClick={() => { setReplyTo(null); setEditing(null); setAttachment(null); setInput(''); }} className="rounded-lg p-1 text-room-muted hover:text-room-text" aria-label="Cancel"><X size={16} /></button>
+          <button onClick={clearComposerContext} className="rounded-lg p-1 text-room-muted hover:text-room-text" aria-label="Cancel"><X size={16} /></button>
         </div>
       )}
 
       <div className="flex-none border-t border-room-border p-3">
         <div className="flex items-end gap-2 rounded-xl border border-room-border bg-room-bg px-2 transition-colors focus-within:border-blue-500/50">
           <input ref={fileRef} type="file" className="hidden" onChange={(e) => setAttachment(e.target.files?.[0] ?? null)} accept="image/*,video/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" />
-          {canUseAdvancedApi && <button onClick={() => fileRef.current?.click()} className="mb-1.5 rounded-lg p-2 text-room-muted hover:bg-room-surface hover:text-room-text" aria-label="Attach file"><Paperclip size={18} /></button>}
+          {canUseAdvancedApi && <button onClick={() => { if (fileRef.current) fileRef.current.value = ''; fileRef.current?.click(); }} className="mb-1.5 rounded-lg p-2 text-room-muted hover:bg-room-surface hover:text-room-text" aria-label="Attach file"><Paperclip size={18} /></button>}
           <textarea
             ref={inputRef}
             value={input}
@@ -668,11 +814,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
             <button onClick={() => setMediaOpen(false)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={16} /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
-            {(['images', 'videos', 'pdfs', 'files'] as const).map((kind) => (
+            {visibleMediaSections.length === 0 && (
+              <p className="py-8 text-center text-xs text-room-muted">No media or files yet</p>
+            )}
+            {visibleMediaSections.map((kind) => (
               <section key={kind} className="mb-5">
                 <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-room-muted">{kind}</h4>
-                {mediaByKind[kind].length === 0 ? <p className="text-xs text-room-muted">No {kind}</p> : (
-                  <div className={kind === 'images' || kind === 'videos' ? 'grid grid-cols-3 gap-2' : 'space-y-2'}>
+                <div className={kind === 'images' || kind === 'videos' ? 'grid grid-cols-3 gap-2' : 'space-y-2'}>
                     {mediaByKind[kind].map((m) => {
                       const a = m.attachments?.[0];
                       const url = a?.url ?? m.attachmentUrl ?? '#';
@@ -687,8 +835,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                         </a>
                       );
                     })}
-                  </div>
-                )}
+                </div>
               </section>
             ))}
           </div>
