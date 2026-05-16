@@ -164,10 +164,9 @@ export async function PATCH(req: Request) {
     }).catch(() => {});
   }
 
-  if (updates.display_name || updates.avatar_url !== undefined) {
+  if (updates.display_name) {
     const messageUpdates: Record<string, any> = {};
-    if (updates.display_name) messageUpdates.sender_name = updates.display_name;
-    if (updates.avatar_url !== undefined) messageUpdates.avatar_url = updates.avatar_url;
+    messageUpdates.sender_name = updates.display_name;
     const { error: messageError } = await db
       .from('messages')
       .update(messageUpdates)

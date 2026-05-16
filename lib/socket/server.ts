@@ -46,13 +46,14 @@ export function initSocketServer(httpServer: HTTPServer) {
     socket.on('room:join', async ({ roomId, user }) => {
       currentRoom = roomId;
       currentUserId = user.userId;
+      const { avatarUrl, ...presenceUser } = user as any;
 
       await socket.join(roomId);
 
       // Store presence in Redis with TTL (Upstash compatible)
-      const presenceKey = `presence:${roomId}:${user.userId}`;
-      await redis.set(presenceKey, JSON.stringify(user), { ex: PRESENCE_TTL });
-      const nextLibraryRoom = user.activeLibraryId ? `library:${user.activeLibraryId}` : null;
+      const presenceKey = `presence:${roomId}:${presenceUser.userId}`;
+      await redis.set(presenceKey, JSON.stringify(presenceUser), { ex: PRESENCE_TTL });
+      const nextLibraryRoom = presenceUser.activeLibraryId ? `library:${presenceUser.activeLibraryId}` : null;
       if (currentLibraryRoom && currentLibraryRoom !== nextLibraryRoom) await socket.leave(currentLibraryRoom);
       if (nextLibraryRoom) await socket.join(nextLibraryRoom);
       currentLibraryRoom = nextLibraryRoom;
@@ -66,13 +67,13 @@ export function initSocketServer(httpServer: HTTPServer) {
         .filter(Boolean)
         .map((d) => (typeof d === 'string' ? JSON.parse(d) : d));
       let libraryUsers: any[] = [];
-      if (user.activeLibraryId) {
+      if (presenceUser.activeLibraryId) {
         const libraryPresenceKeys = await redis.keys('presence:*:*');
         const libraryPresenceData = await Promise.all(libraryPresenceKeys.map((k) => redis.get(k)));
         libraryUsers = libraryPresenceData
           .filter(Boolean)
           .map((d) => (typeof d === 'string' ? JSON.parse(d) : d))
-          .filter((u: any) => u?.activeLibraryId === user.activeLibraryId);
+          .filter((u: any) => u?.activeLibraryId === presenceUser.activeLibraryId);
       }
 
       // Send full room state to joiner
@@ -90,28 +91,29 @@ export function initSocketServer(httpServer: HTTPServer) {
       socket.emit('presence:list', Array.from(presenceByTab.values()));
 
       // Announce new user to rest of room
-      socket.to(roomId).emit('presence:join', user);
-      if (user.activeLibraryId) socket.to(`library:${user.activeLibraryId}`).emit('presence:update', user);
+      socket.to(roomId).emit('presence:join', presenceUser);
+      if (presenceUser.activeLibraryId) socket.to(`library:${presenceUser.activeLibraryId}`).emit('presence:update', presenceUser);
       socket.to(roomId).emit('notification:activity', {
-        id: `presence:join:${roomId}:${user.userId}:${Math.floor(Date.now() / 5000)}`,
+        id: `presence:join:${roomId}:${presenceUser.userId}:${Math.floor(Date.now() / 5000)}`,
         roomId,
         type: 'presence:join',
-        title: `${user.userName || 'Someone'} joined`,
-        userId: user.userId,
-        userName: user.userName,
+        title: `${presenceUser.userName || 'Someone'} joined`,
+        userId: presenceUser.userId,
+        userName: presenceUser.userName,
         ts: Date.now(),
       });
     });
 
     socket.on('presence:update', async ({ roomId, user }) => {
       if (!currentRoom || roomId !== currentRoom || !user.userId) return;
+      const { avatarUrl, ...presenceUser } = user as any;
 
       const nextUser = {
-        ...user,
+        ...presenceUser,
         lastSeen: Date.now(),
       };
 
-      const presenceKey = `presence:${roomId}:${user.userId}`;
+      const presenceKey = `presence:${roomId}:${presenceUser.userId}`;
       const existing = await redis.get(presenceKey);
       const previous = existing
         ? (typeof existing === 'string' ? JSON.parse(existing) : existing)

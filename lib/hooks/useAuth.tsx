@@ -301,7 +301,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         const roomId = (window as any).__readroom_roomId;
         if (roomId) {
-          socket.emit('presence:update', { roomId, user: { ...self, userName: trimmed, avatarInitials } });
+          socket.emit('presence:update', { roomId, user: { userId: self.userId, userName: trimmed, avatarInitials } });
         }
       }
       return true;
@@ -339,7 +339,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         const roomId = (window as any).__readroom_roomId;
         if (roomId) {
-          socket.emit('presence:update', { roomId, user: { ...self, avatarUrl: url } });
+          socket.emit('presence:update', { roomId, user: { userId: self.userId } });
         }
       }
       return true;

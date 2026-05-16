@@ -1,6 +1,6 @@
 'use client';
 // components/ui/Avatar.tsx
-import React, { useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import type { UserMeta } from '@/types';
 
 interface AvatarProps {
@@ -16,27 +16,33 @@ const sizeMap = {
   lg: 'w-10 h-10 text-sm' 
 };
 
-export function Avatar({ user, size = 'md', showTooltip = true }: AvatarProps) {
+function AvatarBase({ user, size = 'md', showTooltip = true }: AvatarProps) {
   const [imgFailed, setImgFailed] = useState(false);
+  const avatarUrl = user.avatarUrl ?? null;
   
   // Reset failure state if URL changes (e.g. user updates their photo)
   React.useEffect(() => {
     setImgFailed(false);
-  }, [user.avatarUrl]);
+  }, [avatarUrl]);
 
-  const showImage = user.avatarUrl && !imgFailed;
+  const showImage = Boolean(avatarUrl && !imgFailed);
+  const fallbackStyle = useMemo(() => (
+    showImage ? undefined : { backgroundColor: user.avatarColor }
+  ), [showImage, user.avatarColor]);
 
   return (
     <div className="relative group">
       <div
         className={`${sizeMap[size]} rounded-full flex items-center justify-center font-semibold text-white ring-2 ring-room-bg select-none flex-shrink-0 overflow-hidden`}
-        style={showImage ? {} : { backgroundColor: user.avatarColor }}
+        style={fallbackStyle}
         title={user.userName}
       >
         {showImage ? (
           <img
-            src={user.avatarUrl!}
+            src={avatarUrl!}
             alt={user.userName}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover"
             onError={() => setImgFailed(true)}
           />
@@ -52,3 +58,13 @@ export function Avatar({ user, size = 'md', showTooltip = true }: AvatarProps) {
     </div>
   );
 }
+
+export const Avatar = memo(AvatarBase, (prev, next) => (
+  prev.size === next.size &&
+  prev.showTooltip === next.showTooltip &&
+  prev.user.userId === next.user.userId &&
+  prev.user.userName === next.user.userName &&
+  prev.user.avatarUrl === next.user.avatarUrl &&
+  prev.user.avatarColor === next.user.avatarColor &&
+  prev.user.avatarInitials === next.user.avatarInitials
+));

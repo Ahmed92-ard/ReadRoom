@@ -42,7 +42,7 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
       });
       getSocket().emit('presence:update', {
         roomId,
-        user: { ...currentSelf, avatarUrl: url },
+        user: { userId: currentSelf.userId },
       });
     }
   };

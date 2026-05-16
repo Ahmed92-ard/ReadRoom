@@ -54,7 +54,7 @@ export async function POST(req: Request) {
     // Use admin for upload if available, fall back to user client
     const storageClient = admin ?? supabase;
 
-    // Unique path: avatars/{userId}/{timestamp}.{ext} — overwrites previous avatar
+    // Unique path per upload means the canonical DB URL changes only when the avatar changes.
     const ext = file.type.split('/')[1] ?? 'png';
     const storagePath = `${user.id}/avatar-${Date.now()}.${ext}`;
     const buffer = await file.arrayBuffer();
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
       .upload(storagePath, buffer, {
         contentType: file.type,
         upsert: true,
-        cacheControl: '0', // disable CDN caching so new avatar shows immediately
+        cacheControl: '31536000',
       });
 
     if (uploadError) {
@@ -78,9 +78,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: uploadError.message }, { status: 500 });
     }
 
-    // Build public URL with a cache-busting query param so clients don't get stale images
+    // Store the stable public URL canonically. The path is unique per upload.
     const { data: urlData } = storageClient.storage.from(BUCKET).getPublicUrl(storagePath);
-    const avatarUrl = `${urlData.publicUrl}?t=${Date.now()}`;
+    const avatarUrl = urlData.publicUrl;
 
     // Update or repair the user's canonical profile record
     const profileClient = admin ?? supabase;
@@ -106,12 +106,6 @@ export async function POST(req: Request) {
       console.error('[avatar] profile update error:', updateError);
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
-
-    const { error: messageError } = await profileClient
-      .from('messages')
-      .update({ avatar_url: avatarUrl })
-      .eq('sender_id', user.id);
-    if (messageError) console.warn('[avatar] message avatar backfill failed:', messageError);
 
     return NextResponse.json({ profile, avatarUrl });
   } catch (err) {

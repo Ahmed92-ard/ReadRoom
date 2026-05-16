@@ -110,7 +110,6 @@ app.prepare().then(() => {
         userName: cleanUserName,
         avatarColor: user.avatarColor || stringToColor(cleanUserId),
         avatarInitials: user.avatarInitials || makeInitials(cleanUserName),
-        avatarUrl: user.avatarUrl || null,
         joinedAt: user.joinedAt ?? Date.now(),
         isFollowing: false,
         page: user.page ?? 1,
@@ -227,7 +226,6 @@ app.prepare().then(() => {
         userName: finalName,
         avatarColor: user.avatarColor || stringToColor(cleanUserId),
         avatarInitials: user.avatarInitials || makeInitials(finalName),
-        avatarUrl: user.avatarUrl || null,
         joinedAt: user.joinedAt ?? Date.now(),
         isFollowing: user.isFollowing ?? false,
         page,
@@ -373,21 +371,23 @@ app.prepare().then(() => {
             const updated = {
               ...parsed,
               userName: cleanName,
-              avatarUrl: payload.avatarUrl,
               avatarColor: payload.avatarColor,
               avatarInitials: payload.avatarInitials,
             };
             await redis.set(presenceKey, JSON.stringify(updated), { ex: 60 }).catch(() => {});
           } catch {}
         }
-        // Broadcast to all users in the room
-        socket.to(socket.data.roomId).emit('profile:updated', {
+        const profileUpdate = {
           userId: cleanUserId,
           userName: cleanName,
           avatarUrl: payload.avatarUrl,
           avatarColor: payload.avatarColor,
           avatarInitials: payload.avatarInitials,
-        });
+        };
+
+        // Broadcast canonical profile changes broadly; routine presence remains avatar-free.
+        socket.to(socket.data.roomId).emit('profile:updated', profileUpdate);
+        if (socket.data.libraryId) socket.to(`library:${socket.data.libraryId}`).emit('profile:updated', profileUpdate);
       }
     });
 

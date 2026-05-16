@@ -30,6 +30,11 @@ function makeTabId(userId: string) {
   return tabId;
 }
 
+function presenceOnly(user: Partial<UserMeta>) {
+  const { avatarUrl, ...rest } = user;
+  return rest;
+}
+
 export function usePresence(
   roomId: string,
   libraryId: string | null,
@@ -188,7 +193,7 @@ export function usePresence(
     const joinRoom = () => {
       const currentSelf = buildSelf();
       setSelf(currentSelf);
-      socket.emit('room:join', { roomId, user: currentSelf });
+      socket.emit('room:join', { roomId, user: presenceOnly(currentSelf) as UserMeta });
       setConnectionStatus('connected');
     };
 
@@ -284,7 +289,7 @@ export function usePresence(
       if (throttleTimer) clearTimeout(throttleTimer);
       throttleTimer = setTimeout(() => {
         const socket = getSocket();
-        if (socket.connected) socket.emit('presence:update', { roomId, user: { ...selfNow, ...patch } });
+        if (socket.connected) socket.emit('presence:update', { roomId, user: presenceOnly({ ...selfNow, ...patch }) });
       }, 500);
     });
 
@@ -302,7 +307,7 @@ export function usePresence(
       lastSeen: Date.now(),
     };
     updateSelf(patch);
-    getSocket().emit('presence:update', { roomId, user: { ...self, ...patch } });
+    getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
   }, [roomId, libraryId, roomName, updateSelf]);
 
   // ── Visibility change → isActive ─────────────────────────────────────────
@@ -314,7 +319,7 @@ export function usePresence(
       const lastSeen = Date.now();
       const patch = { activeLibraryId: libraryId, currentRoomId: roomId, currentRoomName: roomNameRef.current, isActive, lastSeen };
       updateSelf(patch);
-      getSocket().emit('presence:update', { roomId, user: { ...self, ...patch } });
+      getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
     };
     document.addEventListener('visibilitychange', handle);
     return () => document.removeEventListener('visibilitychange', handle);
@@ -326,7 +331,7 @@ export function usePresence(
     if (!self || userName === 'Reader' || self.userName !== 'Reader') return;
     const patch = { userName, avatarInitials: makeInitials(userName) };
     updateSelf(patch);
-    getSocket().emit('presence:update', { roomId, user: { ...self, ...patch } });
+    getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
   }, [roomId, userName, updateSelf]);
 
   // ── Cross-tab name sync via localStorage ──────────────────────────────────
@@ -337,7 +342,7 @@ export function usePresence(
       if (!self) return;
       const patch = { userName: e.newValue, avatarInitials: makeInitials(e.newValue) };
       updateSelf(patch);
-      getSocket().emit('presence:update', { roomId, user: { ...self, ...patch } });
+      getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
     };
     window.addEventListener('storage', handle);
     return () => window.removeEventListener('storage', handle);

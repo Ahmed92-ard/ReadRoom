@@ -24,6 +24,7 @@ import { useParams } from 'next/navigation';
 import { getSocket } from '@/lib/socket/client';
 import { createClient } from '@/lib/supabase/client';
 import { usePresenceStore } from '@/store/presenceStore';
+import { Avatar } from '@/components/ui/Avatar';
 import type { ChatAttachment, ChatMessage, ChatReaction } from '@/types';
 
 interface ChatProps {
@@ -800,6 +801,15 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const isSelf = Boolean(self?.userId && msg.userId.startsWith(self.userId.split('_')[0]));
           const displayName = isSelf ? self?.userName ?? msg.userName : msg.userName;
           const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId.startsWith(msg.userId.split('_')[0]));
+          const avatarUser = {
+            userId: avatar?.userId ?? msg.userId,
+            userName: displayName,
+            avatarColor: avatar?.avatarColor ?? msg.avatarColor,
+            avatarInitials: avatar?.avatarInitials ?? displayName.slice(0, 2).toUpperCase(),
+            avatarUrl: avatar?.avatarUrl ?? msg.avatarUrl ?? null,
+            joinedAt: 0,
+            isFollowing: false,
+          };
           const receipts = msg.receipts ?? [];
           const selfBaseId = self?.userId.split('_')[0];
           const read = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && r.readAt);
@@ -831,8 +841,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
               >
                 <div className="flex w-8 flex-shrink-0 flex-col items-center">
                   {!grouped ? (
-                    <div className="mt-0.5 h-8 w-8 overflow-hidden rounded-full ring-1 ring-room-border" style={avatar?.avatarUrl ? {} : { backgroundColor: avatar?.avatarColor ?? msg.avatarColor }}>
-                      {avatar?.avatarUrl || msg.avatarUrl ? <img src={avatar?.avatarUrl ?? msg.avatarUrl ?? ''} alt={displayName} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[11px] font-semibold text-white">{avatar?.avatarInitials ?? '?'}</div>}
+                    <div className="mt-0.5">
+                      <Avatar user={avatarUser} size="md" showTooltip={false} />
                     </div>
                   ) : (
                     <div className="invisible flex h-full items-center justify-center text-[9px] text-room-muted/60 group-hover:visible">
