@@ -17,6 +17,16 @@ declare global {
 
 const PRESENCE_TTL = 30; // seconds
 
+async function hasOtherLibraryPresence(userId: string, libraryId?: string | null) {
+  if (!libraryId) return false;
+  const keys = await redis.keys(`presence:*:${userId}`);
+  const records = await Promise.all(keys.map((key) => redis.get(key)));
+  return records
+    .filter(Boolean)
+    .map((record) => (typeof record === 'string' ? JSON.parse(record) : record))
+    .some((user: any) => user?.activeLibraryId === libraryId && user?.isActive !== false);
+}
+
 export function initSocketServer(httpServer: HTTPServer) {
   if (global.__io) return global.__io;
 
@@ -71,8 +81,13 @@ export function initSocketServer(httpServer: HTTPServer) {
         socket.emit('sync:state', typeof roomState === 'string' ? JSON.parse(roomState) : roomState);
       }
 
-      // Send current presence list to joiner
-      socket.emit('presence:list', [...users, ...libraryUsers]);
+      const presenceByTab = new Map<string, any>();
+      [...users, ...libraryUsers].forEach((presence) => {
+        if (presence?.userId) presenceByTab.set(presence.userId, presence);
+      });
+
+      // Send current library-wide presence list to joiner
+      socket.emit('presence:list', Array.from(presenceByTab.values()));
 
       // Announce new user to rest of room
       socket.to(roomId).emit('presence:join', user);
@@ -243,16 +258,26 @@ export function initSocketServer(httpServer: HTTPServer) {
     });
 
     socket.on('room:leave', async ({ roomId, userId }) => {
+      const presenceKey = `presence:${roomId}:${userId}`;
+      const existing = await redis.get(presenceKey);
+      const leavingUser = existing
+        ? (typeof existing === 'string' ? JSON.parse(existing) : existing)
+        : null;
       await redis.del(`presence:${roomId}:${userId}`);
-      socket.to(roomId).emit('presence:left', { userId });
-      socket.to(roomId).emit('notification:activity', {
-        id: `presence:left:${roomId}:${userId}:${Math.floor(Date.now() / 5000)}`,
-        roomId,
-        type: 'presence:left',
-        title: 'User left',
-        userId,
-        ts: Date.now(),
-      });
+      setTimeout(async () => {
+        const stillOnline = await hasOtherLibraryPresence(userId, leavingUser?.activeLibraryId);
+        if (stillOnline) return;
+        io.to(roomId).emit('presence:left', { userId });
+        if (leavingUser?.activeLibraryId) io.to(`library:${leavingUser.activeLibraryId}`).emit('presence:left', { userId });
+        io.to(roomId).emit('notification:activity', {
+          id: `presence:left:${roomId}:${userId}:${Math.floor(Date.now() / 5000)}`,
+          roomId,
+          type: 'presence:left',
+          title: 'User left',
+          userId,
+          ts: Date.now(),
+        });
+      }, 1200);
       await socket.leave(roomId);
       if (currentRoom === roomId && currentUserId === userId) {
         if (currentLibraryRoom) await socket.leave(currentLibraryRoom);
@@ -264,16 +289,28 @@ export function initSocketServer(httpServer: HTTPServer) {
 
     socket.on('disconnect', async () => {
       if (currentRoom && currentUserId) {
-        await redis.del(`presence:${currentRoom}:${currentUserId}`);
-        socket.to(currentRoom).emit('presence:left', { userId: currentUserId });
-        socket.to(currentRoom).emit('notification:activity', {
-          id: `presence:left:${currentRoom}:${currentUserId}:${Math.floor(Date.now() / 5000)}`,
-          roomId: currentRoom,
-          type: 'presence:left',
-          title: 'User left',
-          userId: currentUserId,
-          ts: Date.now(),
-        });
+        const presenceKey = `presence:${currentRoom}:${currentUserId}`;
+        const existing = await redis.get(presenceKey);
+        const leavingUser = existing
+          ? (typeof existing === 'string' ? JSON.parse(existing) : existing)
+          : null;
+        await redis.del(presenceKey);
+        const roomId = currentRoom;
+        const userId = currentUserId;
+        setTimeout(async () => {
+          const stillOnline = await hasOtherLibraryPresence(userId, leavingUser?.activeLibraryId);
+          if (stillOnline) return;
+          io.to(roomId).emit('presence:left', { userId });
+          if (leavingUser?.activeLibraryId) io.to(`library:${leavingUser.activeLibraryId}`).emit('presence:left', { userId });
+          io.to(roomId).emit('notification:activity', {
+            id: `presence:left:${roomId}:${userId}:${Math.floor(Date.now() / 5000)}`,
+            roomId,
+            type: 'presence:left',
+            title: 'User left',
+            userId,
+            ts: Date.now(),
+          });
+        }, 1200);
       }
     });
   });

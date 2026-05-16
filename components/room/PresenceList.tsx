@@ -68,6 +68,9 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
         isActive,
         lastSeen: Math.max(existing.lastSeen ?? 0, user.lastSeen ?? 0),
         avatarUrl: user.avatarUrl ?? existing.avatarUrl,
+        activeLibraryId: user.activeLibraryId ?? existing.activeLibraryId,
+        currentRoomId: user.currentRoomId ?? existing.currentRoomId,
+        currentRoomName: user.currentRoomName ?? existing.currentRoomName,
         ...(useNewData ? {
           userId: user.userId, 
           page: user.page,
@@ -76,6 +79,9 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
           activePdfId: user.activePdfId,
           activePdfName: user.activePdfName,
           userName: user.userName,
+          activeLibraryId: user.activeLibraryId,
+          currentRoomId: user.currentRoomId,
+          currentRoomName: user.currentRoomName,
         } : {}),
       });
     }

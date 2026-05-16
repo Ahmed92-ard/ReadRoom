@@ -52,6 +52,11 @@ export function GooglePicker({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  const stopBrowserDrop = useCallback((e: DragEvent | React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
   const uploadFilename = (file: File, relativePath?: string) => {
     relativePath = relativePath || ((file as any).webkitRelativePath as string | undefined);
     return relativePath?.split('/').pop() || file.name;
@@ -216,12 +221,26 @@ export function GooglePicker({
   }, [libraryId, channelId, onLocalUploaded, onSelect, onClose, initialFolderId]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
+    stopBrowserDrop(e);
     handleFiles(await getDroppedItems(e.dataTransfer));
-  }, [handleFiles]);
+  }, [handleFiles, stopBrowserDrop]);
+
+  React.useEffect(() => {
+    window.addEventListener('dragover', stopBrowserDrop);
+    window.addEventListener('drop', stopBrowserDrop);
+    return () => {
+      window.removeEventListener('dragover', stopBrowserDrop);
+      window.removeEventListener('drop', stopBrowserDrop);
+    };
+  }, [stopBrowserDrop]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onDragEnter={stopBrowserDrop}
+      onDragOver={stopBrowserDrop}
+      onDrop={handleDrop}
+    >
       <div className="relative w-full max-w-md rounded-2xl bg-room-surface border border-room-border shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4">
@@ -258,7 +277,8 @@ export function GooglePicker({
           {/* Drop zone */}
           <div
             onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
+            onDragEnter={stopBrowserDrop}
+            onDragOver={stopBrowserDrop}
             onClick={() => !uploading && fileInputRef.current?.click()}
             className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
               uploading
@@ -334,12 +354,14 @@ export function GooglePicker({
               title="Upload an entire folder — subfolders are preserved"
             >
               <FolderPlus size={16} />
-              Select Folders
+              Select Folder
             </button>
           </div>
 
           <p className="text-xs text-room-muted text-center">
-            {initialFolderId ? 'Selected files will be added to this folder.' : 'Folder uploads preserve the full subfolder structure inside the room.'}
+            {initialFolderId
+              ? 'Selected files will be added to this folder.'
+              : 'Folder picker support varies by browser; drag multiple folders here together for multi-folder uploads.'}
           </p>
         </div>
       </div>
