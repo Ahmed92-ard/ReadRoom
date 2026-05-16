@@ -23,7 +23,7 @@ export function ProfileOnboarding() {
   const visible = Boolean(user && !loading && !profileComplete);
   const normalized = useMemo(() => normalizeUsername(username), [username]);
   const initials = makeInitials(normalized || userName || 'Reader');
-  const color = stringToColor(user?.id ?? normalized || 'Reader');
+  const color = stringToColor((user?.id ?? normalized) || 'Reader');
 
   useEffect(() => {
     if (!visible) return;
