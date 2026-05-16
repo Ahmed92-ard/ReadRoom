@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, Trash2, GripVertical, Settings } from 'lucide-react';
+import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
 import { useRoomStore } from '@/store/roomStore';
@@ -10,11 +10,10 @@ import { usePDFStore } from '@/store/pdfStore';
 import { PDFViewer, type PDFViewerState } from '@/components/pdf/PDFViewer';
 import { Avatar } from '@/components/ui/Avatar';
 import { PresenceBar } from './PresenceBar';
-import { Chat } from './Chat';
 import { Notes } from './Notes';
 import { PresenceList } from './PresenceList';
 import { GooglePicker } from '@/components/drive/GooglePicker';
-import { useAuth } from '@/lib/hooks/useAuth';
+import { FolderTree } from '@/components/room/FolderTree';
 import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { ChatSidebar } from '@/components/layout/ChatSidebar';
@@ -27,6 +26,21 @@ import { usePresenceStore } from '@/store/presenceStore';
 import type { PDFMeta, ChannelPDF, RoomActivity } from '@/types';
 
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Recursively collect all PDFs from a folder tree + root PDFs into a flat array */
+function collectAllPdfs(folders: import('@/types').PDFFolder[], rootPdfs: ChannelPDF[]): ChannelPDF[] {
+  const result: ChannelPDF[] = [...rootPdfs];
+  const walk = (nodes: import('@/types').PDFFolder[]) => {
+    for (const f of nodes) {
+      result.push(...f.pdfs);
+      walk(f.children);
+    }
+  };
+  walk(folders);
+  return result;
+}
 
 // ── Empty state ───────────────────────────────────────────────────────────────
 
@@ -215,6 +229,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const followTarget = usePDFStore((s) => s.followTarget);
 
   const [channelPDFs, setChannelPDFs] = useState<ChannelPDF[]>([]);
+  const [rootPdfs, setRootPdfs] = useState<ChannelPDF[]>([]);
+  const [folderTree, setFolderTree] = useState<import('@/types').PDFFolder[]>([]);
   const [currentChannelPdfId, setCurrentChannelPdfId] = useState<string | null>(null);
   const [openViewers, setOpenViewers] = useState<OpenViewer[]>([]);
   const [showPicker, setShowPicker] = useState(false);
@@ -611,6 +627,22 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return ((data.pdfs ?? []) as any[]).map(normalizeChannelPDF);
   }, [channelId, normalizeChannelPDF, libraryId]);
 
+  // Fetch folder tree (folders + rootPdfs) and sync into state
+  const fetchFolderTree = useCallback(async () => {
+    if (!libraryId || !channelId) return;
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`);
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      setFolderTree(data.folders ?? []);
+      const rp = ((data.rootPdfs ?? []) as any[]).map(normalizeChannelPDF);
+      setRootPdfs(rp);
+      // Keep flat channelPDFs in sync (used by follow mode, socket handlers, etc.)
+      const allPdfs = collectAllPdfs(data.folders ?? [], rp);
+      setChannelPDFs(allPdfs);
+    } catch { /* non-critical */ }
+  }, [libraryId, channelId, normalizeChannelPDF]);
+
   useEffect(() => {
     if (initialRoom && !room) {
       // In a library/channel context, the active PDF comes from fetchChannelPDFs —
@@ -690,29 +722,36 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   useEffect(() => {
     if (!libraryId || !channelId) {
       setChannelPDFs([]);
+      setRootPdfs([]);
+      setFolderTree([]);
       setCurrentChannelPdfId(null);
       return;
     }
 
     let cancelled = false;
-    fetchChannelPDFs()
-      .then((pdfs) => {
+
+    // Fetch folder tree (includes all PDFs organized by folder)
+    const loadTree = async () => {
+      try {
+        const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`);
+        const data = await res.json().catch(() => ({}));
         if (cancelled) return;
-        setChannelPDFs(pdfs);
+
+        const rp = ((data.rootPdfs ?? []) as any[]).map(normalizeChannelPDF);
+        const ft = data.folders ?? [];
+        setFolderTree(ft);
+        setRootPdfs(rp);
+        const allPdfs = collectAllPdfs(ft, rp);
+        setChannelPDFs(allPdfs);
 
         const storedPdfId = selectionStorageKey ? localStorage.getItem(selectionStorageKey) : null;
-
-        // If the stored PDF ID no longer exists (was deleted), clear the stale key
-        if (storedPdfId && !pdfs.some((item) => item.id === storedPdfId)) {
+        if (storedPdfId && !allPdfs.some((item) => item.id === storedPdfId)) {
           if (selectionStorageKey) localStorage.removeItem(selectionStorageKey);
         }
 
-        const desiredPdf = pdfs.find((item) => item.id === storedPdfId) ??
-          pdfs.find((item) => item.driveId === room?.pdf?.fileId) ??
-          pdfs[0];
+        const desiredPdf = allPdfs.find((item) => item.id === storedPdfId) ?? allPdfs[0];
 
         if (!desiredPdf) {
-          // Channel has no PDFs — reset any stale initialRoom.pdf to prevent ghost loading
           setCurrentChannelPdfId(null);
           setRoom(buildRoomState(null));
           return;
@@ -728,13 +767,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           setRoom(buildRoomState(desiredMeta));
         }
         publishActivePdf(desiredPdf.id, desiredPdf.filename);
-      })
-      .catch((err) => {
-        console.error('[RoomShell] failed to fetch channel PDFs', err);
-        setPdfLibraryError(err instanceof Error ? err.message : String(err));
-      });
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[RoomShell] failed to fetch folder tree', err);
+          setPdfLibraryError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    };
+
+    loadTree();
     return () => { cancelled = true; };
-  }, [libraryId, channelId, buildRoomState, channelPdfToMeta, fetchChannelPDFs, room?.pdf?.fileId, room?.pdf?.url, publishActivePdf, selectionStorageKey, setRoom]);
+  }, [libraryId, channelId, buildRoomState, channelPdfToMeta, normalizeChannelPDF, publishActivePdf, selectionStorageKey, setRoom]);
 
   usePDFSync(roomId, mainContainerRef, currentChannelPdfId, room?.pdf?.filename);
   usePresence(roomId, libraryId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null);
@@ -782,9 +825,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     };
 
     const handleLibraryUpdated = (activity: RoomActivity) => {
-      console.log('[RoomShell] library:updated', activity.roomId);
       if (activity.roomId !== roomId) return;
-      fetchChannelPDFs().then(setChannelPDFs).catch(console.error);
+      fetchFolderTree();
     };
 
     const handleActivity = (activity: RoomActivity) => {
@@ -827,8 +869,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     };
 
     const handleConnect = () => {
-      console.log('[RoomShell] socket connected, refreshing library');
-      fetchChannelPDFs().then(setChannelPDFs).catch(console.error);
+      fetchFolderTree();
     };
 
     socket.on('pdf:added', handlePdfAdded);
@@ -843,7 +884,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       socket.off('notification:activity', handleActivity);
       socket.off('connect', handleConnect);
     };
-  }, [roomId, initialUserId, initialUserName, buildRoomState, channelPdfToMeta, fetchChannelPDFs, persistNotificationState, pushToast, showBrowserNotification, currentChannelPdfId, normalizeChannelPDF, publishActivePdf, setRoom]);
+  }, [roomId, initialUserId, initialUserName, buildRoomState, channelPdfToMeta, fetchFolderTree, persistNotificationState, pushToast, showBrowserNotification, currentChannelPdfId, normalizeChannelPDF, publishActivePdf, setRoom]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1037,6 +1078,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           ts: Date.now(),
           metadata: { action: 'deleted', pdfId: pdf.id },
         });
+
+        // Refresh folder tree so the deleted PDF disappears from the correct folder
+        fetchFolderTree();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error('[RoomShell] delete PDF failed', err);
@@ -1059,6 +1103,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       libraryId,
       setRoom,
       setSyncState,
+      fetchFolderTree,
     ]
   );
 
@@ -1096,12 +1141,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     async (rawPdf: any) => {
       const addedPdf = normalizeChannelPDF(rawPdf);
       setPdfLibraryError(null);
-      setChannelPDFs((prev) =>
-        prev.some((item) => item.id === addedPdf.id)
-          ? prev.map((item) => item.id === addedPdf.id ? addedPdf : item)
-          : [...prev, addedPdf]
-      );
-      await selectChannelPDF(addedPdf);
+      // Refresh the full folder tree so the new PDF appears in the right folder
+      await fetchFolderTree();
+      // Auto-select if nothing is open
+      if (!currentChannelPdfId) {
+        await selectChannelPDF(addedPdf);
+      }
       getSocket().emit('pdf:added', {
         id: `pdf:added:${addedPdf.id}`,
         roomId,
@@ -1114,8 +1159,87 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         metadata: { pdf: addedPdf },
       });
     },
-    [initialUserId, initialUserName, normalizeChannelPDF, roomId, selectChannelPDF]
+    [initialUserId, initialUserName, normalizeChannelPDF, roomId, selectChannelPDF, fetchFolderTree, currentChannelPdfId]
   );
+
+  // ── Folder operation handlers ─────────────────────────────────────────────
+
+  const handleDeleteFolder = useCallback(async (folderId: string) => {
+    if (!libraryId || !channelId) return;
+    const confirmed = window.confirm('Delete this folder? PDFs inside will be moved to the root.');
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setPdfLibraryError(d.error || 'Failed to delete folder');
+        return;
+      }
+      await fetchFolderTree();
+      getSocket().emit('library:updated', {
+        id: `library:folder-deleted:${folderId}:${Date.now()}`,
+        roomId,
+        type: 'library:updated',
+        title: `${initialUserName || 'Someone'} deleted a folder`,
+        userId: initialUserId,
+        userName: initialUserName,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      setPdfLibraryError(err instanceof Error ? err.message : String(err));
+    }
+  }, [libraryId, channelId, fetchFolderTree, roomId, initialUserId, initialUserName]);
+
+  const handleRenameFolder = useCallback(async (folderId: string, newName: string) => {
+    if (!libraryId || !channelId) return;
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId, name: newName }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setPdfLibraryError(d.error || 'Failed to rename folder');
+        return;
+      }
+      await fetchFolderTree();
+    } catch (err) {
+      setPdfLibraryError(err instanceof Error ? err.message : String(err));
+    }
+  }, [libraryId, channelId, fetchFolderTree]);
+
+  const handleCreateFolder = useCallback(async (name: string, parentId: string | null) => {
+    if (!libraryId || !channelId) return;
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parentId }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setPdfLibraryError(d.error || 'Failed to create folder');
+        return;
+      }
+      await fetchFolderTree();
+      getSocket().emit('library:updated', {
+        id: `library:folder-created:${Date.now()}`,
+        roomId,
+        type: 'library:updated',
+        title: `${initialUserName || 'Someone'} created a folder`,
+        userId: initialUserId,
+        userName: initialUserName,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      setPdfLibraryError(err instanceof Error ? err.message : String(err));
+    }
+  }, [libraryId, channelId, fetchFolderTree, roomId, initialUserId, initialUserName]);
 
   const RightSidebarContent = (
     <div className="flex flex-col h-full">
@@ -1190,110 +1314,45 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
 
         <div className={activePanel === 'shelf' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
-          <div className="flex flex-col h-full p-4">
-             <div className="flex items-center justify-between mb-4">
-                <span className="text-[11px] font-bold text-room-muted tracking-widest flex items-center gap-2">
-                  <FolderOpen size={12} />
-                  ROOM LIBRARY
-                </span>
-                <button 
-                  onClick={() => {
-                    setPdfLibraryError(null);
-                    setShowPicker(true);
-                  }} 
-                  className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
-                >
-                  + Add
-                </button>
+          <div className="flex flex-col h-full p-3">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <span className="text-[11px] font-bold text-room-muted tracking-widest flex items-center gap-1.5">
+                <FolderOpen size={12} />
+                ROOM LIBRARY
+              </span>
+              <button
+                onClick={() => { setPdfLibraryError(null); setShowPicker(true); }}
+                className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
+              >
+                + Upload
+              </button>
+            </div>
+
+            {/* Error */}
+            {pdfLibraryError && (
+              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 flex-shrink-0">
+                {pdfLibraryError}
               </div>
+            )}
 
-              {room?.pdf ? (
-                <div className="mb-4 p-3 bg-room-bg rounded-xl border border-room-border flex items-start gap-3 w-full">
-                  {room.pdf.thumbnail && (
-                    <img
-                      src={room.pdf.thumbnail}
-                      alt={room.pdf.filename}
-                      className="w-12 h-16 object-cover rounded shadow-sm bg-room-surface flex-shrink-0"
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                    />
-                  )}
-                  <div className="min-w-0 flex-1 flex flex-col justify-center h-16">
-                    <p className="text-sm text-room-text font-semibold truncate leading-tight mb-1">{room.pdf.filename}</p>
-                    <p className="text-[10px] text-room-muted tracking-wider font-bold">ROOM LIBRARY</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-4 p-6 border-2 border-dashed border-room-border rounded-2xl text-center">
-                  <p className="text-xs text-room-muted mb-3">No active document</p>
-                  <button
-                    onClick={() => {
-                      setPdfLibraryError(null);
-                      setShowPicker(true);
-                    }}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-xl text-xs font-bold"
-                  >
-                    Upload PDF
-                  </button>
-                </div>
-              )}
-
-              {pdfLibraryError && (
-                <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                  {pdfLibraryError}
-                </div>
-              )}
-
-              <div className="space-y-1.5 overflow-y-auto">
-                {channelPDFs.map((pdf) => (
-                  <div
-                    key={pdf.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectChannelPDF(pdf)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        selectChannelPDF(pdf);
-                      }
-                    }}
-                    className={`w-full text-left px-4 py-3 rounded-xl transition-all border ${
-                      pdf.id === currentChannelPdfId 
-                        ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' 
-                        : 'bg-room-bg/50 border-transparent text-room-muted hover:bg-room-hover hover:text-room-text'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="truncate text-sm font-medium">{pdf.filename}</span>
-                      <span className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openPdfViewer(pdf);
-                          }}
-                          className="px-2 py-1 rounded-md text-[10px] bg-room-surface text-room-muted hover:text-room-text"
-                        >
-                          Side
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteChannelPDF(pdf);
-                          }}
-                          disabled={deletingPdfId === pdf.id}
-                          className="p-1.5 rounded-md bg-room-surface text-room-muted hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-wait transition-colors"
-                          title="Delete PDF"
-                          aria-label={`Delete ${pdf.filename}`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                        {pdf.id === currentChannelPdfId && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.5)]" />
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {/* Folder tree */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <FolderTree
+                folders={folderTree}
+                rootPdfs={rootPdfs}
+                activePdfId={currentChannelPdfId}
+                deletingPdfId={deletingPdfId}
+                onSelectPdf={selectChannelPDF}
+                onDeletePdf={deleteChannelPDF}
+                onOpenSideViewer={openPdfViewer}
+                onDeleteFolder={handleDeleteFolder}
+                onRenameFolder={handleRenameFolder}
+                onCreateFolder={handleCreateFolder}
+                libraryId={libraryId}
+                channelId={channelId}
+              />
+            </div>
           </div>
         </div>
       </div>

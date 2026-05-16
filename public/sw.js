@@ -1,123 +1,162 @@
-// ReadRoom Service Worker — v7 (Drive removed, local-only uploads)
-// Bump CACHE_NAME whenever the app shell changes to force cache invalidation.
-const CACHE_NAME = 'readroom-v7';
+// ReadRoom Service Worker - runtime-v8
+//
+// This worker is intentionally conservative: navigations, APIs, auth routes,
+// and app-shell assets go to the network first so an installed PWA cannot keep
+// booting with a mixed old/new Next.js deployment.
 
-const STATIC_ASSETS = [
+const SW_VERSION = 'runtime-v8';
+const RUNTIME_CACHE = `readroom-${SW_VERSION}`;
+const CACHE_ALLOWLIST = new Set([RUNTIME_CACHE]);
+
+const PRECACHE_ASSETS = [
   '/manifest.json',
   '/icons/app_icon_192.png',
   '/icons/app_icon_512.png',
   '/icons/app_icon.png',
 ];
 
-// ── Install ───────────────────────────────────────────────────────────────────
+function log(...args) {
+  // Visible in Application > Service Workers during PWA debugging.
+  console.log('[ReadRoom SW]', SW_VERSION, ...args);
+}
+
+function offlineResponse(message = 'ReadRoom is offline. Please reconnect and try again.') {
+  return new Response(message, {
+    status: 503,
+    statusText: 'Service Unavailable',
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-ReadRoom-SW': SW_VERSION,
+    },
+  });
+}
+
+function canCache(response) {
+  return response && response.ok && (response.type === 'basic' || response.type === 'cors');
+}
+
+async function putCache(request, response) {
+  if (!canCache(response)) return;
+  try {
+    const cache = await caches.open(RUNTIME_CACHE);
+    await cache.put(request, response.clone());
+  } catch (err) {
+    log('cache put failed', request.url, err);
+  }
+}
+
+async function networkFirst(request, fallbackToCache = false) {
+  try {
+    const response = await fetch(request, { cache: 'no-store' });
+    if (request.method === 'GET') await putCache(request, response);
+    return response;
+  } catch (err) {
+    log('network failed', request.url, err);
+    if (fallbackToCache) {
+      const cached = await caches.match(request).catch(() => undefined);
+      if (cached) return cached;
+    }
+    return offlineResponse();
+  }
+}
+
+async function cacheFirst(request) {
+  try {
+    const cached = await caches.match(request);
+    if (cached) {
+      fetch(request).then((response) => putCache(request, response)).catch((err) => {
+        log('background refresh failed', request.url, err);
+      });
+      return cached;
+    }
+    return await networkFirst(request, false);
+  } catch (err) {
+    log('cache-first failed', request.url, err);
+    return offlineResponse();
+  }
+}
+
 self.addEventListener('install', (event) => {
+  log('install');
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(STATIC_ASSETS))
-      .catch(() => { /* non-fatal: assets may not exist yet */ })
+    caches.open(RUNTIME_CACHE)
+      .then((cache) => cache.addAll(PRECACHE_ASSETS))
+      .catch((err) => log('precache failed', err))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
-// ── Activate: purge all old caches ───────────────────────────────────────────
 self.addEventListener('activate', (event) => {
+  log('activate');
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
-      )
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(
+        keys
+          .filter((key) => key.startsWith('readroom-') && !CACHE_ALLOWLIST.has(key))
+          .map((key) => {
+            log('delete old cache', key);
+            return caches.delete(key);
+          })
+      ))
+      .then(() => self.clients.claim())
   );
 });
 
-// ── Safe response helpers ─────────────────────────────────────────────────────
-// NEVER return undefined from a fetch handler — always return a Response.
-
-function offlineResponse() {
-  return new Response('Offline — please check your connection.', {
-    status: 503,
-    statusText: 'Service Unavailable',
-    headers: { 'Content-Type': 'text/plain' },
-  });
-}
-
-function networkErrorResponse(err) {
-  return new Response('Network error: ' + String(err), {
-    status: 503,
-    statusText: 'Service Unavailable',
-    headers: { 'Content-Type': 'text/plain' },
-  });
-}
-
-// ── Fetch ─────────────────────────────────────────────────────────────────────
-self.addEventListener('fetch', (event) => {
-  // Only handle GET requests
-  if (event.request.method !== 'GET') return;
-
-  const url = new URL(event.request.url);
-
-  // Only handle same-origin requests
-  if (url.origin !== self.location.origin) return;
-
-  // ── Network-only paths (never cache, always fresh) ────────────────────────
-  const isNetworkOnly =
-    event.request.mode === 'navigate' ||
-    url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/auth/') ||
-    url.pathname.startsWith('/libraries/') ||
-    url.pathname.startsWith('/room/') ||
-    url.pathname.includes('/_next/data/') ||
-    url.pathname.includes('/api/socket');
-
-  if (isNetworkOnly) {
-    event.respondWith(
-      fetch(event.request, { cache: 'no-store' })
-        .then((response) => {
-          // Always return the network response (even 4xx/5xx)
-          return response;
-        })
-        .catch((err) => {
-          // Network failed — try cache for navigate requests, else offline response
-          if (event.request.mode === 'navigate') {
-            return caches.match(event.request)
-              .then((cached) => cached ?? offlineResponse())
-              .catch(() => offlineResponse());
-          }
-          return networkErrorResponse(err);
-        })
+self.addEventListener('message', (event) => {
+  const type = event.data && event.data.type;
+  if (type === 'SKIP_WAITING') {
+    log('skip waiting requested');
+    self.skipWaiting();
+  }
+  if (type === 'CLEAR_CACHES') {
+    event.waitUntil(
+      caches.keys().then((keys) => Promise.all(
+        keys.filter((key) => key.startsWith('readroom-')).map((key) => caches.delete(key))
+      ))
     );
+  }
+});
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+
+  if (request.method !== 'GET') {
     return;
   }
 
-  // ── Cache-first with background update for static assets ─────────────────
-  // (_next/static/*, icons/*, manifest.json)
-  event.respondWith(
-    caches.match(event.request)
-      .then((cached) => {
-        // Kick off a background network fetch to keep cache fresh
-        const networkFetch = fetch(event.request)
-          .then((response) => {
-            if (response && response.ok && response.type === 'basic') {
-              const clone = response.clone();
-              caches.open(CACHE_NAME)
-                .then((cache) => cache.put(event.request, clone))
-                .catch(() => {});
-            }
-            return response;
-          })
-          .catch(() => null); // background update failure is non-fatal
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) {
+    return;
+  }
 
-        // Return cached immediately if available; otherwise wait for network
-        if (cached) return cached;
+  const path = url.pathname;
+  const isNavigation = request.mode === 'navigate';
+  const isCriticalRuntime =
+    path === '/' ||
+    path === '/sw.js' ||
+    path === '/manifest.json' ||
+    path.startsWith('/api/') ||
+    path.startsWith('/auth') ||
+    path.includes('/_next/data/') ||
+    path.startsWith('/_next/webpack-hmr');
 
-        return networkFetch.then((response) => {
-          if (response) return response;
-          return offlineResponse();
-        });
-      })
-      .catch((err) => {
-        // caches.match itself failed (shouldn't happen, but be safe)
-        return fetch(event.request).catch(() => networkErrorResponse(err));
-      })
-  );
+  const isImmutableStatic =
+    path.startsWith('/_next/static/') ||
+    path.startsWith('/icons/');
+
+  event.respondWith((async () => {
+    if (isNavigation || isCriticalRuntime) {
+      return networkFirst(request, false);
+    }
+
+    if (isImmutableStatic) {
+      return cacheFirst(request);
+    }
+
+    return networkFirst(request, true);
+  })().catch((err) => {
+    log('unhandled fetch failure', request.url, err);
+    return offlineResponse();
+  }));
 });
