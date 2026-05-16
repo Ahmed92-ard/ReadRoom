@@ -11,10 +11,10 @@ import { useIsMobile } from '@/lib/hooks/useIsMobile';
 function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active: boolean; onClick: () => void }) {
   const Icon = BookOpen;
   const { deleteChannel } = useWorkspaceStore();
-  const { servers } = useWorkspaceStore();
+  const { libraries } = useWorkspaceStore();
   const params = useParams();
   const router = useRouter();
-  const serverId = params?.serverId as string;
+  const libraryId = params?.libraryId as string;
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -28,13 +28,13 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
       setIsRenaming(false);
       return;
     }
-    const success = await updateChannel(serverId, channel.id, { name: newName.trim() });
+    const success = await updateChannel(libraryId, channel.id, { name: newName.trim() });
     if (success) setIsRenaming(false);
   };
 
   const handleCopyLink = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = `${window.location.origin}/servers/${serverId}/channels/${channel.id}`;
+    const url = `${window.location.origin}/libraries/${libraryId}/channels/${channel.id}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -43,11 +43,11 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const success = await deleteChannel(serverId, channel.id);
+    const success = await deleteChannel(libraryId, channel.id);
     if (success) {
       setShowDeleteConfirm(false);
-      // Navigate to another channel or server page if this was the active channel
-      router.push(`/servers/${serverId}`);
+      // Navigate to another channel or library page if this was the active channel
+      router.push(`/libraries/${libraryId}`);
     }
   };
 
@@ -142,16 +142,16 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
 export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomSheet?: boolean; onClose?: () => void }) {
   const router = useRouter();
   const params = useParams();
-  const serverId = params?.serverId as string;
+  const libraryId = params?.libraryId as string;
   const activeChannelId = params?.channelId as string | undefined;
 
-  const { servers, channels, fetchChannels, createChannel, updateServer } = useWorkspaceStore();
-  const server = servers.find((s) => s.id === serverId);
+  const { libraries, channels, fetchChannels, createChannel, updateLibrary } = useWorkspaceStore();
+  const library = libraries.find((s) => s.id === libraryId);
 
   const [showAddChannel, setShowAddChannel] = useState(false);
   const [newChannelName, setNewName] = useState('');
-  const [isRenamingServer, setIsRenamingServer] = useState(false);
-  const [serverName, setServerName] = useState('');
+  const [isRenamingLibrary, setIsRenamingLibrary] = useState(false);
+  const [libraryName, setLibraryName] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -159,48 +159,48 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
   const isMobile = useIsMobile();
 
   useEffect(() => {
-    if (serverId) fetchChannels(serverId);
-  }, [serverId, fetchChannels]);
+    if (libraryId) fetchChannels(libraryId);
+  }, [libraryId, fetchChannels]);
 
   useEffect(() => {
-    setServerName(server?.name ?? '');
-  }, [server?.name]);
+    setLibraryName(library?.name ?? '');
+  }, [library?.name]);
 
   const handleChannelClick = (channel: ChannelData) => {
     if (channel.id === activeChannelId && onClose) {
       onClose();
     } else {
-      router.push(`/servers/${serverId}/channels/${channel.id}`);
+      router.push(`/libraries/${libraryId}/channels/${channel.id}`);
     }
   };
 
   const handleCreateRoom = async () => {
-    if (!newChannelName.trim() || !serverId) return;
+    if (!newChannelName.trim() || !libraryId) return;
     setLoading(true);
-    const ch = await createChannel(serverId, newChannelName, 'pdf');
+    const ch = await createChannel(libraryId, newChannelName, 'pdf');
     setLoading(false);
     if (ch) {
       setShowAddChannel(false);
       setNewName('');
-      router.push(`/servers/${serverId}/channels/${ch.id}`);
+      router.push(`/libraries/${libraryId}/channels/${ch.id}`);
     }
   };
 
   const handleCopyInvite = () => {
-    if (!server?.invite_code) return;
-    navigator.clipboard.writeText(server.invite_code);
+    if (!library?.invite_code) return;
+    navigator.clipboard.writeText(library.invite_code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRenameServer = async () => {
-    const trimmed = serverName.trim();
-    if (!server || !trimmed || trimmed === server.name) {
-      setIsRenamingServer(false);
+  const handleRenameLibrary = async () => {
+    const trimmed = libraryName.trim();
+    if (!library || !trimmed || trimmed === library.name) {
+      setIsRenamingLibrary(false);
       return;
     }
-    const success = await updateServer(server.id, { name: trimmed });
-    if (success) setIsRenamingServer(false);
+    const success = await updateLibrary(library.id, { name: trimmed });
+    if (success) setIsRenamingLibrary(false);
   };
 
   const pdfChannels = channels.filter((c) => c.type === 'pdf');
@@ -213,27 +213,27 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
 
       {!inBottomSheet && (
         <div className="flex items-center justify-between px-4 py-3 border-b border-room-border flex-shrink-0">
-          {isRenamingServer ? (
+          {isRenamingLibrary ? (
             <input
               autoFocus
               className="min-w-0 flex-1 bg-room-bg border border-blue-500/50 rounded-lg px-2 py-1 text-sm text-room-text outline-none"
-              value={serverName}
-              onChange={(e) => setServerName(e.target.value)}
-              onBlur={handleRenameServer}
+              value={libraryName}
+              onChange={(e) => setLibraryName(e.target.value)}
+              onBlur={handleRenameLibrary}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRenameServer();
-                if (e.key === 'Escape') setIsRenamingServer(false);
+                if (e.key === 'Enter') handleRenameLibrary();
+                if (e.key === 'Escape') setIsRenamingLibrary(false);
               }}
               maxLength={64}
             />
           ) : (
             <h2 className="font-bold text-room-text text-sm truncate flex-1">
-              {server?.name ?? 'Loading…'}
+              {library?.name ?? 'Loading…'}
             </h2>
           )}
-          {server && (
+          {library && (
             <button
-              onClick={() => setIsRenamingServer(true)}
+              onClick={() => setIsRenamingLibrary(true)}
               className="ml-2 p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
               title="Rename library"
             >
@@ -284,7 +284,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
       </div>
 
       {/* Invite code — collapsible */}
-      {server?.invite_code && (
+      {library?.invite_code && (
         <div className="border-t border-room-border flex-shrink-0">
           <button
             onClick={() => setInviteOpen((o) => !o)}
@@ -302,7 +302,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
                 onClick={handleCopyInvite}
                 className="w-full flex items-center gap-2 px-3 py-2 bg-room-bg border border-room-border rounded-lg hover:border-blue-500/40 transition-colors group"
               >
-                <span className="flex-1 text-sm font-mono text-room-text tracking-widest text-left">{server.invite_code}</span>
+                <span className="flex-1 text-sm font-mono text-room-text tracking-widest text-left">{library.invite_code}</span>
                 {copied
                   ? <Check size={14} className="text-green-400 flex-shrink-0" />
                   : <Link2 size={14} className="text-room-muted group-hover:text-room-text flex-shrink-0 transition-colors" />

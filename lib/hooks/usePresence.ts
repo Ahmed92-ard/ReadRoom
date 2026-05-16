@@ -31,7 +31,7 @@ function makeInitials(name: string) {
 
 export function usePresence(
   roomId: string,
-  serverId: string | null,
+  libraryId: string | null,
   userId: string,
   userName: string,
   activePdfId: string | null = null,
@@ -45,11 +45,11 @@ export function usePresence(
   activePdfIdRef.current = activePdfId;
   activePdfNameRef.current = activePdfName;
 
-  // Fetch all server members on mount to show offline users
+  // Fetch all library members on mount to show offline users
   useEffect(() => {
-    if (!serverId) return;
+    if (!libraryId) return;
 
-    fetch(`/api/servers/${serverId}/members`)
+    fetch(`/api/libraries/${libraryId}/members`)
       .then(res => res.json())
       .then(data => {
         if (data.members) {
@@ -72,7 +72,7 @@ export function usePresence(
         }
       })
       .catch(err => console.error('[presence] failed to fetch members', err));
-  }, [serverId, setMembers]);
+  }, [libraryId, setMembers]);
 
   // Initial join
   useEffect(() => {

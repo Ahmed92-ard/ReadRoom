@@ -13,7 +13,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.replace('/servers');
+        router.replace('/libraries');
       } else {
         router.replace('/auth');
       }

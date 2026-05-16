@@ -1,43 +1,43 @@
-// components/layout/ServerSidebar.tsx
+// components/layout/LibrarySidebar.tsx
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Plus, LogOut, Settings, Trash2, Pencil } from 'lucide-react';
-import { useWorkspaceStore, type ServerData } from '@/store/workspaceStore';
+import { useWorkspaceStore, type LibraryData } from '@/store/workspaceStore';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
-function ServerIcon({ server, active, onClick }: { server: ServerData; active: boolean; onClick: () => void }) {
-  const initials = server.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+function LibraryIcon({ library, active, onClick }: { library: LibraryData; active: boolean; onClick: () => void }) {
+  const initials = library.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
-  const [renameDraft, setRenameDraft] = useState(server.name);
-  const { deleteServer, updateServer } = useWorkspaceStore();
+  const [renameDraft, setRenameDraft] = useState(library.name);
+  const { deleteLibrary, updateLibrary } = useWorkspaceStore();
   const router = useRouter();
   const { user } = useAuth();
 
-  const isOwner = server.owner_id === user?.id;
+  const isOwner = library.owner_id === user?.id;
 
   const handleDelete = async () => {
-    const success = await deleteServer(server.id);
+    const success = await deleteLibrary(library.id);
     if (success) {
       setShowDeleteConfirm(false);
       setShowContextMenu(false);
-      router.push('/servers');
+      router.push('/libraries');
     }
   };
 
   const handleRename = async () => {
     const name = renameDraft.trim();
-    if (!name || name === server.name) {
+    if (!name || name === library.name) {
       setShowRenameModal(false);
       return;
     }
-    const success = await updateServer(server.id, { name });
+    const success = await updateLibrary(library.id, { name });
     if (success) setShowRenameModal(false);
   };
 
@@ -46,7 +46,7 @@ function ServerIcon({ server, active, onClick }: { server: ServerData; active: b
       {/* Active indicator pill */}
       <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-white transition-all duration-200 ${active ? 'h-8 opacity-100' : 'h-2 opacity-0 group-hover:opacity-100 group-hover:h-5'}`} />
       <button
-        title={server.name}
+        title={library.name}
         onContextMenu={(e) => {
           e.preventDefault();
           setShowContextMenu(!showContextMenu);
@@ -56,10 +56,10 @@ function ServerIcon({ server, active, onClick }: { server: ServerData; active: b
             ? 'rounded-2xl bg-blue-500 text-white'
             : 'bg-room-surface text-room-muted hover:rounded-2xl hover:bg-blue-500 hover:text-white'
           }`}
-        style={!active ? { backgroundColor: stringToColor(server.id) } : undefined}
+        style={!active ? { backgroundColor: stringToColor(library.id) } : undefined}
       >
-        {server.icon_url
-          ? <img src={server.icon_url} alt={server.name} className="w-full h-full rounded-[inherit] object-cover" />
+        {library.icon_url
+          ? <img src={library.icon_url} alt={library.name} className="w-full h-full rounded-[inherit] object-cover" />
           : <span className="text-white">{initials}</span>
         }
       </button>
@@ -70,7 +70,7 @@ function ServerIcon({ server, active, onClick }: { server: ServerData; active: b
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setRenameDraft(server.name);
+              setRenameDraft(library.name);
               setShowRenameModal(true);
               setShowContextMenu(false);
             }}
@@ -124,7 +124,7 @@ function ServerIcon({ server, active, onClick }: { server: ServerData; active: b
           <div className="bg-room-surface border border-room-border rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold text-red-400 mb-2">Delete Library</h2>
             <p className="text-sm text-room-muted mb-5">
-              Are you sure you want to delete <strong className="text-room-text">{server.name}</strong>? All channels and data will be permanently deleted.
+              Are you sure you want to delete <strong className="text-room-text">{library.name}</strong>? All channels and data will be permanently deleted.
             </p>
             <div className="flex gap-2">
               <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-2.5 rounded-xl border border-room-border text-room-muted text-sm hover:text-room-text transition-colors">
@@ -140,75 +140,75 @@ function ServerIcon({ server, active, onClick }: { server: ServerData; active: b
 
       {/* Tooltip */}
       <div className="absolute left-full ml-4 px-3 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-xl border border-white/10">
-        {server.name}
+        {library.name}
         <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1 w-2 h-2 bg-gray-900 rotate-45 border-l border-b border-white/10" />
       </div>
     </div>
   );
 }
 
-export function ServerSidebar({ inBottomSheet = false, onClose }: { inBottomSheet?: boolean; onClose?: () => void }) {
+export function LibrarySidebar({ inBottomSheet = false, onClose }: { inBottomSheet?: boolean; onClose?: () => void }) {
   const router = useRouter();
   const params = useParams();
-  const activeServerId = params?.serverId as string | undefined;
-  const { servers, fetchServers, createServer, joinServer, setActiveServer, updateServer } = useWorkspaceStore();
+  const activeLibraryId = params?.libraryId as string | undefined;
+  const { libraries, fetchLibraries, createLibrary, joinLibrary, setActiveLibrary, updateLibrary } = useWorkspaceStore();
   const { user, signOut } = useAuth();
-  const { serverSidebarCollapsed } = useUIStore();
+  const { librarySidebarCollapsed } = useUIStore();
   const isMobile = useIsMobile();
   
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [newServerName, setNewServerName] = useState('');
+  const [newLibraryName, setNewLibraryName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
-  const [editingServerId, setEditingServerId] = useState<string | null>(null);
-  const [editingServerName, setEditingServerName] = useState('');
+  const [editingLibraryId, setEditingLibraryId] = useState<string | null>(null);
+  const [editingLibraryName, setEditingLibraryName] = useState('');
 
-  useEffect(() => { fetchServers(); }, [fetchServers]);
+  useEffect(() => { fetchLibraries(); }, [fetchLibraries]);
 
-  const handleSelectServer = (server: ServerData) => {
-    if (server.id === activeServerId && onClose) {
+  const handleSelectLibrary = (library: LibraryData) => {
+    if (library.id === activeLibraryId && onClose) {
       onClose();
     } else {
-      setActiveServer(server.id);
-      router.push(`/servers/${server.id}`);
+      setActiveLibrary(library.id);
+      router.push(`/libraries/${library.id}`);
     }
   };
 
   const handleCreate = async () => {
-    if (!newServerName.trim()) return;
+    if (!newLibraryName.trim()) return;
     setLoading(true);
-    const server = await createServer(newServerName);
-    setLoading(false);
-    if (server) {
+    const library = await createLibrary(newLibraryName);
+    setLoading(true);
+    if (library) {
       setShowCreate(false);
-      setNewServerName('');
-      handleSelectServer(server);
+      setNewLibraryName('');
+      handleSelectLibrary(library);
     }
   };
 
   const handleJoin = async () => {
     if (!inviteCode.trim()) return;
     setLoading(true);
-    const server = await joinServer(inviteCode);
+    const library = await joinLibrary(inviteCode);
     setLoading(false);
-    if (server) {
+    if (library) {
       setShowJoin(false);
       setInviteCode('');
-      handleSelectServer(server);
+      handleSelectLibrary(library);
     }
   };
 
-  const handleRenameMobile = async () => {
-    if (!editingServerId) return;
-    const trimmed = editingServerName.trim();
+  const handleRenameLibraryMobile = async () => {
+    if (!editingLibraryId) return;
+    const trimmed = editingLibraryName.trim();
     if (!trimmed) {
-      setEditingServerId(null);
+      setEditingLibraryId(null);
       return;
     }
-    const success = await updateServer(editingServerId, { name: trimmed });
-    if (success) setEditingServerId(null);
+    const success = await updateLibrary(editingLibraryId, { name: trimmed });
+    if (success) setEditingLibraryId(null);
   };
 
   if (isMobile && !inBottomSheet) return null;
@@ -221,12 +221,12 @@ export function ServerSidebar({ inBottomSheet = false, onClose }: { inBottomShee
           <button onClick={() => setShowCreate(true)} className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all">+ New</button>
         </div>
         <div className="p-2 flex flex-col gap-1.5">
-          {servers.map((server) => {
-            const active = server.id === activeServerId;
-            const initials = server.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+          {libraries.map((library) => {
+            const active = library.id === activeLibraryId;
+            const initials = library.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
             return (
               <div
-                key={server.id}
+                key={library.id}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all w-full ${
                   active 
                     ? 'bg-blue-500 border-blue-400 text-white shadow-[0_0_15px_rgba(59,130,246,0.3)]' 
@@ -234,35 +234,35 @@ export function ServerSidebar({ inBottomSheet = false, onClose }: { inBottomShee
                 }`}
               >
                 <button
-                  onClick={() => handleSelectServer(server)}
+                  onClick={() => handleSelectLibrary(library)}
                   className="min-w-0 flex flex-1 items-center gap-3 text-left"
                 >
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${active ? 'bg-white/20' : 'bg-blue-500/10 text-blue-400'}`}>
-                     {server.icon_url ? <img src={server.icon_url} alt="" className="w-full h-full rounded-[inherit] object-cover" /> : initials}
+                     {library.icon_url ? <img src={library.icon_url} alt="" className="w-full h-full rounded-[inherit] object-cover" /> : initials}
                   </div>
-                  {editingServerId === server.id ? (
+                  {editingLibraryId === library.id ? (
                     <input
                       autoFocus
                       className="min-w-0 flex-1 bg-room-bg border border-blue-500/50 rounded-lg px-2 py-1 text-sm text-room-text outline-none"
-                      value={editingServerName}
+                      value={editingLibraryName}
                       onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setEditingServerName(e.target.value)}
-                      onBlur={handleRenameMobile}
+                      onChange={(e) => setEditingLibraryName(e.target.value)}
+                      onBlur={handleRenameLibraryMobile}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleRenameMobile();
-                        if (e.key === 'Escape') setEditingServerId(null);
+                        if (e.key === 'Enter') handleRenameLibraryMobile();
+                        if (e.key === 'Escape') setEditingLibraryId(null);
                       }}
                       maxLength={64}
                     />
                   ) : (
-                    <span className="text-sm font-semibold truncate flex-1">{server.name}</span>
+                    <span className="text-sm font-semibold truncate flex-1">{library.name}</span>
                   )}
                 </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setEditingServerId(server.id);
-                    setEditingServerName(server.name);
+                    setEditingLibraryId(library.id);
+                    setEditingLibraryName(library.name);
                   }}
                   className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
                   title="Rename library"
@@ -314,19 +314,19 @@ export function ServerSidebar({ inBottomSheet = false, onClose }: { inBottomShee
 
   return (
     <>
-      <div className={`flex flex-col items-center bg-room-bg py-3 gap-2 flex-shrink-0 border-r border-room-border h-full transition-all duration-300 ${serverSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 border-none' : 'w-16'}`}>
-        {/* Server list */}
+      <div className={`flex flex-col items-center bg-room-bg py-3 gap-2 flex-shrink-0 border-r border-room-border h-full transition-all duration-300 ${librarySidebarCollapsed ? 'w-0 overflow-hidden opacity-0 border-none' : 'w-16'}`}>
+        {/* Library list */}
         <div className="flex flex-col items-center gap-2 flex-1 w-full px-2">
-          {servers.map((server) => (
-            <ServerIcon
-              key={server.id}
-              server={server}
-              active={server.id === activeServerId}
-              onClick={() => handleSelectServer(server)}
+          {libraries.map((library) => (
+            <LibraryIcon
+              key={library.id}
+              library={library}
+              active={library.id === activeLibraryId}
+              onClick={() => handleSelectLibrary(library)}
             />
           ))}
 
-          {/* Add server */}
+          {/* Add library */}
           <button
             onClick={() => setShowCreate(true)}
             title="Create or join a library"
@@ -395,8 +395,8 @@ export function ServerSidebar({ inBottomSheet = false, onClose }: { inBottomShee
                   autoFocus
                   className="w-full bg-room-bg border border-room-border rounded-xl px-4 py-2.5 text-sm text-room-text placeholder:text-room-muted outline-none focus:border-blue-500/50 mb-4"
                   placeholder="e.g. Book Club, Study Group…"
-                  value={newServerName}
-                  onChange={(e) => setNewServerName(e.target.value)}
+                  value={newLibraryName}
+                  onChange={(e) => setNewLibraryName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                   maxLength={64}
                 />
@@ -404,7 +404,7 @@ export function ServerSidebar({ inBottomSheet = false, onClose }: { inBottomShee
                   <button onClick={() => { setShowCreate(false); setShowJoin(true); }} className="flex-1 py-2.5 rounded-xl border border-room-border text-room-muted text-sm hover:text-room-text transition-colors">
                     Join instead
                   </button>
-                  <button onClick={handleCreate} disabled={loading || !newServerName.trim()} className="flex-1 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-white text-sm font-medium disabled:opacity-50 transition-colors">
+                  <button onClick={handleCreate} disabled={loading || !newLibraryName.trim()} className="flex-1 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-white text-sm font-medium disabled:opacity-50 transition-colors">
                     {loading ? 'Creating…' : 'Create'}
                   </button>
                 </div>

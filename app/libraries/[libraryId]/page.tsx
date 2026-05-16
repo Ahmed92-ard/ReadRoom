@@ -1,33 +1,33 @@
-// app/servers/[serverId]/page.tsx
+// app/libraries/[libraryId]/page.tsx
 'use client';
 
 import { useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { ServerSidebar } from '@/components/layout/ServerSidebar';
+import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { BookOpen, Hash, Loader2 } from 'lucide-react';
 
-export default function ServerPage() {
+export default function LibraryPage() {
   const router = useRouter();
   const params = useParams();
-  const serverId = params.serverId as string;
+  const libraryId = params.libraryId as string;
   const { channels, fetchChannels, loadingChannels } = useWorkspaceStore();
 
   useEffect(() => {
-    fetchChannels(serverId);
-  }, [serverId, fetchChannels]);
+    fetchChannels(libraryId);
+  }, [libraryId, fetchChannels]);
 
   // Auto-navigate to first channel
   useEffect(() => {
     if (!loadingChannels && channels.length > 0) {
-      router.replace(`/servers/${serverId}/channels/${channels[0].id}`);
+      router.replace(`/libraries/${libraryId}/channels/${channels[0].id}`);
     }
-  }, [loadingChannels, channels, serverId, router]);
+  }, [loadingChannels, channels, libraryId, router]);
 
   return (
     <div className="flex h-screen bg-room-bg overflow-hidden">
-      <ServerSidebar />
+      <LibrarySidebar />
       <ChannelSidebar />
       <div className="flex-1 flex items-center justify-center">
         {loadingChannels ? (

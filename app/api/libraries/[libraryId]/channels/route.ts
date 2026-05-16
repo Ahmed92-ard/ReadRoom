@@ -1,25 +1,25 @@
-// app/api/servers/[id]/channels/route.ts
+// app/api/libraries/[libraryId]/channels/route.ts
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ libraryId: string }> | { libraryId: string } }
 ) {
   const resolvedParams = await params;
-  const serverId = resolvedParams.id;
+  const libraryId = resolvedParams.libraryId;
   
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  console.log(`[api/channels] GET: Fetching channels for server ${serverId}`);
+  console.log(`[api/channels] GET: Fetching channels for library ${libraryId}`);
 
   // Verify membership
   const { data: membership, error: memError } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -29,14 +29,14 @@ export async function GET(
   }
 
   if (!membership) {
-    console.warn(`[api/channels] GET: User ${user.id} is not a member of ${serverId}`);
+    console.warn(`[api/channels] GET: User ${user.id} is not a member of ${libraryId}`);
     return NextResponse.json({ error: 'Not a member' }, { status: 403 });
   }
 
   const { data: channels, error } = await supabase
     .from('channels')
     .select('*')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .order('position', { ascending: true });
 
   if (error) {
@@ -49,10 +49,10 @@ export async function GET(
 
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ libraryId: string }> | { libraryId: string } }
 ) {
   const resolvedParams = await params;
-  const serverId = resolvedParams.id;
+  const libraryId = resolvedParams.libraryId;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -62,7 +62,7 @@ export async function POST(
   const { data: membership, error: memError } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -80,7 +80,7 @@ export async function POST(
   const { data: last } = await supabase
     .from('channels')
     .select('position')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .order('position', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -90,7 +90,7 @@ export async function POST(
   const { data: channel, error } = await supabase
     .from('channels')
     .insert({
-      server_id: serverId,
+      server_id: libraryId,
       name: name.trim().slice(0, 64).toLowerCase().replace(/\s+/g, '-'),
       type,
       description: description?.trim().slice(0, 256) ?? null,

@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   const error = searchParams.get('error');
   const errorCode = searchParams.get('error_code');
   const errorDescription = searchParams.get('error_description');
-  const next = searchParams.get('next') ?? '/servers';
+  const next = searchParams.get('next') ?? '/libraries';
 
   console.log('[auth/callback] GET', {
     code: code ? `${code.slice(0, 8)}…` : null,

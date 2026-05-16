@@ -1,4 +1,4 @@
-// app/api/servers/route.ts
+// app/api/libraries/route.ts
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -14,15 +14,15 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const servers = memberships?.map((m: any) => ({ ...m.servers, role: m.role })) ?? [];
-  return NextResponse.json({ servers });
+  const libraries = memberships?.map((m: any) => ({ ...m.servers, role: m.role })) ?? [];
+  return NextResponse.json({ libraries });
 }
 
 export async function POST(req: Request) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
-    console.error('[api/servers] POST: Unauthorized');
+    console.error('[api/libraries] POST: Unauthorized');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch (e) {
-    console.error('[api/servers] POST: Failed to parse request body');
+    console.error('[api/libraries] POST: Failed to parse request body');
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
@@ -39,9 +39,9 @@ export async function POST(req: Request) {
 
   const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
 
-  console.log('[api/servers] POST: Creating server for user', user.id);
+  console.log('[api/libraries] POST: Creating library for user', user.id);
 
-  const { data: server, error: serverError } = await supabase
+  const { data: library, error: serverError } = await supabase
     .from('servers')
     .insert({ 
       name: name.trim().slice(0, 64), 
@@ -52,41 +52,41 @@ export async function POST(req: Request) {
     .single();
 
   if (serverError) {
-    console.error('[api/servers] POST: Server creation failed:', serverError);
+    console.error('[api/libraries] POST: Library creation failed:', serverError);
     return NextResponse.json({ error: serverError.message }, { status: 500 });
   }
 
-  console.log('[api/servers] POST: Server created', server.id, '- Adding owner...');
+  console.log('[api/libraries] POST: Library created', library.id, '- Adding owner...');
 
   // Add owner as member
   const { error: memberError } = await supabase.from('server_members').insert({
-    server_id: server.id,
+    server_id: library.id,
     user_id: user.id,
     role: 'owner',
   });
 
   if (memberError) {
-    console.error('[api/servers] POST: Member addition failed:', memberError);
+    console.error('[api/libraries] POST: Member addition failed:', memberError);
     return NextResponse.json({ error: memberError.message }, { status: 500 });
   }
 
-  console.log('[api/servers] POST: Creating general channel...');
+  console.log('[api/libraries] POST: Creating general channel...');
 
   // Create a default "general" channel
   const { error: channelError } = await supabase.from('channels').insert({
-    server_id: server.id,
+    server_id: library.id,
     name: 'general',
     type: 'text',
     position: 0,
   });
 
   if (channelError) {
-    console.error('[api/servers] POST: Channel creation failed:', channelError);
+    console.error('[api/libraries] POST: Channel creation failed:', channelError);
     return NextResponse.json({ error: channelError.message }, { status: 500 });
   }
 
-  console.log('[api/servers] POST: Success');
-  return NextResponse.json({ server });
+  console.log('[api/libraries] POST: Success');
+  return NextResponse.json({ library });
 }
 
 export async function PATCH(req: Request) {
@@ -95,16 +95,16 @@ export async function PATCH(req: Request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => null);
-  const serverId = body?.serverId;
+  const libraryId = body?.libraryId;
   const name = String(body?.name ?? '').trim();
 
-  if (!serverId) return NextResponse.json({ error: 'Server ID is required' }, { status: 400 });
+  if (!libraryId) return NextResponse.json({ error: 'Library ID is required' }, { status: 400 });
   if (!name) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
 
   const { data: membership } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -112,15 +112,15 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
 
-  const { data: server, error } = await supabase
+  const { data: library, error } = await supabase
     .from('servers')
     .update({ name: name.slice(0, 64) })
-    .eq('id', serverId)
+    .eq('id', libraryId)
     .select()
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ server });
+  return NextResponse.json({ library });
 }
 
 export async function DELETE(req: Request) {
@@ -135,24 +135,24 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { serverId } = body;
-  if (!serverId) return NextResponse.json({ error: 'Server ID is required' }, { status: 400 });
+  const { libraryId } = body;
+  if (!libraryId) return NextResponse.json({ error: 'Library ID is required' }, { status: 400 });
 
   // Check if user is the owner
-  const { data: server } = await supabase
+  const { data: library } = await supabase
     .from('servers')
     .select('owner_id')
-    .eq('id', serverId)
+    .eq('id', libraryId)
     .single();
 
-  if (!server) return NextResponse.json({ error: 'Server not found' }, { status: 404 });
-  if (server.owner_id !== user.id) return NextResponse.json({ error: 'Only the owner can delete a server' }, { status: 403 });
+  if (!library) return NextResponse.json({ error: 'Library not found' }, { status: 404 });
+  if (library.owner_id !== user.id) return NextResponse.json({ error: 'Only the owner can delete a library' }, { status: 403 });
 
   // Delete server (cascades to channels, messages, etc.)
   const { error } = await supabase
     .from('servers')
     .delete()
-    .eq('id', serverId);
+    .eq('id', libraryId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

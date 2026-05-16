@@ -1,4 +1,4 @@
-// app/servers/[serverId]/channels/[channelId]/page.tsx
+// app/libraries/[libraryId]/channels/[channelId]/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -12,18 +12,18 @@ import type { ChannelPDF } from '@/types';
 
 export default function ChannelPage() {
   const params = useParams();
-  const serverId = params.serverId as string;
+  const libraryId = params.libraryId as string;
   const channelId = params.channelId as string;
   const { user, userName } = useAuth();
 
-  const { channels, setActiveChannel, setActiveServer } = useWorkspaceStore();
+  const { channels, setActiveChannel, setActiveLibrary } = useWorkspaceStore();
   const clearRoom = useRoomStore((s) => s.clearRoom);
   const setFollowMode = usePDFStore((s) => s.setFollowMode);
   
   useEffect(() => {
-    // Set active server — this also triggers fetchChannels internally
-    setActiveServer(serverId);
-  }, [serverId, setActiveServer]);
+    // Set active library — this also triggers fetchChannels internally
+    setActiveLibrary(libraryId);
+  }, [libraryId, setActiveLibrary]);
 
   useEffect(() => {
     // Reset state when switching channels
@@ -57,10 +57,10 @@ export default function ChannelPage() {
   }, [channel]);
 
   useEffect(() => {
-    if (!serverId || !channelId || !channel) return;
+    if (!libraryId || !channelId || !channel) return;
 
     let cancelled = false;
-    fetch(`/api/servers/${serverId}/channels/${channelId}/pdfs`)
+    fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs`)
       .then(async (res) => {
         if (!res.ok) throw new Error('Failed to load channel PDF library');
         return res.json();
@@ -96,7 +96,7 @@ export default function ChannelPage() {
     return () => {
       cancelled = true;
     };
-  }, [serverId, channelId, channel, initialRoom]);
+  }, [libraryId, channelId, channel, initialRoom]);
 
   if (!user) {
     return (

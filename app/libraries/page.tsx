@@ -1,4 +1,4 @@
-// app/servers/page.tsx
+// app/libraries/page.tsx
 'use client';
 
 import { useEffect } from 'react';
@@ -6,29 +6,29 @@ import { useRouter } from 'next/navigation';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { BookOpen, ArrowRight, Loader2 } from 'lucide-react';
-import { ServerSidebar } from '@/components/layout/ServerSidebar';
+import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 
-export default function ServersPage() {
+export default function LibrariesPage() {
   const router = useRouter();
-  const { servers, loadingServers, fetchServers } = useWorkspaceStore();
+  const { libraries, loadingLibraries, fetchLibraries } = useWorkspaceStore();
   const { user } = useAuth();
 
-  useEffect(() => { fetchServers(); }, [fetchServers]);
+  useEffect(() => { fetchLibraries(); }, [fetchLibraries]);
 
-  // Auto-navigate to first server if available
+  // Auto-navigate to first library if available
   useEffect(() => {
-    if (!loadingServers && servers.length > 0) {
-      router.replace(`/servers/${servers[0].id}`);
+    if (!loadingLibraries && libraries.length > 0) {
+      router.replace(`/libraries/${libraries[0].id}`);
     }
-  }, [loadingServers, servers, router]);
+  }, [loadingLibraries, libraries, router]);
 
   return (
     <div className="flex h-screen bg-room-bg overflow-hidden">
-      <ServerSidebar />
+      <LibrarySidebar />
       <div className="flex-1 flex items-center justify-center">
-        {loadingServers ? (
+        {loadingLibraries ? (
           <Loader2 size={32} className="animate-spin text-room-muted" />
-        ) : servers.length === 0 ? (
+        ) : libraries.length === 0 ? (
           <div className="text-center max-w-sm px-6">
             <div className="w-16 h-16 rounded-2xl bg-blue-500/20 flex items-center justify-center mx-auto mb-5">
               <BookOpen size={28} className="text-blue-400" />

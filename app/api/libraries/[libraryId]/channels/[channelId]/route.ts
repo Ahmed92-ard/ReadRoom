@@ -1,13 +1,13 @@
-// app/api/servers/[id]/channels/[channelId]/route.ts
+// app/api/libraries/[libraryId]/channels/[channelId]/route.ts
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string }> | { id: string; channelId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string }> | { libraryId: string; channelId: string } }
 ) {
   const resolvedParams = await params;
-  const { id: serverId, channelId } = resolvedParams;
+  const { libraryId, channelId } = resolvedParams;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -16,7 +16,7 @@ export async function PATCH(
   const { data: membership } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -57,7 +57,7 @@ export async function PATCH(
     .from('channels')
     .update(updates)
     .eq('id', channelId)
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .select()
     .single();
 
@@ -71,10 +71,10 @@ export async function PATCH(
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string }> | { id: string; channelId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string }> | { libraryId: string; channelId: string } }
 ) {
   const resolvedParams = await params;
-  const { id: serverId, channelId } = resolvedParams;
+  const { libraryId, channelId } = resolvedParams;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -83,7 +83,7 @@ export async function DELETE(
   const { data: membership } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -95,7 +95,7 @@ export async function DELETE(
     .from('channels')
     .delete()
     .eq('id', channelId)
-    .eq('server_id', serverId);
+    .eq('server_id', libraryId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

@@ -14,7 +14,7 @@ import { Notes } from './Notes';
 import { PresenceList } from './PresenceList';
 import { GooglePicker } from '@/components/drive/GooglePicker';
 import { useAuth } from '@/lib/hooks/useAuth';
-import { ServerSidebar } from '@/components/layout/ServerSidebar';
+import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { ChatSidebar } from '@/components/layout/ChatSidebar';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
@@ -193,13 +193,13 @@ interface ToastActivity extends RoomActivity {
 export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom }: RoomShellProps) {
   const { 
     sidebarOpen, setSidebarOpen, activePanel, setActivePanel,
-    serverSidebarCollapsed, channelSidebarCollapsed, toggleServerSidebar, toggleChannelSidebar,
+    librarySidebarCollapsed, channelSidebarCollapsed, toggleLibrarySidebar, toggleChannelSidebar,
     chatSidebarCollapsed, toggleChatSidebar,
     toggleNavigation
   } = useUIStore();
 
   const params = useParams();
-  const serverId = params?.serverId as string | undefined;
+  const libraryId = params?.libraryId as string | undefined;
   const channelId = params?.channelId as string | undefined;
 
   const room = useRoomStore((s) => s.room);
@@ -239,15 +239,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const isMobile = useIsMobile();
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const desktopTabs = [
-    { id: 'files' as const,    Icon: FolderOpen,    label: 'Library' },
+    { id: 'files' as const,    Icon: FolderOpen,    label: 'Shelf' },
     { id: 'notes' as const,    Icon: FileText,      label: 'Notes' },
     { id: 'presence' as const, Icon: Users,         label: 'People' },
   ];
 
   const mobileTabs = [
-    { id: 'servers' as const,  Icon: LayoutGrid,    label: 'Libraries' },
+    { id: 'libraries' as const,  Icon: LayoutGrid,    label: 'Libraries' },
     { id: 'channels' as const, Icon: Menu,          label: 'Rooms' },
-    { id: 'files' as const,    Icon: FolderOpen,    label: 'Library' },
+    { id: 'files' as const,    Icon: FolderOpen,    label: 'Shelf' },
     { id: 'notes' as const,    Icon: FileText,      label: 'Notes' },
     { id: 'presence' as const, Icon: Users,         label: 'People' },
   ];
@@ -321,7 +321,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, []);
 
   useEffect(() => {
-    if (!isMobile && (activePanel === 'servers' || activePanel === 'channels' || activePanel === 'chat')) {
+    if (!isMobile && (activePanel === 'libraries' || activePanel === 'channels' || activePanel === 'chat')) {
       setActivePanel('files');
     }
   }, [isMobile, activePanel, setActivePanel]);
@@ -393,10 +393,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     if (Math.abs(deltaX) > 50) {
       if (deltaX > 0 && touchStartX.current < 60) {
         if (channelSidebarCollapsed) toggleChannelSidebar();
-        else if (serverSidebarCollapsed) toggleServerSidebar();
+        else if (librarySidebarCollapsed) toggleLibrarySidebar();
       }
       else if (deltaX < 0) {
-        if (!serverSidebarCollapsed) toggleServerSidebar();
+        if (!librarySidebarCollapsed) toggleLibrarySidebar();
         else if (!channelSidebarCollapsed) toggleChannelSidebar();
       }
     }
@@ -406,12 +406,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   };
 
   const { driveToken, requestDriveAccess } = useAuth();
-  const { activeServerId, updateChannel } = useWorkspaceStore();
+  const { activeLibraryId, updateChannel } = useWorkspaceStore();
 
   selfRef.current = self;
 
-  const selectionStorageKey = serverId && channelId
-    ? `readroom:selected-pdf:${serverId}:${channelId}:${initialUserId}`
+  const selectionStorageKey = libraryId && channelId
+    ? `readroom:selected-pdf:${libraryId}:${channelId}:${initialUserId}`
     : null;
 
   const buildRoomState = useCallback(
@@ -434,8 +434,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     owner: 'Room Library',
     thumbnail: pdf.thumbnailUrl,
     totalPages: null,
-    url: pdf.url ?? (serverId && channelId ? `/api/servers/${serverId}/channels/${channelId}/pdfs/${pdf.id}/file` : null),
-  }), [channelId, serverId]);
+    url: pdf.url ?? (libraryId && channelId ? `/api/libraries/${libraryId}/channels/${channelId}/pdfs/${pdf.id}/file` : null),
+  }), [channelId, libraryId]);
 
   const openPdfViewer = useCallback((pdf: ChannelPDF, options?: { followUserId?: string | null; title?: string }) => {
     const key = options?.followUserId ? `follow:${options.followUserId}` : `pdf:${pdf.id}`;
@@ -482,12 +482,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }), [channelId, roomId]);
 
   const fetchChannelPDFs = useCallback(async () => {
-    if (!serverId || !channelId) return [];
-    const res = await fetch(`/api/servers/${serverId}/channels/${channelId}/pdfs`);
+    if (!libraryId || !channelId) return [];
+    const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.hint || data.error || 'Failed to load channel PDFs');
     return ((data.pdfs ?? []) as any[]).map(normalizeChannelPDF);
-  }, [channelId, normalizeChannelPDF, serverId]);
+  }, [channelId, normalizeChannelPDF, libraryId]);
 
   useEffect(() => {
     if (initialRoom && !room) {
@@ -520,8 +520,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     }
 
     let success = false;
-    if (serverId && channelId) {
-      success = await updateChannel(serverId, channelId, { name: nextName });
+    if (libraryId && channelId) {
+      success = await updateChannel(libraryId, channelId, { name: nextName });
     } else {
       const res = await fetch(`/api/rooms/${roomId}`, {
         method: 'PATCH',
@@ -535,7 +535,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       setRoomName(nextName);
       setIsEditingRoomName(false);
     }
-  }, [channelId, initialRoom?.name, room?.name, roomId, roomNameDraft, serverId, setRoomName, updateChannel]);
+  }, [channelId, initialRoom?.name, room?.name, roomId, roomNameDraft, libraryId, setRoomName, updateChannel]);
 
   const publishActivePdf = useCallback((pdfId: string | null, pdfName: string | null) => {
     const currentSelf = selfRef.current;
@@ -560,7 +560,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [roomId, updateSelf]);
 
   useEffect(() => {
-    if (!serverId || !channelId) {
+    if (!libraryId || !channelId) {
       setChannelPDFs([]);
       setCurrentChannelPdfId(null);
       return;
@@ -595,10 +595,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         setPdfLibraryError(err instanceof Error ? err.message : String(err));
       });
     return () => { cancelled = true; };
-  }, [serverId, channelId, buildRoomState, channelPdfToMeta, fetchChannelPDFs, room?.pdf?.fileId, room?.pdf?.url, publishActivePdf, selectionStorageKey, setRoom]);
+  }, [libraryId, channelId, buildRoomState, channelPdfToMeta, fetchChannelPDFs, room?.pdf?.fileId, room?.pdf?.url, publishActivePdf, selectionStorageKey, setRoom]);
 
   usePDFSync(roomId, mainContainerRef, currentChannelPdfId, room?.pdf?.filename);
-  usePresence(roomId, serverId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null);
+  usePresence(roomId, libraryId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null);
 
   // ── Stable Socket Listeners ────────────────────────────────────────────────
   useEffect(() => {
@@ -716,7 +716,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
     if (pdf) {
       openAndSync(pdf);
-    } else if (serverId && channelId) {
+    } else if (libraryId && channelId) {
       // PDF not yet in local list — fetch the channel library to find it
       fetchChannelPDFs()
         .then((pdfs) => {
@@ -726,7 +726,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         })
         .catch(() => {});
     }
-  }, [channelPDFs, channelId, fetchChannelPDFs, followTarget, openPdfViewer, serverId, updateOpenViewerState, usersMap]);
+  }, [channelPDFs, channelId, fetchChannelPDFs, followTarget, openPdfViewer, libraryId, updateOpenViewerState, usersMap]);
 
   // ── Follow mode: sync viewer as followed user navigates ─────────────────────
   useEffect(() => {
@@ -757,7 +757,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               followUserId: payload.userId,
               title: `Following ${followedUser?.userName ?? 'User'}`,
             });
-          } else if (serverId && channelId) {
+          } else if (libraryId && channelId) {
             // Fetch updated library in case this PDF is new
             fetchChannelPDFs()
               .then((pdfs) => {
@@ -788,12 +788,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => {
       socket.off('sync:state', handler as any);
     };
-  }, [channelId, channelPDFs, fetchChannelPDFs, followTarget, openPdfViewer, openViewers, roomId, serverId, updateOpenViewerState, usersMap]);
+  }, [channelId, channelPDFs, fetchChannelPDFs, followTarget, openPdfViewer, openViewers, roomId, libraryId, updateOpenViewerState, usersMap]);
 
   useEffect(() => {
-    if (!activeServerId) return;
+    if (!activeLibraryId) return;
     const handleBeforeUnload = () => {
-      fetch(`/api/servers/${activeServerId}/channels/${roomId}`, {
+      fetch(`/api/libraries/${activeLibraryId}/channels/${roomId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         // Read from refs — always current but don't re-trigger the effect
@@ -806,7 +806,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       window.removeEventListener('beforeunload', handleBeforeUnload);
       handleBeforeUnload(); // Persist on unmount / room switch
     };
-  }, [activeServerId, roomId]); // ← page/scroll/zoom intentionally excluded; read via refs
+  }, [activeLibraryId, roomId]); // ← page/scroll/zoom intentionally excluded; read via refs
 
   const selectChannelPDF = useCallback(
     async (pdf: ChannelPDF) => {
@@ -823,7 +823,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   const deleteChannelPDF = useCallback(
     async (pdf: ChannelPDF) => {
-      if (!serverId || !channelId) return;
+      if (!libraryId || !channelId) return;
       const confirmed = window.confirm(`Delete "${pdf.filename}" from this room?`);
       if (!confirmed) return;
 
@@ -831,7 +831,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       setDeletingPdfId(pdf.id);
 
       try {
-        const res = await fetch(`/api/servers/${serverId}/channels/${channelId}/pdfs/${pdf.id}`, {
+        const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs/${pdf.id}`, {
           method: 'DELETE',
         });
         const data = await res.json().catch(() => ({}));
@@ -894,7 +894,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       publishActivePdf,
       roomId,
       selectionStorageKey,
-      serverId,
+      libraryId,
       setRoom,
       setSyncState,
     ]
@@ -903,9 +903,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const handlePDFSelect = useCallback(
     async (pdf: PDFMeta) => {
       setPdfLibraryError(null);
-      if (serverId && channelId) {
-        try {
-          const res = await fetch(`/api/servers/${serverId}/channels/${channelId}/pdfs`, {
+      if (!libraryId || !channelId) return;
+
+      try {
+        const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -948,30 +949,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           setPdfLibraryError(message);
           throw err;
         }
-      } else {
-        const selected: PDFMeta = {
-          fileId: pdf.fileId,
-          filename: pdf.filename,
-          owner: pdf.owner,
-          thumbnail: pdf.thumbnail,
-          totalPages: null,
-        };
-        setRoom(buildRoomState(selected));
-        setSyncState({ page: 1, scroll: 0, zoom: 1 });
-        setShowPicker(false);
-        await fetch(`/api/rooms/${roomId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pdfFileId: pdf.fileId,
-            pdfFilename: pdf.filename,
-            pdfThumbnail: pdf.thumbnail,
-            pdfOwner: pdf.owner,
-          }),
-        });
-      }
     },
-    [serverId, channelId, driveToken, normalizeChannelPDF, selectChannelPDF, setRoom, buildRoomState, roomId, setSyncState, requestDriveAccess, initialUserId, initialUserName]
+    [libraryId, channelId, driveToken, normalizeChannelPDF, selectChannelPDF, setRoom, buildRoomState, roomId, setSyncState, requestDriveAccess, initialUserId, initialUserName]
   );
 
   const RightSidebarContent = (
@@ -1028,8 +1007,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           <Chat roomId={roomId} onClose={isMobile ? () => setMobileSheetExpanded(false) : toggleChatSidebar} />
         </div>
         
-        <div className={activePanel === 'servers' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
-          <ServerSidebar inBottomSheet={true} onClose={() => setMobileSheetExpanded(false)} />
+        <div className={activePanel === 'libraries' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
+          <LibrarySidebar inBottomSheet={true} onClose={() => setMobileSheetExpanded(false)} />
         </div>
 
         <div className={activePanel === 'channels' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
@@ -1165,7 +1144,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {/* Desktop Sidebars (Libraries & Rooms) */}
       {!isMobile && (
         <>
-          <ServerSidebar onClose={toggleNavigation} />
+          <LibrarySidebar onClose={toggleNavigation} />
           <ChannelSidebar onClose={toggleNavigation} />
         </>
       )}
@@ -1176,10 +1155,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           {/* Left Side: Navigation & People */}
           <div className="flex items-center bg-room-bg/50 rounded-xl p-1 border border-room-border shadow-sm">
             <SidebarToggle 
-              active={isMobile ? activePanel === 'servers' : !serverSidebarCollapsed} 
+              active={isMobile ? activePanel === 'libraries' : !librarySidebarCollapsed} 
               onClick={() => {
                 if (isMobile) {
-                  setActivePanel('servers');
+                  setActivePanel('libraries');
                   setMobileSheetExpanded(true);
                 } else {
                   toggleNavigation();
@@ -1388,7 +1367,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           onRequestAccess={requestDriveAccess}
           onSelect={handlePDFSelect}
           onClose={() => setShowPicker(false)}
-          mode={serverId && channelId ? 'add' : 'replace'}
+          mode={libraryId && channelId ? 'add' : 'replace'}
         />
       )}
     </div>

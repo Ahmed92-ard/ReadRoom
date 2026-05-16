@@ -76,8 +76,8 @@ export async function POST(
         {
           conflict: true,
           message: 'This note was updated from another session.',
-          serverContent: existing.content,
-          serverUpdatedAt: existing.updated_at,
+          libraryContent: existing.content,
+          libraryUpdatedAt: existing.updated_at,
         },
         { status: 409 }
       );

@@ -148,7 +148,7 @@ export const usePresenceStore = create<PresenceStore>((set) => ({
 
 // ── UI store ──────────────────────────────────────────────────────────────────
 
-type ActivePanel = 'chat' | 'notes' | 'presence' | 'servers' | 'channels' | 'files';
+type ActivePanel = 'chat' | 'notes' | 'presence' | 'libraries' | 'channels' | 'shelf';
 
 function applyThemeToDOM(theme: 'dark' | 'light') {
   if (typeof window === 'undefined') return;
@@ -163,7 +163,7 @@ function applyThemeToDOM(theme: 'dark' | 'light') {
 
 interface UIStore {
   sidebarOpen: boolean; // This corresponds to the right panel/sidebar in RoomShell
-  serverSidebarCollapsed: boolean;
+  librarySidebarCollapsed: boolean;
   channelSidebarCollapsed: boolean;
   chatSidebarCollapsed: boolean;
   activePanel: ActivePanel;
@@ -173,7 +173,7 @@ interface UIStore {
   setFollowMode: (follow: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
-  toggleServerSidebar: () => void;
+  toggleLibrarySidebar: () => void;
   toggleChannelSidebar: () => void;
   toggleChatSidebar: () => void;
   setActivePanel: (panel: ActivePanel) => void;
@@ -186,14 +186,14 @@ export const useUIStore = create<UIStore>((set) => ({
   followMode: false,
   setFollowMode: (followMode) => set({ followMode }),
   sidebarOpen: true,
-  serverSidebarCollapsed: false,
+  librarySidebarCollapsed: false,
   channelSidebarCollapsed: false,
   chatSidebarCollapsed: false,
   activePanel: 'presence',
   theme: 'dark',
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  toggleServerSidebar: () => set((s) => ({ serverSidebarCollapsed: !s.serverSidebarCollapsed })),
+  toggleLibrarySidebar: () => set((s) => ({ librarySidebarCollapsed: !s.librarySidebarCollapsed })),
   toggleChannelSidebar: () => set((s) => ({ channelSidebarCollapsed: !s.channelSidebarCollapsed })),
   toggleChatSidebar: () => set((s) => ({ chatSidebarCollapsed: !s.chatSidebarCollapsed })),
   setActivePanel: (activePanel) => set({ activePanel }),
@@ -207,7 +207,7 @@ export const useUIStore = create<UIStore>((set) => ({
     return { theme: next };
   }),
   toggleNavigation: () => set((s) => ({
-    serverSidebarCollapsed: !s.serverSidebarCollapsed,
-    channelSidebarCollapsed: !s.serverSidebarCollapsed, // Use server state as source of truth for toggle
+    librarySidebarCollapsed: !s.librarySidebarCollapsed,
+    channelSidebarCollapsed: !s.librarySidebarCollapsed, // Use library state as source of truth for toggle
   })),
 }));

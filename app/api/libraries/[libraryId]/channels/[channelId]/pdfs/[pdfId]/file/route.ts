@@ -22,9 +22,9 @@ async function getUserWithRetry(supabase: ReturnType<typeof createClient>) {
 
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string; pdfId: string }> | { id: string; channelId: string; pdfId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string; pdfId: string }> | { libraryId: string; channelId: string; pdfId: string } }
 ) {
-  const { id: serverId, channelId, pdfId } = await params;
+  const { libraryId, channelId, pdfId } = await params;
   const supabase = createClient();
   const { data: { user }, error: userError } = await getUserWithRetry(supabase);
   if (userError) console.warn('[api/pdf-file] getUser failed:', userError.message ?? String(userError));
@@ -33,12 +33,12 @@ export async function GET(
   const { data: membership, error: membershipError } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
   if (membershipError) {
-    console.error('[api/pdf-file] membership lookup failed', { serverId, channelId, pdfId, error: membershipError.message });
+    console.error('[api/pdf-file] membership lookup failed', { libraryId, channelId, pdfId, error: membershipError.message });
     return NextResponse.json({ error: membershipError.message }, { status: 500 });
   }
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
@@ -52,18 +52,18 @@ export async function GET(
     .maybeSingle();
 
   if (pdfError) {
-    console.error('[api/pdf-file] pdf metadata lookup failed', { serverId, channelId, pdfId, error: pdfError.message });
+    console.error('[api/pdf-file] pdf metadata lookup failed', { libraryId, channelId, pdfId, error: pdfError.message });
     return NextResponse.json({ error: pdfError.message }, { status: 500 });
   }
   if (!pdf?.storage_path) {
-    console.warn('[api/pdf-file] missing storage path', { serverId, channelId, pdfId });
+    console.warn('[api/pdf-file] missing storage path', { libraryId, channelId, pdfId });
     return NextResponse.json({ error: 'Shared PDF file is not available' }, { status: 404 });
   }
 
   const { data, error } = await db.storage.from(PDF_BUCKET).download(pdf.storage_path);
   if (error || !data) {
     console.error('[api/pdf-file] storage download failed', {
-      serverId,
+      libraryId,
       channelId,
       pdfId,
       storagePath: pdf.storage_path,

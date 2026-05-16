@@ -13,7 +13,7 @@ export default function AuthPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user) router.replace('/servers');
+    if (user) router.replace('/libraries');
   }, [user, router]);
 
   // Check for error in URL (from failed OAuth callback)

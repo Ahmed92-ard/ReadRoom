@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { createClient } from '@/lib/supabase/client';
 
-export interface ServerData {
+export interface LibraryData {
   id: string;
   name: string;
   icon_url: string | null;
@@ -12,7 +12,7 @@ export interface ServerData {
 
 export interface ChannelData {
   id: string;
-  server_id: string;
+  server_id: string; // Internal DB field name remains server_id for now to avoid migration
   name: string;
   description: string | null;
   type: 'text' | 'pdf';
@@ -28,61 +28,61 @@ export interface ChannelData {
 
 interface WorkspaceStore {
   // State
-  servers: ServerData[];
+  libraries: LibraryData[];
   channels: ChannelData[];
-  activeServerId: string | null;
+  activeLibraryId: string | null;
   activeChannelId: string | null;
-  loadingServers: boolean;
+  loadingLibraries: boolean;
   loadingChannels: boolean;
   error: string | null;
 
   // Actions
-  setActiveServer: (serverId: string) => void;
+  setActiveLibrary: (libraryId: string) => void;
   setActiveChannel: (channelId: string) => void;
-  fetchServers: () => Promise<void>;
-  fetchChannels: (serverId: string) => Promise<void>;
-  createServer: (name: string) => Promise<ServerData | null>;
-  joinServer: (inviteCode: string) => Promise<ServerData | null>;
-  updateServer: (serverId: string, patch: Partial<Pick<ServerData, 'name' | 'icon_url'>>) => Promise<boolean>;
-  createChannel: (serverId: string, name: string, type: 'text' | 'pdf') => Promise<ChannelData | null>;
+  fetchLibraries: () => Promise<void>;
+  fetchChannels: (libraryId: string) => Promise<void>;
+  createLibrary: (name: string) => Promise<LibraryData | null>;
+  joinLibrary: (inviteCode: string) => Promise<LibraryData | null>;
+  updateLibrary: (libraryId: string, patch: Partial<Pick<LibraryData, 'name' | 'icon_url'>>) => Promise<boolean>;
+  createChannel: (libraryId: string, name: string, type: 'text' | 'pdf') => Promise<ChannelData | null>;
   updateChannelPDF: (channelId: string, pdf: { driveId: string; name: string; url: string | null }) => Promise<void>;
-  updateChannel: (serverId: string, channelId: string, patch: Partial<ChannelData>) => Promise<boolean>;
-  deleteServer: (serverId: string) => Promise<boolean>;
-  deleteChannel: (serverId: string, channelId: string) => Promise<boolean>;
+  updateChannel: (libraryId: string, channelId: string, patch: Partial<ChannelData>) => Promise<boolean>;
+  deleteLibrary: (libraryId: string) => Promise<boolean>;
+  deleteChannel: (libraryId: string, channelId: string) => Promise<boolean>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
-  servers: [],
+  libraries: [],
   channels: [],
-  activeServerId: null,
+  activeLibraryId: null,
   activeChannelId: null,
-  loadingServers: false,
+  loadingLibraries: false,
   loadingChannels: false,
   error: null,
 
-  setActiveServer: (serverId) => {
-    set({ activeServerId: serverId, activeChannelId: null, channels: [] });
-    get().fetchChannels(serverId);
+  setActiveLibrary: (libraryId) => {
+    set({ activeLibraryId: libraryId, activeChannelId: null, channels: [] });
+    get().fetchChannels(libraryId);
   },
 
   setActiveChannel: (channelId) => set({ activeChannelId: channelId }),
 
-  fetchServers: async () => {
-    set({ loadingServers: true, error: null });
+  fetchLibraries: async () => {
+    set({ loadingLibraries: true, error: null });
     try {
-      const res = await fetch('/api/servers');
-      if (!res.ok) throw new Error('Failed to load servers');
+      const res = await fetch('/api/libraries');
+      if (!res.ok) throw new Error('Failed to load libraries');
       const data = await res.json();
-      set({ servers: data.servers ?? [], loadingServers: false });
+      set({ libraries: data.libraries ?? [], loadingLibraries: false });
     } catch (err) {
-      set({ error: String(err), loadingServers: false });
+      set({ error: String(err), loadingLibraries: false });
     }
   },
 
-  fetchChannels: async (serverId) => {
+  fetchChannels: async (libraryId) => {
     set({ loadingChannels: true });
     try {
-      const res = await fetch(`/api/servers/${serverId}/channels`);
+      const res = await fetch(`/api/libraries/${libraryId}/channels`);
       if (!res.ok) throw new Error('Failed to load channels');
       const data = await res.json();
       set({ channels: data.channels ?? [], loadingChannels: false });
@@ -91,26 +91,26 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  createServer: async (name) => {
+  createLibrary: async (name) => {
     try {
-      const res = await fetch('/api/servers', {
+      const res = await fetch('/api/libraries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
-      if (!res.ok) throw new Error('Failed to create server');
+      if (!res.ok) throw new Error('Failed to create library');
       const data = await res.json();
-      set((s) => ({ servers: [...s.servers, data.server] }));
-      return data.server;
+      set((s) => ({ libraries: [...s.libraries, data.library] }));
+      return data.library;
     } catch (err) {
       set({ error: String(err) });
       return null;
     }
   },
 
-  joinServer: async (inviteCode) => {
+  joinLibrary: async (inviteCode) => {
     try {
-      const res = await fetch('/api/servers/join', {
+      const res = await fetch('/api/libraries/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inviteCode }),
@@ -118,29 +118,29 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (!res.ok) throw new Error('Invalid invite code');
       const data = await res.json();
       set((s) => ({
-        servers: s.servers.some((sv) => sv.id === data.server.id)
-          ? s.servers
-          : [...s.servers, data.server],
+        libraries: s.libraries.some((sv) => sv.id === data.library.id)
+          ? s.libraries
+          : [...s.libraries, data.library],
       }));
-      return data.server;
+      return data.library;
     } catch (err) {
       set({ error: String(err) });
       return null;
     }
   },
 
-  updateServer: async (serverId, patch) => {
+  updateLibrary: async (libraryId, patch) => {
     try {
-      const res = await fetch('/api/servers', {
+      const res = await fetch('/api/libraries', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId, ...patch }),
+        body: JSON.stringify({ libraryId, ...patch }),
       });
       if (!res.ok) throw new Error('Failed to update library');
       const data = await res.json();
       set((s) => ({
-        servers: s.servers.map((server) =>
-          server.id === serverId ? { ...server, ...data.server } : server
+        libraries: s.libraries.map((library) =>
+          library.id === libraryId ? { ...library, ...data.library } : library
         ),
       }));
       return true;
@@ -150,9 +150,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  createChannel: async (serverId, name, type) => {
+  createChannel: async (libraryId, name, type) => {
     try {
-      const res = await fetch(`/api/servers/${serverId}/channels`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, type }),
@@ -168,13 +168,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   updateChannelPDF: async (channelId, pdf) => {
-    const serverId = get().activeServerId;
-    console.log('[workspace] updateChannelPDF — serverId:', serverId, 'channelId:', channelId, 'pdf:', pdf);
-    if (!serverId) {
-      console.warn('[workspace] updateChannelPDF SKIPPED — activeServerId is null!');
+    const libraryId = get().activeLibraryId;
+    console.log('[workspace] updateChannelPDF — libraryId:', libraryId, 'channelId:', channelId, 'pdf:', pdf);
+    if (!libraryId) {
+      console.warn('[workspace] updateChannelPDF SKIPPED — activeLibraryId is null!');
       return;
     }
-    const res = await fetch(`/api/servers/${serverId}/channels/${channelId}`, {
+    const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pdfDriveId: pdf.driveId, pdfName: pdf.name, pdfUrl: pdf.url }),
@@ -194,9 +194,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }));
   },
  
-  updateChannel: async (serverId, channelId, patch) => {
+  updateChannel: async (libraryId, channelId, patch) => {
     try {
-      const res = await fetch(`/api/servers/${serverId}/channels/${channelId}`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
@@ -214,38 +214,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  updateServer: async (serverId, patch) => {
+  deleteLibrary: async (libraryId) => {
     try {
-      const res = await fetch('/api/servers', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId, ...patch }),
-      });
-      if (!res.ok) throw new Error('Failed to update server');
-      set((s) => ({
-        servers: s.servers.map((sv) =>
-          sv.id === serverId ? { ...sv, ...patch } : sv
-        ),
-      }));
-      return true;
-    } catch (err) {
-      set({ error: String(err) });
-      return false;
-    }
-  },
-
-  deleteServer: async (serverId) => {
-    try {
-      const res = await fetch('/api/servers', {
+      const res = await fetch('/api/libraries', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverId }),
+        body: JSON.stringify({ libraryId }),
       });
-      if (!res.ok) throw new Error('Failed to delete server');
+      if (!res.ok) throw new Error('Failed to delete library');
       set((s) => ({
-        servers: s.servers.filter((sv) => sv.id !== serverId),
-        activeServerId: s.activeServerId === serverId ? null : s.activeServerId,
-        channels: s.activeServerId === serverId ? [] : s.channels,
+        libraries: s.libraries.filter((sv) => sv.id !== libraryId),
+        activeLibraryId: s.activeLibraryId === libraryId ? null : s.activeLibraryId,
+        channels: s.activeLibraryId === libraryId ? [] : s.channels,
       }));
       return true;
     } catch (err) {
@@ -254,9 +234,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  deleteChannel: async (serverId, channelId) => {
+  deleteChannel: async (libraryId, channelId) => {
     try {
-      const res = await fetch(`/api/servers/${serverId}/channels/${channelId}`, {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete channel');

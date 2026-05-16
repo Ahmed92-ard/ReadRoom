@@ -1,4 +1,4 @@
-// app/api/servers/[id]/channels/[channelId]/pdfs/route.ts
+// app/api/libraries/[libraryId]/channels/[channelId]/pdfs/route.ts
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -13,18 +13,18 @@ function serializePdf(pdf: any) {
     filename: pdf.filename,
     thumbnailUrl: pdf.thumbnail_url ?? null,
     storagePath: pdf.storage_path ?? null,
-    url: pdf.storage_path ? `/api/servers/${pdf.server_id ?? ''}/channels/${pdf.channel_id}/pdfs/${pdf.id}/file` : null,
+    url: pdf.storage_path ? `/api/libraries/${pdf.server_id ?? ''}/channels/${pdf.channel_id}/pdfs/${pdf.id}/file` : null,
     position: pdf.position ?? 0,
     createdAt: pdf.created_at,
   };
 }
 
-function serializePdfForRoute(pdf: any, serverId: string) {
+function serializePdfForRoute(pdf: any, libraryId: string) {
   const serialized = serializePdf(pdf);
   return {
     ...serialized,
     url: pdf.storage_path
-      ? `/api/servers/${serverId}/channels/${pdf.channel_id}/pdfs/${pdf.id}/file`
+      ? `/api/libraries/${libraryId}/channels/${pdf.channel_id}/pdfs/${pdf.id}/file`
       : null,
   };
 }
@@ -54,10 +54,10 @@ async function getUserWithRetry(supabase: ReturnType<typeof createClient>) {
 
 export async function GET(
   req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string }> | { id: string; channelId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string }> | { libraryId: string; channelId: string } }
 ) {
   const resolvedParams = await params;
-  const { id: serverId, channelId } = resolvedParams;
+  const { libraryId, channelId } = resolvedParams;
 
   const supabase = createClient();
   const { data: { user }, error: userError } = await getUserWithRetry(supabase);
@@ -65,11 +65,11 @@ export async function GET(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const db = createAdminClient() ?? supabase;
 
-  // Verify user is a member of the server
+  // Verify user is a member of the library
   const { data: membership, error: membershipError } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -94,15 +94,15 @@ export async function GET(
     }, { status });
   }
 
-  return NextResponse.json({ pdfs: (pdfs ?? []).map((pdf) => serializePdfForRoute(pdf, serverId)) });
+  return NextResponse.json({ pdfs: (pdfs ?? []).map((pdf) => serializePdfForRoute(pdf, libraryId)) });
 }
 
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string }> | { id: string; channelId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string }> | { libraryId: string; channelId: string } }
 ) {
   const resolvedParams = await params;
-  const { id: serverId, channelId } = resolvedParams;
+  const { libraryId, channelId } = resolvedParams;
 
   const supabase = createClient();
   const { data: { user }, error: userError } = await getUserWithRetry(supabase);
@@ -110,12 +110,12 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const db = createAdminClient() ?? supabase;
 
-  // Verify user is a member of the server. After this point use the admin
+  // Verify user is a member of the library. After this point use the admin
   // client when available so RLS policy drift cannot block metadata writes.
   const { data: membership, error: membershipError } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -126,7 +126,7 @@ export async function POST(
     .from('channels')
     .select('id, server_id')
     .eq('id', channelId)
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .maybeSingle();
 
   if (channelError) return NextResponse.json({ error: channelError.message }, { status: 500 });
@@ -177,7 +177,7 @@ export async function POST(
   });
 
   if (!driveRes.ok) {
-    console.error('[api/pdfs] Drive copy failed', { serverId, channelId, driveId, status: driveRes.status });
+    console.error('[api/pdfs] Drive copy failed', { libraryId, channelId, driveId, status: driveRes.status });
     return NextResponse.json({
       error: `Failed to copy PDF from Google Drive (${driveRes.status})`,
       hint: 'Re-authorize Drive access and try adding the PDF again.',
@@ -186,7 +186,7 @@ export async function POST(
 
   const bytes = Buffer.from(await driveRes.arrayBuffer());
   sizeBytes = bytes.byteLength;
-  storagePath = `${serverId}/${channelId}/${crypto.randomUUID()}.pdf`;
+  storagePath = `${libraryId}/${channelId}/${crypto.randomUUID()}.pdf`;
 
   const { error: uploadError } = await db.storage
     .from(PDF_BUCKET)
@@ -196,7 +196,7 @@ export async function POST(
     });
 
   if (uploadError) {
-    console.error('[api/pdfs] shared storage upload failed', { serverId, channelId, driveId, storagePath, error: uploadError.message });
+    console.error('[api/pdfs] shared storage upload failed', { libraryId, channelId, driveId, storagePath, error: uploadError.message });
     return NextResponse.json({
       error: uploadError.message,
       hint: 'Create the private Supabase Storage bucket "room-pdfs" or rerun migration 005_multiple_pdfs.sql.',
@@ -236,5 +236,5 @@ export async function POST(
     .eq('id', channelId)
     .is('current_pdf_id', null);
 
-  return NextResponse.json({ pdf: serializePdfForRoute(pdf, serverId) });
+  return NextResponse.json({ pdf: serializePdfForRoute(pdf, libraryId) });
 }

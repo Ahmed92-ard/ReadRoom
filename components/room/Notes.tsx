@@ -69,7 +69,7 @@ export function Notes({ roomId }: { roomId: string }) {
       if (!response.ok) {
         if (response.status === 409 && payload.conflict) {
           setConflict(payload.message || 'Another user updated the note. Your draft is preserved.');
-          setLastUpdatedAt(payload.serverUpdatedAt ?? lastUpdatedAt);
+          setLastUpdatedAt(payload.libraryUpdatedAt ?? lastUpdatedAt);
           return;
         }
         throw new Error(payload.error || 'Unable to save note.');

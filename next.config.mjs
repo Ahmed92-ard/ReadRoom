@@ -30,6 +30,20 @@ const nextConfig = {
     config.resolve.alias = { ...config.resolve.alias, canvas: false };
     return config;
   },
+  async redirects() {
+    return [
+      {
+        source: '/servers/:path*',
+        destination: '/libraries/:path*',
+        permanent: true,
+      },
+      {
+        source: '/api/servers/:path*',
+        destination: '/api/libraries/:path*',
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

@@ -1,4 +1,4 @@
-// app/api/servers/[id]/channels/[channelId]/pdfs/[pdfId]/route.ts
+// app/api/libraries/[libraryId]/channels/[channelId]/pdfs/[pdfId]/route.ts
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -6,10 +6,10 @@ const PDF_BUCKET = 'room-pdfs';
 
 export async function DELETE(
   req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string; pdfId: string }> | { id: string; channelId: string; pdfId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string; pdfId: string }> | { libraryId: string; channelId: string; pdfId: string } }
 ) {
   const resolvedParams = await params;
-  const { id: serverId, channelId, pdfId } = resolvedParams;
+  const { libraryId, channelId, pdfId } = resolvedParams;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -19,7 +19,7 @@ export async function DELETE(
   const { data: membership } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -69,7 +69,7 @@ export async function DELETE(
     const { error: storageError } = await db.storage.from(PDF_BUCKET).remove([existingPdf.storage_path]);
     if (storageError) {
       console.warn('[api/pdfs] shared storage cleanup failed', {
-        serverId,
+        libraryId,
         channelId,
         pdfId,
         storagePath: existingPdf.storage_path,
@@ -83,10 +83,10 @@ export async function DELETE(
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string; channelId: string; pdfId: string }> | { id: string; channelId: string; pdfId: string } }
+  { params }: { params: Promise<{ libraryId: string; channelId: string; pdfId: string }> | { libraryId: string; channelId: string; pdfId: string } }
 ) {
   const resolvedParams = await params;
-  const { id: serverId, channelId, pdfId } = resolvedParams;
+  const { libraryId, channelId, pdfId } = resolvedParams;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -96,7 +96,7 @@ export async function PATCH(
   const { data: membership } = await supabase
     .from('server_members')
     .select('role')
-    .eq('server_id', serverId)
+    .eq('server_id', libraryId)
     .eq('user_id', user.id)
     .maybeSingle();
 
