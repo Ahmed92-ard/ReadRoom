@@ -36,7 +36,8 @@ export function usePresence(
   userId: string,
   userName: string,
   activePdfId: string | null = null,
-  activePdfName: string | null = null
+  activePdfName: string | null = null,
+  roomName: string | null = null
 ) {
   const { setSelf, updateSelf, addUser, updateUser, setMembers, setConnectionStatus } = usePresenceStore();
 
@@ -50,9 +51,11 @@ export function usePresence(
   // Mutable refs for values that change but shouldn't re-trigger effects
   const activePdfIdRef = useRef(activePdfId);
   const activePdfNameRef = useRef(activePdfName);
+  const roomNameRef = useRef(roomName);
   const userNameRef = useRef(userName);
   activePdfIdRef.current = activePdfId;
   activePdfNameRef.current = activePdfName;
+  roomNameRef.current = roomName;
   userNameRef.current = userName;
 
   // ── Fetch library members (offline users) — runs once per libraryId ───────
@@ -74,6 +77,9 @@ export function usePresence(
           isFollowing: false,
           page: 1, scroll: 0, zoom: 1,
           activePdfId: null, activePdfName: null,
+          activeLibraryId: libraryId,
+          currentRoomId: null,
+          currentRoomName: null,
           isActive: false, lastSeen: Date.now(),
         }));
         setMembers(members);
@@ -171,6 +177,9 @@ export function usePresence(
         zoom: usePDFStore.getState().zoom,
         activePdfId: activePdfIdRef.current,
         activePdfName: activePdfNameRef.current,
+        activeLibraryId: libraryId,
+        currentRoomId: roomId,
+        currentRoomName: roomNameRef.current,
         isActive: true,
         lastSeen: Date.now(),
       };
@@ -239,7 +248,7 @@ export function usePresence(
       socket.off('connect_error', handleConnectError);
       clearInterval(pingInterval);
     };
-  }, [roomId, tabId, addUser, setSelf, setConnectionStatus, updateUser, updateSelf]);
+  }, [roomId, libraryId, tabId, addUser, setSelf, setConnectionStatus, updateUser, updateSelf]);
 
   // ── PDF state → presence:update (throttled) ───────────────────────────────
   useEffect(() => {
@@ -269,7 +278,7 @@ export function usePresence(
       prev = current;
       if (!selfNow) return;
 
-      const patch = { ...current, isActive: true, lastSeen: Date.now() };
+      const patch = { ...current, activeLibraryId: libraryId, currentRoomId: roomId, currentRoomName: roomNameRef.current, isActive: true, lastSeen: Date.now() };
       updateSelf(patch);
 
       if (throttleTimer) clearTimeout(throttleTimer);
@@ -280,7 +289,21 @@ export function usePresence(
     });
 
     return () => { unsubscribe(); if (throttleTimer) clearTimeout(throttleTimer); };
-  }, [roomId, updateSelf]);
+  }, [roomId, libraryId, updateSelf]);
+
+  useEffect(() => {
+    const self = usePresenceStore.getState().self;
+    if (!self) return;
+    const patch = {
+      activeLibraryId: libraryId,
+      currentRoomId: roomId,
+      currentRoomName: roomName,
+      isActive: true,
+      lastSeen: Date.now(),
+    };
+    updateSelf(patch);
+    getSocket().emit('presence:update', { roomId, user: { ...self, ...patch } });
+  }, [roomId, libraryId, roomName, updateSelf]);
 
   // ── Visibility change → isActive ─────────────────────────────────────────
   useEffect(() => {
@@ -289,12 +312,13 @@ export function usePresence(
       if (!self) return;
       const isActive = document.visibilityState === 'visible';
       const lastSeen = Date.now();
-      updateSelf({ isActive, lastSeen });
-      getSocket().emit('presence:update', { roomId, user: { ...self, isActive, lastSeen } });
+      const patch = { activeLibraryId: libraryId, currentRoomId: roomId, currentRoomName: roomNameRef.current, isActive, lastSeen };
+      updateSelf(patch);
+      getSocket().emit('presence:update', { roomId, user: { ...self, ...patch } });
     };
     document.addEventListener('visibilitychange', handle);
     return () => document.removeEventListener('visibilitychange', handle);
-  }, [roomId, updateSelf]);
+  }, [roomId, libraryId, updateSelf]);
 
   // ── Resolve "Reader" fallback name after initial join ─────────────────────
   useEffect(() => {

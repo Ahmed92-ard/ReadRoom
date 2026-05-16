@@ -27,6 +27,9 @@ export interface UserMeta {
   zoom?: number;
   activePdfId?: string | null;
   activePdfName?: string | null;
+  activeLibraryId?: string | null;
+  currentRoomId?: string | null;
+  currentRoomName?: string | null;
   isActive?: boolean;
   lastSeen?: number;
 }

@@ -104,11 +104,9 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
         />
       )}
 
-      <div className="flex-none border-b border-room-border bg-room-bg/30 px-4 py-3">
-        <p className="truncate text-sm font-semibold text-room-text">{roomName}</p>
-      </div>
-
       <div className="flex-1 p-3 space-y-1 overflow-y-auto">
+      <p className="px-2 pb-2 text-sm font-semibold text-room-text truncate">{roomName}</p>
+
       {followMode && (
         <div className="px-3 py-2 mb-4 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-between animate-in fade-in slide-in-from-top-1">
           <span className="text-xs text-blue-400 font-medium">📍 Following mode on</span>
@@ -161,6 +159,12 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
                   <>
                     <span className="text-green-400">Active</span>
                     <span className="text-room-muted">·</span>
+                    {user.currentRoomName && (
+                      <>
+                        <span className="text-room-muted truncate">{user.currentRoomName}</span>
+                        <span className="text-room-muted">·</span>
+                      </>
+                    )}
                     <span className="text-room-muted truncate">
                       {user.activePdfName ? `${user.activePdfName} · ` : ''}page {user.page ?? 1}
                     </span>

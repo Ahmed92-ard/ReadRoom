@@ -32,6 +32,11 @@ interface UploadProgress {
   current: string;
 }
 
+interface UploadItem {
+  file: File;
+  relativePath: string;
+}
+
 export function GooglePicker({
   onClose,
   libraryId,
@@ -47,16 +52,16 @@ export function GooglePicker({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const uploadFilename = (file: File) => {
-    const relativePath = (file as any).webkitRelativePath as string | undefined;
+  const uploadFilename = (file: File, relativePath?: string) => {
+    relativePath = relativePath || ((file as any).webkitRelativePath as string | undefined);
     return relativePath?.split('/').pop() || file.name;
   };
 
   // ── Upload a single file to the server ───────────────────────────────────
-  const uploadFile = async (file: File, folderId: string | null): Promise<any> => {
+  const uploadFile = async (file: File, folderId: string | null, relativePath?: string): Promise<any> => {
     if (!libraryId || !channelId) throw new Error('Room context required for upload');
     const formData = new FormData();
-    formData.append('file', file, uploadFilename(file));
+    formData.append('file', file, uploadFilename(file, relativePath));
     if (folderId) formData.append('folderId', folderId);
 
     const res = await fetch(
@@ -111,13 +116,55 @@ export function GooglePicker({
     return parentId;
   };
 
+  const readDirectoryEntries = (reader: any): Promise<any[]> => (
+    new Promise((resolve, reject) => reader.readEntries(resolve, reject))
+  );
+
+  const collectEntryFiles = async (entry: any, pathPrefix = ''): Promise<UploadItem[]> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) => entry.file(resolve, reject));
+      return [{ file, relativePath: `${pathPrefix}${file.name}` }];
+    }
+    if (!entry.isDirectory) return [];
+
+    const reader = entry.createReader();
+    const batches: any[] = [];
+    for (;;) {
+      const entries = await readDirectoryEntries(reader);
+      if (entries.length === 0) break;
+      batches.push(...entries);
+    }
+
+    const nested = await Promise.all(
+      batches.map((child) => collectEntryFiles(child, `${pathPrefix}${entry.name}/`))
+    );
+    return nested.flat();
+  };
+
+  const getDroppedItems = async (dataTransfer: DataTransfer): Promise<UploadItem[]> => {
+    const entries = Array.from(dataTransfer.items ?? [])
+      .map((item) => (item as any).webkitGetAsEntry?.())
+      .filter(Boolean);
+
+    if (entries.length === 0) {
+      return Array.from(dataTransfer.files).map((file) => ({ file, relativePath: (file as any).webkitRelativePath || file.name }));
+    }
+
+    const collected = await Promise.all(entries.map((entry) => collectEntryFiles(entry)));
+    return collected.flat();
+  };
+
   // ── Main upload handler ───────────────────────────────────────────────────
-  const handleFiles = useCallback(async (files: FileList | null) => {
+  const handleFiles = useCallback(async (files: FileList | UploadItem[] | null) => {
     if (!files || files.length === 0) return;
     setError(null);
 
-    const pdfs = Array.from(files).filter(
-      (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    const items: UploadItem[] = Array.isArray(files)
+      ? files
+      : Array.from(files).map((file) => ({ file, relativePath: (file as any).webkitRelativePath || file.name }));
+
+    const pdfs = items.filter(
+      ({ file }) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
     );
 
     if (pdfs.length === 0) {
@@ -134,16 +181,15 @@ export function GooglePicker({
 
     try {
       for (let i = 0; i < pdfs.length; i++) {
-        const file = pdfs[i];
+        const { file, relativePath } = pdfs[i];
         setProgress({ total: pdfs.length, done: i, current: file.name });
 
         // webkitRelativePath is set when using webkitdirectory input
         // e.g. "MyFolder/SubFolder/notes.pdf"
         // Falls back to just the filename for single-file uploads
-        const relativePath = (file as any).webkitRelativePath || file.name;
         const folderId = await resolveFolderPath(relativePath, folderCache);
 
-        const pdf = await uploadFile(file, folderId);
+        const pdf = await uploadFile(file, folderId, relativePath);
 
         if (onLocalUploaded) {
           await onLocalUploaded(pdf);
@@ -169,9 +215,9 @@ export function GooglePicker({
     }
   }, [libraryId, channelId, onLocalUploaded, onSelect, onClose, initialFolderId]);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
-    handleFiles(e.dataTransfer.files);
+    handleFiles(await getDroppedItems(e.dataTransfer));
   }, [handleFiles]);
 
   return (
@@ -237,7 +283,7 @@ export function GooglePicker({
             ) : (
               <>
                 <Upload size={32} className="text-room-muted mx-auto mb-3" />
-                <p className="text-sm font-medium text-room-text mb-1">Drop PDF files here</p>
+                <p className="text-sm font-medium text-room-text mb-1">Drop PDF files or folders here</p>
                 <p className="text-xs text-room-muted">or click to browse your device</p>
                 <p className="text-xs text-room-muted mt-1">Max 100 MB per file</p>
               </>
@@ -251,7 +297,10 @@ export function GooglePicker({
             accept="application/pdf,.pdf"
             multiple
             className="hidden"
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.currentTarget.value = '';
+            }}
           />
           {/* webkitdirectory: selects the entire folder including all subfolders */}
           <input
@@ -262,7 +311,10 @@ export function GooglePicker({
             directory=""
             multiple
             className="hidden"
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.currentTarget.value = '';
+            }}
           />
 
           {/* Action buttons */}
@@ -282,7 +334,7 @@ export function GooglePicker({
               title="Upload an entire folder — subfolders are preserved"
             >
               <FolderPlus size={16} />
-              Select Folder
+              Select Folders
             </button>
           </div>
 

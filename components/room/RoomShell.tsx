@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { createPortal } from 'react-dom';
+import { useParams, useRouter } from 'next/navigation';
 import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
@@ -20,6 +21,7 @@ import { SettingsOverlay } from '@/components/room/SettingsOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
 import { usePresence } from '@/lib/hooks/usePresence';
 import { getSocket } from '@/lib/socket/client';
+import { createClient } from '@/lib/supabase/client';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { usePresenceStore } from '@/store/presenceStore';
 import type { PDFMeta, ChannelPDF, RoomActivity, PDFFolder } from '@/types';
@@ -72,6 +74,11 @@ function collectFolderPdfIds(folders: PDFFolder[], folderId: string): Set<string
   const start = find(folders);
   if (start) walk(start);
   return ids;
+}
+
+function previewMessage(value?: string | null) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 96 ? `${text.slice(0, 93)}...` : text || 'Attachment';
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
@@ -228,6 +235,7 @@ interface ToastActivity extends RoomActivity {
 }
 
 export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom }: RoomShellProps) {
+  const router = useRouter();
   const { 
     sidebarOpen, setSidebarOpen, activePanel, setActivePanel,
     librarySidebarCollapsed, channelSidebarCollapsed, toggleLibrarySidebar, toggleChannelSidebar,
@@ -418,6 +426,13 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     isChatVisibleRef.current = isChatVisible;
   }, [isChatVisible]);
 
+  useEffect(() => {
+    const updateFullscreenHost = () => setFullscreenHost(document.fullscreenElement);
+    updateFullscreenHost();
+    document.addEventListener('fullscreenchange', updateFullscreenHost);
+    return () => document.removeEventListener('fullscreenchange', updateFullscreenHost);
+  }, []);
+
   const clearUnread = useCallback(() => {
     setUnreadCount(0);
     unreadCountRef.current = 0;
@@ -580,13 +595,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     touchStartY.current = null;
   };
 
-  const { activeLibraryId, updateChannel } = useWorkspaceStore();
+  const { activeLibraryId, channels, updateChannel } = useWorkspaceStore();
 
   selfRef.current = self;
 
   const selectionStorageKey = libraryId && channelId
     ? `readroom:selected-pdf:${libraryId}:${channelId}:${initialUserId}`
     : null;
+  const [fullscreenHost, setFullscreenHost] = useState<Element | null>(null);
 
   const buildRoomState = useCallback(
     (pdf: PDFMeta | null) => ({
@@ -744,6 +760,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       page: usePDFStore.getState().page,
       scroll: usePDFStore.getState().scroll,
       zoom: usePDFStore.getState().zoom,
+      activeLibraryId: libraryId ?? null,
+      currentRoomId: roomId,
+      currentRoomName: room?.name ?? initialRoom?.name ?? 'ReadRoom',
       isActive: true,
       lastSeen: Date.now(),
     };
@@ -755,7 +774,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         ...patch,
       },
     });
-  }, [roomId, updateSelf]);
+  }, [libraryId, roomId, room?.name, initialRoom?.name, updateSelf]);
 
   useEffect(() => {
     if (!libraryId || !channelId) {
@@ -818,7 +837,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [libraryId, channelId, buildRoomState, channelPdfToMeta, normalizeChannelPDF, publishActivePdf, selectionStorageKey, setRoom]);
 
   usePDFSync(roomId, mainContainerRef, currentChannelPdfId, room?.pdf?.filename);
-  usePresence(roomId, libraryId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null);
+  usePresence(roomId, libraryId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null, room?.name ?? initialRoom?.name ?? 'ReadRoom');
 
   // Expose roomId globally so PresenceList can emit presence:update for avatar changes
   useEffect(() => {
@@ -915,6 +934,55 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       socket.off('connect', handleConnect);
     };
   }, [roomId, initialUserId, initialUserName, buildRoomState, channelPdfToMeta, fetchFolderTree, persistNotificationState, pushToast, showBrowserNotification, currentChannelPdfId, normalizeChannelPDF, publishActivePdf, setRoom]);
+
+  useEffect(() => {
+    if (!libraryId || channels.length === 0) return;
+    const roomNames = new Map(channels.map((channel) => [channel.id, channel.name]));
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`cross-room-messages:${libraryId}:${initialUserId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload) => {
+          const row = payload.new as any;
+          const messageRoomId = String(row?.room_id ?? '');
+          if (!messageRoomId || messageRoomId === roomId || !roomNames.has(messageRoomId)) return;
+          if (String(row?.sender_id ?? '').split('_')[0] === initialUserId) return;
+
+          const activityId = `cross-room:message:${row.id}`;
+          if (processedNotificationIdsRef.current.has(activityId)) return;
+          processedNotificationIdsRef.current.add(activityId);
+
+          const roomName = roomNames.get(messageRoomId) ?? 'Room';
+          const activity: RoomActivity = {
+            id: activityId,
+            roomId: messageRoomId,
+            type: 'chat:message',
+            title: row.sender_name || 'New message',
+            body: previewMessage(row.content),
+            userId: row.sender_id ?? undefined,
+            userName: row.sender_name ?? undefined,
+            ts: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+            metadata: { roomName, libraryId },
+          };
+
+          pushToast(activity);
+          if (document.visibilityState !== 'visible') showBrowserNotification(activity);
+          setUnreadCount((prev) => {
+            const next = Math.min(999, prev + 1);
+            unreadCountRef.current = next;
+            persistNotificationState(next, activity.id);
+            return next;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [channels, initialUserId, libraryId, persistNotificationState, pushToast, roomId, showBrowserNotification]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1449,6 +1517,58 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     </div>
   );
 
+  const toastStack = (
+    <div className="pointer-events-none fixed right-4 top-20 z-[2147483647] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2">
+      {toasts.map((toast) => {
+        const toastRoomName = typeof toast.metadata?.roomName === 'string'
+          ? toast.metadata.roomName
+          : room?.name;
+        const isOtherRoom = toast.roomId !== roomId;
+
+        return (
+          <button
+            key={toast.toastId}
+            type="button"
+            onClick={() => {
+              setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
+              if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+              }
+              if (isOtherRoom && libraryId) {
+                router.push(`/libraries/${libraryId}/channels/${toast.roomId}`);
+                return;
+              }
+              if (toast.type === 'chat:message' || toast.type === 'mention') {
+                if (isMobile) setMobileChatOpen(true);
+                else if (chatSidebarCollapsed) toggleChatSidebar();
+                clearUnread();
+              }
+            }}
+            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/95 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
+          >
+            <div className="flex items-start gap-3">
+              <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${
+                toast.type === 'mention' ? 'bg-red-400' :
+                toast.type === 'pdf:added' ? 'bg-blue-400' :
+                toast.type === 'presence:join' ? 'bg-emerald-400' :
+                'bg-room-muted'
+              }`} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-room-text">{toast.title}</span>
+                {toastRoomName && (toast.type === 'chat:message' || toast.type === 'mention') && (
+                  <span className="mt-0.5 block truncate text-[11px] font-medium text-blue-300">{toastRoomName}</span>
+                )}
+                {toast.body && (
+                  <span className="mt-0.5 block line-clamp-2 text-xs text-room-muted">{toast.body}</span>
+                )}
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div 
       className="flex flex-1 h-[100dvh] bg-room-bg overflow-hidden relative"
@@ -1645,49 +1765,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       {/* Mobile Sheet Backdrop & Container handled via MobileBottomSheet component */}
 
-      {/* Toast notifications — z-[2147483647] ensures visibility above fullscreen PDF */}
-      <div className="pointer-events-none fixed right-4 top-20 z-[2147483647] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2">
-        {toasts.map((toast) => (
-          <button
-            key={toast.toastId}
-            type="button"
-            onClick={() => {
-              setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
-              if (toast.type === 'chat:message' || toast.type === 'mention') {
-                // Exit fullscreen if active so the user can see chat
-                if (document.fullscreenElement) {
-                  document.exitFullscreen().catch(() => {});
-                }
-                if (isMobile) setMobileChatOpen(true);
-                else if (chatSidebarCollapsed) toggleChatSidebar();
-                clearUnread();
-              }
-            }}
-            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/95 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
-          >
-            <div className="flex items-start gap-3">
-              <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${
-                toast.type === 'mention' ? 'bg-red-400' :
-                toast.type === 'pdf:added' ? 'bg-blue-400' :
-                toast.type === 'presence:join' ? 'bg-emerald-400' :
-                'bg-room-muted'
-              }`} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-room-text">{toast.title}</span>
-                {toast.body && (
-                  <span className="mt-0.5 block line-clamp-2 text-xs text-room-muted">{toast.body}</span>
-                )}
-                {/* Room name label — helps identify which room when multiple are open */}
-                {room?.name && (toast.type === 'chat:message' || toast.type === 'mention') && (
-                  <span className="mt-1 block text-[10px] text-room-muted/60 truncate">
-                    #{room.name}
-                  </span>
-                )}
-              </span>
-            </div>
-          </button>
-        ))}
-      </div>
+      {fullscreenHost ? createPortal(toastStack, fullscreenHost) : toastStack}
 
       {(pendingDeletePdf || pendingDeleteFolderId) && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
