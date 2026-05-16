@@ -485,17 +485,35 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
   }, [activeMenu]);
 
+  const isTypingRef = useRef(false);
+
   const emitTyping = useCallback((value: string) => {
     if (!self) return;
     const now = Date.now();
-    if (now - typingThrottleRef.current > 1200) {
+    const isTyping = Boolean(value);
+
+    // Only emit typing:start when transitioning from not-typing → typing
+    // This avoids spamming the socket on every keystroke
+    if (isTyping && !isTypingRef.current) {
+      isTypingRef.current = true;
       typingThrottleRef.current = now;
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: Boolean(value), ts: now });
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now });
     }
+
+    // Reset the stop timer on every keystroke
     if (typingStopRef.current) clearTimeout(typingStopRef.current);
-    typingStopRef.current = setTimeout(() => {
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
-    }, 2200);
+    if (isTyping) {
+      typingStopRef.current = setTimeout(() => {
+        isTypingRef.current = false;
+        getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
+      }, 1500);
+    } else {
+      // Input cleared — stop immediately
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: now });
+      }
+    }
   }, [roomId, self]);
 
   const uploadAttachment = useCallback(async () => {
@@ -557,6 +575,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
     setReplyTo(null);
     setIsAtBottom(true);
     if (fileRef.current) fileRef.current.value = '';
+
+    // Stop typing indicator immediately on send
+    if (isTypingRef.current && self) {
+      isTypingRef.current = false;
+      if (typingStopRef.current) clearTimeout(typingStopRef.current);
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
+    }
 
     try {
       const uploaded = await uploadAttachment();
@@ -918,7 +943,31 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
       {unreadCount > 0 && <button onClick={() => { setIsAtBottom(true); bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }} className="absolute bottom-24 right-4 rounded-full bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg">Jump to latest ({unreadCount})</button>}
 
-      {resolvedTyping && <div className="flex-none px-3 py-1 text-xs italic text-room-muted">{resolvedTyping} {Object.keys(typing).length === 1 ? 'is' : 'are'} typing…</div>}
+      {typingUsers.length > 0 && (
+        <div className="flex-none flex items-center gap-1.5 px-3 py-1.5 min-h-[28px]">
+          {/* Stacked avatars */}
+          <div className="flex -space-x-1.5">
+            {typingUsers.map((u) => (
+              <div
+                key={u.userId}
+                className="w-5 h-5 rounded-full ring-2 ring-room-surface overflow-hidden flex items-center justify-center text-[8px] font-bold text-white flex-shrink-0"
+                style={u.avatarUrl ? {} : { backgroundColor: u.avatarColor }}
+                title={u.name}
+              >
+                {u.avatarUrl
+                  ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full object-cover" />
+                  : u.avatarInitials}
+              </div>
+            ))}
+          </div>
+          {/* Animated 3-dot indicator */}
+          <div className="flex items-center gap-[3px] px-2 py-1 rounded-full bg-room-bg border border-room-border">
+            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-bounce" style={{ animationDelay: '0ms', animationDuration: '900ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-bounce" style={{ animationDelay: '150ms', animationDuration: '900ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-bounce" style={{ animationDelay: '300ms', animationDuration: '900ms' }} />
+          </div>
+        </div>
+      )}
       {error && <div className="flex-none border-t border-red-900/50 bg-red-900/20 px-3 py-2 text-xs text-red-200">{error}</div>}
 
       {activeMenu && activeMenuMessage && (
