@@ -77,6 +77,10 @@ export function GooglePicker({ driveToken, onRequestAccess, onSelect, onClose, m
       if (data.action !== window.google.picker.Action.PICKED) return;
       const files: GoogleDriveFile[] = data.docs ?? [];
 
+      // Close the modal dialog immediately — upload continues in background
+      onClose();
+      setPickerOpen(false);
+
       try {
         for (const file of files) {
           let thumbnail: string | null = null;
@@ -100,11 +104,8 @@ export function GooglePicker({ driveToken, onRequestAccess, onSelect, onClose, m
         }
       } catch (err) {
         setPickerError(err instanceof Error ? err.message : String(err));
-        setPickerOpen(false);
         return;
       }
-
-      setPickerOpen(false);
     }).build();
 
     pickerRef.current = picker;
@@ -112,13 +113,7 @@ export function GooglePicker({ driveToken, onRequestAccess, onSelect, onClose, m
     setPickerOpen(true);
   }, [gapiReady, driveToken, mode, onSelect]);
 
-  // Auto-open picker once Drive token is available and GAPI is ready
-  useEffect(() => {
-    if (driveToken && gapiReady && !hasAutoOpened.current) {
-      hasAutoOpened.current = true;
-      openPicker();
-    }
-  }, [driveToken, gapiReady, openPicker]);
+  // No auto-open: the "Choose PDF from Drive" button in the dialog calls openPicker() directly.
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

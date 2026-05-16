@@ -133,6 +133,11 @@ export function VirtualizedPages({
   // Set to true whenever WE call scrollTo() so handleScroll ignores the
   // resulting scroll event and doesn't create a feedback loop.
   const isProgrammaticScrollRef = useRef(false);
+  // Fix 3: track which page last triggered a programmatic scrollTo
+  // so we can skip re-scrolling when pageHeights updates but page hasn't changed
+  const lastScrolledPageRef = useRef<number | null>(null);
+  // Fix 4: debounce follow-mode scrollTo to batch rapid page+scroll updates
+  const followDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setTotalPages(totalPages);
@@ -308,49 +313,63 @@ export function VirtualizedPages({
       return;
     }
 
-    // Calculate absolute scroll target
-    const pageTopOffset = PAGE_CONTAINER_PADDING_TOP + pageHeights
-      .slice(0, boundedPage - 1)
-      .reduce((sum, h) => sum + h + PAGE_GAP, 0);
-
-    // In follow mode, also apply the fractional scroll position within the page
-    // so the follower mirrors the leader's exact viewport, not just the page top.
-    let targetScrollTop = pageTopOffset;
-    if (followMode && controlledScroll !== undefined) {
-      const pageHeight = pageHeights[boundedPage - 1] ?? defaultPageHeight * zoom;
-      targetScrollTop = pageTopOffset + controlledScroll * pageHeight;
+    // Fix 3: skip scrollTo if the page hasn't changed since the last scroll we did.
+    // This prevents re-centering when pageHeights updates (dimensions load in) but
+    // the user is already on the correct page — which caused upward scroll jumps.
+    if (!followMode && lastScrolledPageRef.current === boundedPage) {
+      return;
     }
 
-    // Guard: don't suppress page-from-scroll in follow mode (we want to allow
-    // the next handleScroll to be skipped, not page state to be changed)
-    if (!followMode) {
-      suppressScrollPageUntil.current = Date.now() + 450;
-    }
+    const doScroll = () => {
+      const cont = containerRef.current;
+      if (!cont) return;
 
-    // Set guard BEFORE scrollTo so the resulting scroll event is ignored.
-    // Follow mode uses 'auto' (instant) — smooth scroll fires many intermediate
-    // scroll events that would trigger handleScroll before the guard expires,
-    // causing a feedback loop that resets the follower to page 1.
-    isProgrammaticScrollRef.current = true;
-    container.scrollTo({ top: targetScrollTop, behavior: followMode ? 'auto' : 'smooth' });
+      // Calculate absolute scroll target
+      const pageTopOffset = PAGE_CONTAINER_PADDING_TOP + pageHeights
+        .slice(0, boundedPage - 1)
+        .reduce((sum, h) => sum + h + PAGE_GAP, 0);
 
-    // Reset guard after scroll events have had time to fire.
-    // For follow mode (instant scroll) 2 rAFs is sufficient.
-    // For smooth scroll we use a longer timeout to cover the animation duration.
-    if (followMode) {
-      requestAnimationFrame(() => {
+      // In follow mode, also apply the fractional scroll position within the page
+      // so the follower mirrors the leader's exact viewport, not just the page top.
+      let targetScrollTop = pageTopOffset;
+      if (followMode && controlledScroll !== undefined) {
+        const pageHeight = pageHeights[boundedPage - 1] ?? defaultPageHeight * zoom;
+        targetScrollTop = pageTopOffset + controlledScroll * pageHeight;
+      }
+
+      // Guard: suppress handleScroll re-entrancy during navigation
+      if (!followMode) {
+        suppressScrollPageUntil.current = Date.now() + 600;
+      }
+
+      lastScrolledPageRef.current = boundedPage;
+      isProgrammaticScrollRef.current = true;
+      cont.scrollTo({ top: targetScrollTop, behavior: followMode ? 'auto' : 'smooth' });
+
+      if (followMode) {
         requestAnimationFrame(() => {
-          isProgrammaticScrollRef.current = false;
+          requestAnimationFrame(() => {
+            isProgrammaticScrollRef.current = false;
+          });
         });
-      });
-    } else {
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 400);
-    }
+      } else {
+        setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 400);
+      }
 
-    setVisibleStart(boundedPage);
-    setVisibleEnd(boundedPage);
+      setVisibleStart(boundedPage);
+      setVisibleEnd(boundedPage);
+    };
+
+    if (followMode) {
+      // Fix 4: debounce follow-mode scroll by 50ms to batch rapid page+scroll updates
+      // from the leader (page and controlledScroll arrive in separate store updates).
+      if (followDebounceRef.current) clearTimeout(followDebounceRef.current);
+      followDebounceRef.current = setTimeout(doScroll, 50);
+    } else {
+      doScroll();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, controlledScroll, followMode, pageHeights, pdfDocument, totalPages]);
 

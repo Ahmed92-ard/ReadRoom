@@ -341,7 +341,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const showBrowserNotification = useCallback((activity: RoomActivity) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
-    if (document.visibilityState === 'visible' && isChatVisible) return;
+    // Only suppress when the tab is actively in the foreground AND chat is visible.
+    // If the window is minimized or tab is backgrounded, always show the notification.
+    const tabIsVisible = document.visibilityState === 'visible';
+    if (tabIsVisible && isChatVisibleRef.current) return;
 
     try {
       new Notification(activity.title, {
@@ -350,7 +353,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         icon: '/icons/icon-192.png',
       });
     } catch {}
-  }, [isChatVisible]);
+  }, []);
 
   const pushToast = useCallback((activity: RoomActivity) => {
     const toast: ToastActivity = { ...activity, toastId: `${activity.id}:${Date.now()}` };
@@ -625,24 +628,35 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       .then((pdfs) => {
         if (cancelled) return;
         setChannelPDFs(pdfs);
+
         const storedPdfId = selectionStorageKey ? localStorage.getItem(selectionStorageKey) : null;
+
+        // If the stored PDF ID no longer exists (was deleted), clear the stale key
+        if (storedPdfId && !pdfs.some((item) => item.id === storedPdfId)) {
+          if (selectionStorageKey) localStorage.removeItem(selectionStorageKey);
+        }
+
         const desiredPdf = pdfs.find((item) => item.id === storedPdfId) ??
           pdfs.find((item) => item.driveId === room?.pdf?.fileId) ??
           pdfs[0];
-        setCurrentChannelPdfId(desiredPdf?.id ?? null);
-        if (desiredPdf) {
-          const desiredMeta = channelPdfToMeta(desiredPdf);
-          if (
-            room?.pdf?.fileId !== desiredMeta.fileId ||
-            room?.pdf?.url !== desiredMeta.url ||
-            room?.pdf?.filename !== desiredMeta.filename
-          ) {
-            setRoom(buildRoomState(desiredMeta));
-          }
+
+        if (!desiredPdf) {
+          // Channel has no PDFs — reset any stale initialRoom.pdf to prevent ghost loading
+          setCurrentChannelPdfId(null);
+          setRoom(buildRoomState(null));
+          return;
         }
-        if (desiredPdf) {
-          publishActivePdf(desiredPdf.id, desiredPdf.filename);
+
+        setCurrentChannelPdfId(desiredPdf.id);
+        const desiredMeta = channelPdfToMeta(desiredPdf);
+        if (
+          room?.pdf?.fileId !== desiredMeta.fileId ||
+          room?.pdf?.url !== desiredMeta.url ||
+          room?.pdf?.filename !== desiredMeta.filename
+        ) {
+          setRoom(buildRoomState(desiredMeta));
         }
+        publishActivePdf(desiredPdf.id, desiredPdf.filename);
       })
       .catch((err) => {
         console.error('[RoomShell] failed to fetch channel PDFs', err);
@@ -653,6 +667,23 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   usePDFSync(roomId, mainContainerRef, currentChannelPdfId, room?.pdf?.filename);
   usePresence(roomId, libraryId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null);
+
+  // Expose roomId globally so PresenceList can emit presence:update for avatar changes
+  useEffect(() => {
+    (window as any).__readroom_roomId = roomId;
+    return () => { delete (window as any).__readroom_roomId; };
+  }, [roomId]);
+
+  // Restore saved avatar URL from localStorage into self on mount
+  useEffect(() => {
+    try {
+      const savedUrl = localStorage.getItem('readroom:avatar-url');
+      if (savedUrl) {
+        usePresenceStore.getState().updateSelf({ avatarUrl: savedUrl });
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Stable Socket Listeners ────────────────────────────────────────────────
   useEffect(() => {

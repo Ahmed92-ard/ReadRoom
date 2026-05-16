@@ -1,9 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { Camera } from 'lucide-react';
 import { usePresenceStore } from '@/store/presenceStore';
 import { usePDFStore } from '@/store/pdfStore';
 import { Avatar } from '@/components/ui/Avatar';
+import { AvatarUpload } from '@/components/ui/AvatarUpload';
+import { getSocket } from '@/lib/socket/client';
 import type { UserMeta } from '@/types';
 
 function formatLastSeen(ts: number): string {
@@ -15,8 +18,27 @@ function formatLastSeen(ts: number): string {
 }
 
 export function PresenceList() {
-  const { users: usersMap, self, connectionStatus } = usePresenceStore();
+  const { users: usersMap, self, connectionStatus, updateSelf } = usePresenceStore();
   const { followMode, followTarget, setFollowMode } = usePDFStore();
+  const [showAvatarUpload, setShowAvatarUpload] = useState(false);
+
+  const handleAvatarUploaded = (url: string) => {
+    // Update local state immediately
+    updateSelf({ avatarUrl: url });
+    // Persist so it survives page reloads
+    try { localStorage.setItem('readroom:avatar-url', url); } catch {}
+    // Broadcast to all connected clients in the room
+    const currentSelf = usePresenceStore.getState().self;
+    if (currentSelf) {
+      const roomId = (window as any).__readroom_roomId as string | undefined;
+      if (roomId) {
+        getSocket().emit('presence:update', {
+          roomId,
+          user: { ...currentSelf, avatarUrl: url },
+        });
+      }
+    }
+  };
 
   // Group all sessions (including self) by base userId
   const grouped = Array.from([
@@ -66,6 +88,16 @@ export function PresenceList() {
 
   return (
     <div className="flex flex-col h-full bg-room-surface">
+      {showAvatarUpload && self && (
+        <AvatarUpload
+          currentUrl={self.avatarUrl}
+          currentColor={self.avatarColor}
+          currentInitials={self.avatarInitials}
+          onUploaded={handleAvatarUploaded}
+          onClose={() => setShowAvatarUpload(false)}
+        />
+      )}
+
       {/* Member Summary */}
       <div className="p-4 border-b border-room-border bg-room-bg/30 flex-none">
         <div className="flex items-center justify-between mb-1">
@@ -117,7 +149,20 @@ export function PresenceList() {
             }`}
           >
             <div className="relative">
-              <Avatar user={user} size="md" showTooltip={false} />
+              {user.userId === self?.userId ? (
+                <button
+                  onClick={() => setShowAvatarUpload(true)}
+                  className="relative group/av focus:outline-none"
+                  title="Edit profile photo"
+                >
+                  <Avatar user={user} size="md" showTooltip={false} />
+                  <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover/av:opacity-100 transition-opacity">
+                    <Camera size={12} className="text-white" />
+                  </div>
+                </button>
+              ) : (
+                <Avatar user={user} size="md" showTooltip={false} />
+              )}
               <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-room-surface ${
                 user.isActive ? 'bg-green-500' : 'bg-gray-500'
               }`} />

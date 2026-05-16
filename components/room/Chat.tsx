@@ -49,6 +49,23 @@ export function Chat({ roomId, onClose }: ChatProps) {
   useEffect(() => {
     const socket = getSocket();
 
+    // On reconnect (e.g. after mobile background suspension), catch up on
+    // any messages that were sent while the socket was disconnected.
+    const handleReconnect = async () => {
+      try {
+        const res = await fetch(`/api/rooms/${roomId}/messages?limit=20`);
+        if (!res.ok) return;
+        const { messages: refreshed } = await res.json();
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          const newMsgs = (refreshed as ChatMessage[]).filter((m) => !existingIds.has(m.id));
+          if (newMsgs.length === 0) return prev;
+          const merged = [...prev, ...newMsgs].sort((a, b) => a.ts - b.ts);
+          return merged.length > 500 ? merged.slice(-500) : merged;
+        });
+      } catch { /* reconnect catch-up is best-effort */ }
+    };
+
     const handler = (msg: ChatMessage) => {
       console.log('[chat] received message:', msg.id, 'room:', msg.roomId);
       if (msg.roomId !== roomId) return;
@@ -65,8 +82,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
 
     socket.on('chat:message', handler);
+    socket.on('connect', handleReconnect);
     return () => {
       socket.off('chat:message', handler);
+      socket.off('connect', handleReconnect);
     };
   }, [roomId]);
 

@@ -5,6 +5,7 @@ export interface UserMeta {
   userName: string;
   avatarColor: string; // hex
   avatarInitials: string;
+  avatarUrl?: string | null; // optional uploaded profile image
   joinedAt: number; // epoch ms
   isFollowing: boolean;
   page?: number;
