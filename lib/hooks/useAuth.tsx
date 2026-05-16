@@ -126,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Session initialization ────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
-    let loadingWatchdog: ReturnType<typeof setTimeout> | undefined;
+    let loadingWatchdog: number | undefined;
 
     const finishLoading = () => {
       if (loadingWatchdog) window.clearTimeout(loadingWatchdog);
