@@ -1,24 +1,8 @@
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { getUserWithRetry, PDF_BUCKET, PDF_TABLE, requireRoomInLibrary } from '@/lib/backend/readroom';
 
 export const runtime = 'nodejs';
-
-const PDF_BUCKET = 'room-pdfs';
-
-async function getUserWithRetry(supabase: ReturnType<typeof createClient>) {
-  let lastError: any = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const result = await supabase.auth.getUser();
-      if (!result.error || attempt === 1) return result;
-      lastError = result.error;
-    } catch (err) {
-      lastError = err;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  return { data: { user: null }, error: lastError };
-}
 
 export async function GET(
   _req: Request,
@@ -44,8 +28,12 @@ export async function GET(
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
   const { data: pdf, error: pdfError } = await db
-    .from('channel_pdfs')
+    .from(PDF_TABLE)
     .select('id, room_id, filename, storage_path')
     .eq('id', pdfId)
     .eq('room_id', channelId)

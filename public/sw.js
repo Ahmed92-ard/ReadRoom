@@ -1,8 +1,6 @@
-const CACHE_NAME = 'readroom-v3';
+const CACHE_NAME = 'readroom-v4';
 const ASSETS = [
-  '/',
   '/manifest.json',
-  '/favicon.ico',
   '/icons/app_icon_192.png',
   '/icons/app_icon_512.png',
   '/icons/app_icon.png',
@@ -30,9 +28,25 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
+  const isMutableAppData =
+    event.request.mode === 'navigate' ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/auth/') ||
+    url.pathname.startsWith('/libraries/') ||
+    url.pathname.startsWith('/room/') ||
+    url.pathname.includes('/_next/data/');
+
+  if (isMutableAppData) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .catch(() => caches.match(event.request))
+        .then((response) => response || Response.error())
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cacheResponse) => {
-      if (cacheResponse) return cacheResponse;
       return fetch(event.request)
         .then((networkResponse) => {
           if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
@@ -42,7 +56,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           return networkResponse;
         })
-        .catch(() => caches.match('/'));
+        .catch(() => cacheResponse || caches.match('/'));
     })
   );
 });

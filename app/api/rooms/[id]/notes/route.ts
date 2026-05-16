@@ -2,6 +2,11 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
 const MAX_NOTE_LENGTH = 20_000;
+const NOTE_TABLES = ['notes', 'room_notes'];
+
+function isMissingTable(error: any) {
+  return error?.code === '42P01' || String(error?.message ?? '').includes('does not exist');
+}
 
 export async function GET(
   req: Request,
@@ -11,14 +16,21 @@ export async function GET(
   const page = Number(url.searchParams.get('page') || '1');
   const supabase = createClient();
 
-  const { data, error } = await supabase
-    .from('room_notes')
-    .select('id, content, page, user_id, updated_at')
-    .eq('room_id', params.id)
-    .eq('page', page)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let data: any = null;
+  let error: any = null;
+  for (const table of NOTE_TABLES) {
+    const result = await supabase
+      .from(table)
+      .select('id, content, page, user_id, updated_at')
+      .eq('room_id', params.id)
+      .eq('page', page)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    data = result.data;
+    error = result.error;
+    if (!error || !isMissingTable(error)) break;
+  }
 
   if (error) {
     console.error('[api/notes] GET error:', error);
@@ -56,14 +68,23 @@ export async function POST(
 
   const supabase = createClient();
 
-  const { data: existing, error: fetchError } = await supabase
-    .from('room_notes')
-    .select('id, content, updated_at')
-    .eq('room_id', roomId)
-    .eq('page', page)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let noteTable = 'notes';
+  let existing: any = null;
+  let fetchError: any = null;
+  for (const table of NOTE_TABLES) {
+    const result = await supabase
+      .from(table)
+      .select('id, content, updated_at')
+      .eq('room_id', roomId)
+      .eq('page', page)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    noteTable = table;
+    existing = result.data;
+    fetchError = result.error;
+    if (!fetchError || !isMissingTable(fetchError)) break;
+  }
 
   if (fetchError) {
     console.error('[api/notes] POST fetch error:', fetchError);
@@ -84,7 +105,7 @@ export async function POST(
     }
 
     const { data, error } = await supabase
-      .from('room_notes')
+      .from(noteTable)
       .update({ content, user_id: userId })
       .eq('id', existing.id)
       .select()
@@ -98,7 +119,7 @@ export async function POST(
   }
 
   const { data, error } = await supabase
-    .from('room_notes')
+    .from(noteTable)
     .insert({ room_id: roomId, page, content, user_id: userId })
     .select()
     .single();

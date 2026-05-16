@@ -38,26 +38,34 @@ FOR UPDATE USING (
 );
 
 -- PDF metadata can be updated by members if future UI adds rename/reorder.
-DROP POLICY IF EXISTS "Members can update PDFs in their channels" ON channel_pdfs;
-CREATE POLICY "Members can update PDFs in their channels" ON channel_pdfs
-FOR UPDATE USING (
-  EXISTS (
-    SELECT 1 FROM channels
-    WHERE channels.id = channel_pdfs.channel_id
-      AND EXISTS (
-        SELECT 1 FROM server_members
-        WHERE server_id = channels.server_id
-          AND user_id = auth.uid()
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'channel_pdfs' AND column_name = 'channel_id'
+  ) THEN
+    DROP POLICY IF EXISTS "Members can update PDFs in their channels" ON channel_pdfs;
+    CREATE POLICY "Members can update PDFs in their channels" ON channel_pdfs
+    FOR UPDATE USING (
+      EXISTS (
+        SELECT 1 FROM channels
+        WHERE channels.id = channel_pdfs.channel_id
+          AND EXISTS (
+            SELECT 1 FROM server_members
+            WHERE server_id = channels.server_id
+              AND user_id = auth.uid()
+          )
       )
-  )
-) WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM channels
-    WHERE channels.id = channel_pdfs.channel_id
-      AND EXISTS (
-        SELECT 1 FROM server_members
-        WHERE server_id = channels.server_id
-          AND user_id = auth.uid()
+    ) WITH CHECK (
+      EXISTS (
+        SELECT 1 FROM channels
+        WHERE channels.id = channel_pdfs.channel_id
+          AND EXISTS (
+            SELECT 1 FROM server_members
+            WHERE server_id = channels.server_id
+              AND user_id = auth.uid()
+          )
       )
-  )
-);
+    );
+  END IF;
+END $$;

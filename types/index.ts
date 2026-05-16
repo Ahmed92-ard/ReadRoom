@@ -69,12 +69,14 @@ export interface PDFMeta {
   thumbnail: string | null;
   totalPages: number | null;
   url?: string | null;
+  folderId?: string | null;
 }
 
 export interface ChannelPDF {
   id: string;
   /** room_id in DB — kept as channelId in frontend for backward compat */
   channelId: string;
+  roomId?: string;
   driveId: string;
   filename: string;
   thumbnailUrl: string | null;

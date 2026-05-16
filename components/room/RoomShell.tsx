@@ -593,12 +593,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const normalizeChannelPDF = useCallback((raw: any): ChannelPDF => ({
     id: raw.id,
     channelId: raw.channelId ?? raw.channel_id ?? channelId ?? roomId,
+    roomId: raw.roomId ?? raw.room_id ?? raw.channelId ?? raw.channel_id ?? channelId ?? roomId,
     driveId: raw.driveId ?? raw.drive_id,
     filename: raw.filename,
     thumbnailUrl: raw.thumbnailUrl ?? raw.thumbnail_url ?? null,
     storagePath: raw.storagePath ?? raw.storage_path ?? null,
     url: raw.url ?? null,
     position: raw.position ?? 0,
+    folderId: raw.folderId ?? raw.folder_id ?? null,
     createdAt: raw.createdAt ?? raw.created_at ?? new Date().toISOString(),
   }), [channelId, roomId]);
 
@@ -1075,6 +1077,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               filename: pdf.filename,
               thumbnailUrl: pdf.thumbnail,
               driveAccessToken: driveToken,
+              folderId: pdf.folderId ?? null,
             }),
           });
           const data = await res.json();
@@ -1112,6 +1115,31 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         }
     },
     [libraryId, channelId, driveToken, normalizeChannelPDF, selectChannelPDF, setRoom, buildRoomState, roomId, setSyncState, requestDriveAccess, initialUserId, initialUserName]
+  );
+
+  const handleRoomPdfUploaded = useCallback(
+    async (rawPdf: any) => {
+      const addedPdf = normalizeChannelPDF(rawPdf);
+      setPdfLibraryError(null);
+      setChannelPDFs((prev) =>
+        prev.some((item) => item.id === addedPdf.id)
+          ? prev.map((item) => item.id === addedPdf.id ? addedPdf : item)
+          : [...prev, addedPdf]
+      );
+      await selectChannelPDF(addedPdf);
+      getSocket().emit('pdf:added', {
+        id: `pdf:added:${addedPdf.id}`,
+        roomId,
+        type: 'pdf:added',
+        title: `${initialUserName || 'Someone'} added a PDF`,
+        body: addedPdf.filename,
+        userId: initialUserId,
+        userName: initialUserName,
+        ts: Date.now(),
+        metadata: { pdf: addedPdf },
+      });
+    },
+    [initialUserId, initialUserName, normalizeChannelPDF, roomId, selectChannelPDF]
   );
 
   const RightSidebarContent = (
@@ -1554,8 +1582,11 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           driveToken={driveToken}
           onRequestAccess={requestDriveAccess}
           onSelect={handlePDFSelect}
+          onRoomPdfUploaded={handleRoomPdfUploaded}
           onClose={() => setShowPicker(false)}
           mode={libraryId && channelId ? 'add' : 'replace'}
+          libraryId={libraryId}
+          channelId={channelId}
         />
       )}
     </div>

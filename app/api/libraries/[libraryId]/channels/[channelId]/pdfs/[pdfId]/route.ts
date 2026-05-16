@@ -1,8 +1,7 @@
 // app/api/libraries/[libraryId]/channels/[channelId]/pdfs/[pdfId]/route.ts
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-
-const PDF_BUCKET = 'room-pdfs';
+import { PDF_BUCKET, PDF_TABLE, requireRoomInLibrary } from '@/lib/backend/readroom';
 
 export async function DELETE(
   req: Request,
@@ -28,8 +27,12 @@ export async function DELETE(
   }
 
   const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
   const { data: existingPdf } = await db
-    .from('channel_pdfs')
+    .from(PDF_TABLE)
     .select('storage_path')
     .eq('id', pdfId)
     .eq('room_id', channelId)
@@ -37,7 +40,7 @@ export async function DELETE(
 
   // Delete the PDF
   const { error } = await db
-    .from('channel_pdfs')
+    .from(PDF_TABLE)
     .delete()
     .eq('id', pdfId)
     .eq('room_id', channelId);
@@ -53,7 +56,7 @@ export async function DELETE(
 
   if (channel.current_pdf_id === pdfId) {
     const { data: firstPdf } = await supabase
-      .from('channel_pdfs')
+      .from(PDF_TABLE)
       .select('id')
       .eq('room_id', channelId)
       .order('position', { ascending: true })
@@ -103,10 +106,22 @@ export async function PATCH(
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const body = await req.json();
+  const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
   // Update channel's current PDF
   if (body.setCurrent) {
-    const { error } = await supabase
+    const { data: pdf } = await db
+      .from(PDF_TABLE)
+      .select('id')
+      .eq('id', pdfId)
+      .eq('room_id', channelId)
+      .maybeSingle();
+    if (!pdf) return NextResponse.json({ error: 'PDF not found' }, { status: 404 });
+
+    const { error } = await db
       .from('rooms')
       .update({ current_pdf_id: pdfId })
       .eq('id', channelId);

@@ -3,6 +3,7 @@
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { ChatMessage } from '@/types';
+import { requireRoomInLibrary } from '@/lib/backend/readroom';
 
 type Params = { libraryId: string; channelId: string };
 
@@ -52,6 +53,9 @@ export async function GET(
   const before = url.searchParams.get('before'); // ISO timestamp for pagination
 
   const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
   let query = db
     .from('messages')
@@ -101,6 +105,10 @@ export async function POST(
 
   const content = String(body.content).trim().slice(0, 2000);
   const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
   const { data: profile } = await db
     .from('users')
     .select('display_name, avatar_url')
@@ -158,6 +166,9 @@ export async function DELETE(
   if (!messageId) return NextResponse.json({ error: 'messageId required' }, { status: 400 });
 
   const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
   // Soft delete — only sender or admin/owner can delete
   const { data: msg } = await db

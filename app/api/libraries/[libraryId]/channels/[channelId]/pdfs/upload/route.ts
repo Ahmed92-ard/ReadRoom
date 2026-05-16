@@ -1,13 +1,20 @@
-// app/api/libraries/[libraryId]/channels/[channelId]/pdfs/upload/route.ts
 // Local file upload endpoint — accepts multipart/form-data with a PDF file.
-// Stores the file in Supabase Storage (same bucket as Drive-imported PDFs).
-import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import {
+  buildPdfStoragePath,
+  getDbClient,
+  getUserWithRetry,
+  MAX_PDF_BYTES,
+  PDF_BUCKET,
+  PDF_TABLE,
+  requireLibraryMember,
+  requireRoomInLibrary,
+  sanitizePdfFilename,
+  serializeRoomPdf,
+} from '@/lib/backend/readroom';
+import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
-
-const PDF_BUCKET = 'room-pdfs';
-const MAX_BYTES = 100 * 1024 * 1024; // 100 MB
 
 type Params = { libraryId: string; channelId: string };
 
@@ -18,17 +25,12 @@ export async function POST(
   const { libraryId, channelId } = await params;
 
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: userError } = await getUserWithRetry(supabase);
+  if (userError) console.warn('[api/pdfs/upload] getUser failed:', userError.message ?? String(userError));
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Verify membership
-  const { data: membership } = await supabase
-    .from('library_members')
-    .select('role')
-    .eq('library_id', libraryId)
-    .eq('user_id', user.id)
-    .maybeSingle();
-
+  const { membership, error: membershipError } = await requireLibraryMember(supabase, libraryId, user.id);
+  if (membershipError) return NextResponse.json({ error: membershipError.message }, { status: 500 });
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   // Parse multipart form
@@ -49,21 +51,15 @@ export async function POST(
     return NextResponse.json({ error: 'Only PDF files are supported' }, { status: 400 });
   }
 
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: `File too large (max ${MAX_BYTES / 1024 / 1024} MB)` }, { status: 400 });
+  if (file.size > MAX_PDF_BYTES) {
+    return NextResponse.json({ error: `File too large (max ${MAX_PDF_BYTES / 1024 / 1024} MB)` }, { status: 400 });
   }
 
-  const db = createAdminClient() ?? supabase;
+  const db = getDbClient(supabase);
 
-  // Verify channel belongs to library
-  const { data: channel } = await db
-    .from('rooms')
-    .select('id, library_id')
-    .eq('id', channelId)
-    .eq('library_id', libraryId)
-    .maybeSingle();
-
-  if (!channel) return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
   // Get next position
   if (folderId) {
@@ -77,7 +73,7 @@ export async function POST(
   }
 
   let positionQuery = db
-    .from('channel_pdfs')
+    .from(PDF_TABLE)
     .select('position')
     .eq('room_id', channelId)
     .order('position', { ascending: false })
@@ -88,8 +84,9 @@ export async function POST(
   const nextPosition = (existing?.[0]?.position ?? -1) + 1;
 
   // Upload to Supabase Storage
+  const pdfId = crypto.randomUUID();
   const bytes = await file.arrayBuffer();
-  const storagePath = `${libraryId}/${channelId}/${crypto.randomUUID()}.pdf`;
+  const storagePath = buildPdfStoragePath(libraryId, channelId, pdfId);
 
   const { error: uploadError } = await db.storage
     .from(PDF_BUCKET)
@@ -102,16 +99,16 @@ export async function POST(
     console.error('[api/pdfs/upload] storage upload failed:', uploadError);
     return NextResponse.json({
       error: uploadError.message,
-      hint: 'Ensure the "room-pdfs" Supabase Storage bucket exists (run migration 005).',
+      hint: 'Ensure the private "room-pdfs" Supabase Storage bucket exists and run migration 009_backend_storage_stabilization.sql.',
     }, { status: 500 });
   }
 
-  // Insert channel_pdfs row
-  const filename = file.name.replace(/[^\w\s.\-()]/g, '').trim() || 'document.pdf';
+  const filename = sanitizePdfFilename(file.name);
 
   const { data: pdf, error: insertError } = await db
-    .from('channel_pdfs')
+    .from(PDF_TABLE)
     .insert({
+      id: pdfId,
       room_id: channelId,
       drive_id: `local:${crypto.randomUUID()}`, // synthetic drive_id for local uploads
       filename,
@@ -139,18 +136,5 @@ export async function POST(
     .eq('id', channelId)
     .is('current_pdf_id', null);
 
-  const serialized = {
-    id: pdf.id,
-    channelId: pdf.room_id,
-    driveId: pdf.drive_id,
-    filename: pdf.filename,
-    thumbnailUrl: pdf.thumbnail_url ?? null,
-    storagePath: pdf.storage_path ?? null,
-    url: `/api/libraries/${libraryId}/channels/${channelId}/pdfs/${pdf.id}/file`,
-    position: pdf.position ?? 0,
-    folderId: pdf.folder_id ?? null,
-    createdAt: pdf.created_at,
-  };
-
-  return NextResponse.json({ pdf: serialized }, { status: 201 });
+  return NextResponse.json({ pdf: serializeRoomPdf(pdf, libraryId) }, { status: 201 });
 }

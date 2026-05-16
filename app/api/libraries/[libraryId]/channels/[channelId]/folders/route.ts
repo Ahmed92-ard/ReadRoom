@@ -2,6 +2,7 @@
 // CRUD for PDF folders (Google Drive-style organization)
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { PDF_TABLE } from '@/lib/backend/readroom';
 
 type Params = { libraryId: string; channelId: string };
 
@@ -28,6 +29,14 @@ export async function GET(
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const db = createAdminClient() ?? supabase;
+
+  const { data: room } = await db
+    .from('rooms')
+    .select('id')
+    .eq('id', channelId)
+    .eq('library_id', libraryId)
+    .maybeSingle();
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
   const { data: folders, error } = await db
     .from('pdf_folders')
@@ -87,6 +96,14 @@ export async function POST(
   const parentId = body?.parentId ?? null;
   const db = createAdminClient() ?? supabase;
 
+  const { data: room } = await db
+    .from('rooms')
+    .select('id')
+    .eq('id', channelId)
+    .eq('library_id', libraryId)
+    .maybeSingle();
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
   if (parentId) {
     const { data: parent } = await db
       .from('pdf_folders')
@@ -122,6 +139,29 @@ export async function POST(
     .single();
 
   if (error) {
+    if (error.code === '23505') {
+      let existingQuery = db
+        .from('pdf_folders')
+        .select('*')
+        .eq('room_id', channelId)
+        .ilike('name', name);
+      existingQuery = parentId ? existingQuery.eq('parent_id', parentId) : existingQuery.is('parent_id', null);
+      const { data: existing } = await existingQuery.maybeSingle();
+      if (existing) {
+        return NextResponse.json({
+          folder: {
+            id: existing.id,
+            roomId: existing.room_id,
+            parentId: existing.parent_id ?? null,
+            name: existing.name,
+            position: existing.position,
+            createdAt: existing.created_at,
+            children: [],
+            pdfs: [],
+          },
+        }, { status: 200 });
+      }
+    }
     if (error.code === '42P01') {
       return NextResponse.json({ error: 'Run migration 008 to enable folder support.' }, { status: 501 });
     }
@@ -162,9 +202,25 @@ export async function DELETE(
 
   const db = createAdminClient() ?? supabase;
 
+  const { data: room } = await db
+    .from('rooms')
+    .select('id')
+    .eq('id', channelId)
+    .eq('library_id', libraryId)
+    .maybeSingle();
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
+  const { data: folder } = await db
+    .from('pdf_folders')
+    .select('id')
+    .eq('id', folderId)
+    .eq('room_id', channelId)
+    .maybeSingle();
+  if (!folder) return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
+
   // Cascade: move PDFs in this folder to root (null folder_id)
   await db
-    .from('channel_pdfs')
+    .from(PDF_TABLE)
     .update({ folder_id: null })
     .eq('folder_id', folderId);
 

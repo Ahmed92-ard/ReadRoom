@@ -14,6 +14,8 @@ interface GooglePickerProps {
   onSelect: (pdf: PDFMeta) => void | Promise<void>;
   /** Called when a local file is selected — receives the File object */
   onLocalFile?: (file: File) => void | Promise<void>;
+  /** Called after this picker uploads a local PDF into room storage. */
+  onRoomPdfUploaded?: (pdf: any) => void | Promise<void>;
   onClose: () => void;
   mode?: 'replace' | 'add';
   /** libraryId + channelId needed for local upload endpoint */
@@ -47,6 +49,7 @@ export function GooglePicker({
   const [localProgress, setLocalProgress] = useState<string | null>(null);
   const pickerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // Load Google API scripts
   useEffect(() => {
@@ -72,6 +75,23 @@ export function GooglePicker({
       waitForGapi();
     });
   }, []);
+
+  useEffect(() => {
+    folderInputRef.current?.setAttribute('webkitdirectory', '');
+    folderInputRef.current?.setAttribute('directory', '');
+  }, []);
+
+  const createRoomFolder = useCallback(async (name: string, parentId: string | null) => {
+    if (!libraryId || !channelId) return null;
+    const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.slice(0, 128), parentId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to create folder "${name}"`);
+    return data.folder?.id ?? null;
+  }, [channelId, libraryId]);
 
   // ── Google Drive picker ───────────────────────────────────────────────────
   const openDrivePicker = useCallback(() => {
@@ -127,7 +147,7 @@ export function GooglePicker({
     picker.setVisible(true);
   }, [gapiReady, driveToken, mode, onSelect, onClose]);
 
-  const importDriveFile = async (file: GoogleDriveFile) => {
+  const importDriveFile = async (file: GoogleDriveFile, folderId: string | null = null) => {
     let thumbnail: string | null = null;
     try {
       const res = await fetch(
@@ -145,14 +165,16 @@ export function GooglePicker({
       owner: file.owners?.[0]?.emailAddress ?? 'Unknown',
       thumbnail,
       totalPages: null,
+      folderId,
     });
   };
 
-  const importDriveFolder = async (folderId: string, folderName: string) => {
+  const importDriveFolder = async (folderId: string, folderName: string, parentFolderId: string | null = null) => {
     if (!driveToken) return;
-    // List all PDFs in the folder (up to 100)
+    const roomFolderId = await createRoomFolder(folderName, parentFolderId);
+
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${folderId}' in parents and mimeType='application/pdf' and trashed=false`)}&fields=files(id,name,thumbnailLink,owners)&pageSize=100`,
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${folderId}' in parents and (mimeType='application/pdf' or mimeType='application/vnd.google-apps.folder') and trashed=false`)}&fields=files(id,name,mimeType,thumbnailLink,owners)&pageSize=100`,
       { headers: { Authorization: `Bearer ${driveToken}` } }
     );
     if (!res.ok) throw new Error(`Failed to list folder "${folderName}"`);
@@ -160,13 +182,11 @@ export function GooglePicker({
     const files: GoogleDriveFile[] = data.files ?? [];
 
     for (const file of files) {
-      await onSelect({
-        fileId: file.id,
-        filename: file.name,
-        owner: file.owners?.[0]?.emailAddress ?? 'Unknown',
-        thumbnail: file.thumbnailLink ?? null,
-        totalPages: null,
-      });
+      if (file.mimeType === 'application/vnd.google-apps.folder') {
+        await importDriveFolder(file.id, file.name, roomFolderId);
+      } else {
+        await importDriveFile(file, roomFolderId);
+      }
     }
   };
 
@@ -186,6 +206,42 @@ export function GooglePicker({
       return;
     }
 
+    const folderCache = new Map<string, string | null>();
+
+    const createFolder = async (name: string, parentId: string | null) => {
+      const cacheKey = `${parentId ?? 'root'}/${name}`;
+      if (folderCache.has(cacheKey)) return folderCache.get(cacheKey) ?? null;
+      const folderId = await createRoomFolder(name, parentId);
+      folderCache.set(cacheKey, folderId);
+      return folderId;
+    };
+
+    const ensureFolderPath = async (file: File) => {
+      const relativePath = String((file as any).webkitRelativePath ?? '');
+      const parts = relativePath.split('/').filter(Boolean).slice(0, -1);
+      let parentId: string | null = null;
+      for (const part of parts) {
+        parentId = await createFolder(part.slice(0, 128), parentId);
+      }
+      return parentId;
+    };
+
+    const uploadLocalPdf = async (file: File, folderId: string | null) => {
+      if (!libraryId || !channelId) throw new Error('Room context is missing');
+      const formData = new FormData();
+      formData.append('file', file);
+      if (folderId) formData.append('folderId', folderId);
+
+      const res = await fetch(
+        `/api/libraries/${libraryId}/channels/${channelId}/pdfs/upload`,
+        { method: 'POST', body: formData }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.hint || data.error || 'Upload failed');
+      await onRoomPdfUploaded?.(data.pdf);
+      return data.pdf;
+    };
+
     try {
       for (let i = 0; i < pdfs.length; i++) {
         const file = pdfs[i];
@@ -195,26 +251,8 @@ export function GooglePicker({
           // Caller handles the upload
           await onLocalFile(file);
         } else if (libraryId && channelId) {
-          // Upload directly to the channel via the local upload endpoint
-          const formData = new FormData();
-          formData.append('file', file);
-
-          const res = await fetch(
-            `/api/libraries/${libraryId}/channels/${channelId}/pdfs/upload`,
-            { method: 'POST', body: formData }
-          );
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Upload failed');
-
-          // Notify parent via onSelect with a synthetic PDFMeta
-          await onSelect({
-            fileId: data.pdf.driveId,
-            filename: data.pdf.filename,
-            owner: 'Local Upload',
-            thumbnail: null,
-            totalPages: null,
-            url: data.pdf.url,
-          });
+          const folderId = await ensureFolderPath(file);
+          await uploadLocalPdf(file, folderId);
         }
       }
       onClose();
@@ -224,7 +262,7 @@ export function GooglePicker({
       setLocalUploading(false);
       setLocalProgress(null);
     }
-  }, [onLocalFile, onSelect, onClose, libraryId, channelId]);
+  }, [onLocalFile, onRoomPdfUploaded, onClose, libraryId, channelId, createRoomFolder]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -379,14 +417,33 @@ export function GooglePicker({
                 onChange={(e) => handleLocalFiles(e.target.files)}
               />
 
-              <button
-                onClick={() => !localUploading && fileInputRef.current?.click()}
-                disabled={localUploading}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-medium text-sm bg-room-bg border border-room-border text-room-text hover:bg-room-hover disabled:opacity-50 disabled:cursor-wait transition-all min-h-[44px]"
-              >
-                <HardDrive size={18} />
-                Browse Files
-              </button>
+              <input
+                ref={folderInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                multiple
+                className="hidden"
+                onChange={(e) => handleLocalFiles(e.target.files)}
+              />
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => !localUploading && fileInputRef.current?.click()}
+                  disabled={localUploading}
+                  className="flex items-center justify-center gap-2 py-3 px-3 rounded-xl font-medium text-sm bg-room-bg border border-room-border text-room-text hover:bg-room-hover disabled:opacity-50 disabled:cursor-wait transition-all min-h-[44px]"
+                >
+                  <HardDrive size={18} />
+                  Files
+                </button>
+                <button
+                  onClick={() => !localUploading && folderInputRef.current?.click()}
+                  disabled={localUploading}
+                  className="flex items-center justify-center gap-2 py-3 px-3 rounded-xl font-medium text-sm bg-room-bg border border-room-border text-room-text hover:bg-room-hover disabled:opacity-50 disabled:cursor-wait transition-all min-h-[44px]"
+                >
+                  <FolderPlus size={18} />
+                  Folder
+                </button>
+              </div>
             </div>
           )}
         </div>
