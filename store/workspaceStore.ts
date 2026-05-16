@@ -92,14 +92,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   createLibrary: async (name) => {
+    set({ error: null });
     try {
       const res = await fetch('/api/libraries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
-      if (!res.ok) throw new Error('Failed to create library');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data?.error || `Failed to create library (${res.status})`;
+        set({ error: msg });
+        return null;
+      }
       set((s) => ({ libraries: [...s.libraries, data.library] }));
       return data.library;
     } catch (err) {
@@ -109,14 +114,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   joinLibrary: async (inviteCode) => {
+    set({ error: null });
     try {
       const res = await fetch('/api/libraries/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inviteCode }),
       });
-      if (!res.ok) throw new Error('Invalid invite code');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data?.error || `Invalid invite code (${res.status})`;
+        set({ error: msg });
+        return null;
+      }
       set((s) => ({
         libraries: s.libraries.some((l) => l.id === data.library.id)
           ? s.libraries
