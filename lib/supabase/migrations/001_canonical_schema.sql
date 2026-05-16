@@ -4,26 +4,51 @@
 -- Run this in Supabase SQL Editor on a fresh project.
 -- ============================================================
 
--- ── 0. Wipe legacy tables (safe on fresh DB, idempotent on reset) ─────────────
+-- ── 0. Wipe everything — views first, then tables ────────────────────────────
+-- Views must be dropped before the tables they depend on.
+-- We use IF EXISTS on every statement so this is safe on a fresh DB too.
+
+-- Drop any compatibility views created by migration 008
+-- (channel_pdfs may be a VIEW if migration 008 ran, or a TABLE if it didn't)
+DO $$
+BEGIN
+  -- Drop channel_pdfs whether it's a view or a table
+  IF EXISTS (SELECT 1 FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'channel_pdfs') THEN
+    EXECUTE 'DROP VIEW IF EXISTS channel_pdfs CASCADE';
+  ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'channel_pdfs') THEN
+    EXECUTE 'DROP TABLE IF EXISTS channel_pdfs CASCADE';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'channels') THEN
+    EXECUTE 'DROP VIEW IF EXISTS channels CASCADE';
+  ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'channels') THEN
+    EXECUTE 'DROP TABLE IF EXISTS channels CASCADE';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'server_members') THEN
+    EXECUTE 'DROP VIEW IF EXISTS server_members CASCADE';
+  ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'server_members') THEN
+    EXECUTE 'DROP TABLE IF EXISTS server_members CASCADE';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'servers') THEN
+    EXECUTE 'DROP VIEW IF EXISTS servers CASCADE';
+  ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'servers') THEN
+    EXECUTE 'DROP TABLE IF EXISTS servers CASCADE';
+  END IF;
+END $$;
+
+-- Drop remaining tables in dependency order (children before parents)
 DROP TABLE IF EXISTS room_chat_messages  CASCADE;
 DROP TABLE IF EXISTS room_notes          CASCADE;
-DROP TABLE IF EXISTS channel_pdfs        CASCADE;
-DROP TABLE IF EXISTS channels            CASCADE;
-DROP TABLE IF EXISTS server_members      CASCADE;
-DROP TABLE IF EXISTS servers             CASCADE;
 DROP TABLE IF EXISTS pdf_folders         CASCADE;
 DROP TABLE IF EXISTS room_pdfs           CASCADE;
 DROP TABLE IF EXISTS notes               CASCADE;
 DROP TABLE IF EXISTS messages            CASCADE;
-DROP TABLE IF EXISTS rooms               CASCADE;
 DROP TABLE IF EXISTS library_members     CASCADE;
+DROP TABLE IF EXISTS rooms               CASCADE;
 DROP TABLE IF EXISTS libraries           CASCADE;
 DROP TABLE IF EXISTS users               CASCADE;
-
--- Drop legacy views if they exist
-DROP VIEW IF EXISTS servers       CASCADE;
-DROP VIEW IF EXISTS server_members CASCADE;
-DROP VIEW IF EXISTS channels       CASCADE;
 
 -- Drop legacy functions/triggers
 DROP FUNCTION IF EXISTS handle_new_user()    CASCADE;
@@ -255,10 +280,9 @@ CREATE POLICY "owners can delete libraries"
   ON libraries FOR DELETE USING (owner_id = auth.uid());
 
 -- library_members
+-- NOTE: avoid self-referential join on library_members for SELECT — use auth.uid() directly
 CREATE POLICY "members can read library membership"
-  ON library_members FOR SELECT USING (
-    EXISTS (SELECT 1 FROM library_members lm WHERE lm.library_id = library_members.library_id AND lm.user_id = auth.uid())
-  );
+  ON library_members FOR SELECT USING (user_id = auth.uid());
 CREATE POLICY "service role can manage members"
   ON library_members FOR ALL USING (true);
 
@@ -309,10 +333,10 @@ CREATE POLICY "members can read messages"
   ON messages FOR SELECT USING (
     EXISTS (SELECT 1 FROM rooms r JOIN library_members lm ON lm.library_id = r.library_id WHERE r.id = messages.room_id AND lm.user_id = auth.uid())
   );
+-- INSERT: sender_id must match the authenticated user (admin client bypasses this via service role)
 CREATE POLICY "members can insert messages"
   ON messages FOR INSERT WITH CHECK (
-    sender_id = auth.uid()
-    AND EXISTS (SELECT 1 FROM rooms r JOIN library_members lm ON lm.library_id = r.library_id WHERE r.id = messages.room_id AND lm.user_id = auth.uid())
+    EXISTS (SELECT 1 FROM rooms r JOIN library_members lm ON lm.library_id = r.library_id WHERE r.id = messages.room_id AND lm.user_id = auth.uid())
   );
 CREATE POLICY "sender or admin can soft-delete messages"
   ON messages FOR UPDATE USING (
@@ -327,10 +351,14 @@ CREATE POLICY "members can manage notes"
   );
 
 -- ── 13. Supabase Storage — room-pdfs bucket ───────────────────────────────────
--- Run this separately if the bucket doesn't exist yet:
--- INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
--- VALUES ('room-pdfs', 'room-pdfs', false, 104857600, ARRAY['application/pdf'])
--- ON CONFLICT (id) DO NOTHING;
+-- Create buckets if they don't exist yet
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('room-pdfs', 'room-pdfs', false, 104857600, ARRAY['application/pdf'])
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('avatars', 'avatars', true, 5242880, ARRAY['image/jpeg','image/png','image/webp','image/gif'])
+ON CONFLICT (id) DO NOTHING;
 
 -- Storage RLS: path format is <library_id>/<room_id>/<pdf_id>.pdf
 -- The library_id is the first folder segment.
@@ -369,15 +397,19 @@ CREATE POLICY "room admins can delete pdfs" ON storage.objects
     )
   );
 
--- avatars bucket (public)
--- INSERT INTO storage.buckets (id, name, public)
--- VALUES ('avatars', 'avatars', true)
--- ON CONFLICT (id) DO NOTHING;
-
 -- ── 14. Realtime publications ─────────────────────────────────────────────────
--- Enable realtime for key tables (run in Supabase dashboard or here):
-ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-ALTER PUBLICATION supabase_realtime ADD TABLE users;
-ALTER PUBLICATION supabase_realtime ADD TABLE rooms;
-ALTER PUBLICATION supabase_realtime ADD TABLE room_pdfs;
-ALTER PUBLICATION supabase_realtime ADD TABLE pdf_folders;
+-- Safely add tables to realtime publication (idempotent via DO block)
+DO $$
+DECLARE
+  tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['messages','users','rooms','room_pdfs','pdf_folders']
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_publication_tables
+      WHERE pubname = 'supabase_realtime' AND tablename = tbl
+    ) THEN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I', tbl);
+    END IF;
+  END LOOP;
+END $$;

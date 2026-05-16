@@ -1077,7 +1077,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               filename: pdf.filename,
               thumbnailUrl: pdf.thumbnail,
               driveAccessToken: driveToken,
-              folderId: pdf.folderId ?? null,
+              folderId: (pdf as any).folderId ?? null,
             }),
           });
           const data = await res.json();
@@ -1582,7 +1582,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           driveToken={driveToken}
           onRequestAccess={requestDriveAccess}
           onSelect={handlePDFSelect}
-          onRoomPdfUploaded={handleRoomPdfUploaded}
+          onLocalUploaded={handleRoomPdfUploaded}
           onClose={() => setShowPicker(false)}
           mode={libraryId && channelId ? 'add' : 'replace'}
           libraryId={libraryId}
