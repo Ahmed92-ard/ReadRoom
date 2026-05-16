@@ -53,6 +53,22 @@ function makeInitials(name: string) {
     .join('') || 'RD';
 }
 
+async function hasOtherLibraryPresence(userId: string, libraryId?: string | null) {
+  if (!libraryId) return false;
+  const keys = await redis.keys(`presence:*:${userId}`);
+  const records = await Promise.all(keys.map((key) => redis.get(key)));
+  return records
+    .filter(Boolean)
+    .map((record) => {
+      try {
+        return typeof record === 'string' ? JSON.parse(record) : record;
+      } catch {
+        return null;
+      }
+    })
+    .some((user: any) => user?.activeLibraryId === libraryId && user?.isActive !== false);
+}
+
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
     if (!dev && req.headers['x-forwarded-proto'] === 'http') {
@@ -102,6 +118,9 @@ app.prepare().then(() => {
         zoom: user.zoom ?? 1,
         activePdfId: user.activePdfId ?? null,
         activePdfName: sanitizeString(user.activePdfName ?? '', 256) || null,
+        activeLibraryId: sanitizeString(user.activeLibraryId ?? '', 64) || null,
+        currentRoomId: cleanRoomId,
+        currentRoomName: sanitizeString(user.currentRoomName ?? '', 128) || null,
         isActive: true,
         lastSeen: Date.now(),
       };
@@ -109,8 +128,10 @@ app.prepare().then(() => {
       socket.data.roomId = cleanRoomId;
       socket.data.userId = cleanUserId;
       socket.data.userName = cleanUserName;
+      socket.data.libraryId = presenceMeta.activeLibraryId;
 
       await socket.join(cleanRoomId);
+      if (presenceMeta.activeLibraryId) await socket.join(`library:${presenceMeta.activeLibraryId}`);
       
       // Critical: Wait for current user to be added to the set before fetching the list
       await Promise.all([
@@ -119,7 +140,7 @@ app.prepare().then(() => {
         redis.expire(`room:members:${cleanRoomId}`, 60)
       ]);
 
-      // Get members from set (now guaranteed to include self)
+      // Get room members from set (now guaranteed to include self)
       const memberIds = await redis.smembers(`room:members:${cleanRoomId}`);
       const presenceData = await Promise.all(memberIds.map((uid) => redis.get(`presence:${cleanRoomId}:${uid}`)));
       
@@ -133,6 +154,21 @@ app.prepare().then(() => {
           }
         })
         .filter(Boolean);
+      let libraryUsers: any[] = [];
+      if (presenceMeta.activeLibraryId) {
+        const libraryKeys = await redis.keys('presence:*:*');
+        const libraryPresence = await Promise.all(libraryKeys.map((key) => redis.get(key)));
+        libraryUsers = libraryPresence
+          .filter(Boolean)
+          .map((item) => {
+            try {
+              return typeof item === 'string' ? JSON.parse(item) : item;
+            } catch {
+              return null;
+            }
+          })
+          .filter((item: any) => item?.activeLibraryId === presenceMeta.activeLibraryId);
+      }
 
       // Async fetch sync state
       redis.get(`room:sync:${cleanRoomId}`).then(syncState => {
@@ -144,8 +180,14 @@ app.prepare().then(() => {
         }
       }).catch(() => {});
 
-      socket.emit('presence:list', users);
+      const presenceByTab = new Map<string, any>();
+      [...users, ...libraryUsers].forEach((presence) => {
+        if (presence?.userId) presenceByTab.set(presence.userId, presence);
+      });
+
+      socket.emit('presence:list', Array.from(presenceByTab.values()));
       socket.to(cleanRoomId).emit('presence:join', presenceMeta);
+      if (presenceMeta.activeLibraryId) socket.to(`library:${presenceMeta.activeLibraryId}`).emit('presence:update', presenceMeta);
 
       // Notify others this user joined (for notifications)
       const joinActivity = {
@@ -193,6 +235,9 @@ app.prepare().then(() => {
         zoom,
         activePdfId: user.activePdfId ? sanitizeString(user.activePdfId, 128) : null,
         activePdfName: user.activePdfName ? sanitizeString(user.activePdfName, 256) : null,
+        activeLibraryId: sanitizeString(user.activeLibraryId ?? existing?.activeLibraryId ?? '', 64) || null,
+        currentRoomId: sanitizeString(user.currentRoomId ?? existing?.currentRoomId ?? cleanRoomId, 64) || cleanRoomId,
+        currentRoomName: sanitizeString(user.currentRoomName ?? existing?.currentRoomName ?? '', 128) || null,
         isActive: Boolean(user.isActive ?? true),
         lastSeen: Number(user.lastSeen ?? Date.now()),
       };
@@ -200,6 +245,7 @@ app.prepare().then(() => {
       // Don't await Redis, just broadcast immediately
       redis.set(`presence:${cleanRoomId}:${cleanUserId}`, JSON.stringify(presencePayload), { ex: 30 }).catch(() => {});
       socket.to(cleanRoomId).emit('presence:update', presencePayload);
+      if (presencePayload.activeLibraryId) socket.to(`library:${presencePayload.activeLibraryId}`).emit('presence:update', presencePayload);
     });
 
     let lastSync = 0;
@@ -388,24 +434,43 @@ app.prepare().then(() => {
       if (!roomId || !userId) return;
       const cleanRoomId = sanitizeString(roomId, 64);
       const cleanUserId = sanitizeString(userId, 64);
+      const presenceKey = `presence:${cleanRoomId}:${cleanUserId}`;
+      const existing = await redis.get(presenceKey).catch(() => null);
+      let leavingUser: any = null;
+      try { leavingUser = existing ? (typeof existing === 'string' ? JSON.parse(existing) : existing) : null; } catch {}
       
       Promise.all([
-        redis.del(`presence:${cleanRoomId}:${cleanUserId}`),
+        redis.del(presenceKey),
         redis.srem(`room:members:${cleanRoomId}`, cleanUserId)
       ]).catch(() => {});
-      
-      socket.to(cleanRoomId).emit('presence:left', { userId: cleanUserId });
+
+      setTimeout(async () => {
+        const stillOnline = await hasOtherLibraryPresence(cleanUserId, leavingUser?.activeLibraryId);
+        if (stillOnline) return;
+        io.to(cleanRoomId).emit('presence:left', { userId: cleanUserId });
+        if (leavingUser?.activeLibraryId) io.to(`library:${leavingUser.activeLibraryId}`).emit('presence:left', { userId: cleanUserId });
+      }, 1200);
       socket.leave(cleanRoomId);
+      if (leavingUser?.activeLibraryId) socket.leave(`library:${leavingUser.activeLibraryId}`);
     });
 
     socket.on('disconnect', async () => {
       const { roomId, userId, userName } = socket.data;
       if (roomId && userId) {
+        const presenceKey = `presence:${roomId}:${userId}`;
+        const existing = await redis.get(presenceKey).catch(() => null);
+        let leavingUser: any = null;
+        try { leavingUser = existing ? (typeof existing === 'string' ? JSON.parse(existing) : existing) : null; } catch {}
         Promise.all([
-          redis.del(`presence:${roomId}:${userId}`),
+          redis.del(presenceKey),
           redis.srem(`room:members:${roomId}`, userId)
         ]).catch(() => {});
-        socket.to(roomId).emit('presence:left', { userId });
+        setTimeout(async () => {
+          const stillOnline = await hasOtherLibraryPresence(userId, leavingUser?.activeLibraryId);
+          if (stillOnline) return;
+          io.to(roomId).emit('presence:left', { userId });
+          if (leavingUser?.activeLibraryId) io.to(`library:${leavingUser.activeLibraryId}`).emit('presence:left', { userId });
+        }, 1200);
       }
       console.log(`[socket] disconnected: ${socket.id}`);
     });

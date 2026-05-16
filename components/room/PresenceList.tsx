@@ -154,26 +154,27 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
             </div>
             
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-room-text truncate font-medium">
-                {user.userName}
-                {user.userId.split('_')[0] === self?.userId.split('_')[0] && (
-                  <span className="ml-1 text-[10px] text-room-muted">(you)</span>
+              <p className="flex min-w-0 items-baseline gap-1 text-sm font-medium text-room-text">
+                <span className="truncate">
+                  {user.userName}
+                  {user.userId.split('_')[0] === self?.userId.split('_')[0] && (
+                    <span className="ml-1 text-[10px] text-room-muted">(you)</span>
+                  )}
+                </span>
+                {user.isActive && user.currentRoomName && (
+                  <span className="min-w-0 truncate text-xs font-normal text-room-muted">- {user.currentRoomName}</span>
                 )}
               </p>
               <p className="text-[11px] mt-0.5 flex items-center gap-1.5">
                 {user.isActive ? (
                   <>
                     <span className="text-green-400">Active</span>
-                    <span className="text-room-muted">·</span>
-                    {user.currentRoomName && (
-                      <>
-                        <span className="text-room-muted truncate">{user.currentRoomName}</span>
-                        <span className="text-room-muted">·</span>
-                      </>
+                    {(user.activePdfName || user.page) && <span className="text-room-muted">·</span>}
+                    {(user.activePdfName || user.page) && (
+                      <span className="text-room-muted truncate">
+                        {user.activePdfName ? `${user.activePdfName} · ` : ''}page {user.page ?? 1}
+                      </span>
                     )}
-                    <span className="text-room-muted truncate">
-                      {user.activePdfName ? `${user.activePdfName} · ` : ''}page {user.page ?? 1}
-                    </span>
                   </>
                 ) : (
                   <span className="text-room-muted truncate">

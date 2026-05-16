@@ -37,6 +37,16 @@ interface UploadItem {
   relativePath: string;
 }
 
+const toUploadItems = (files: FileList | UploadItem[]): UploadItem[] => (
+  Array.isArray(files)
+    ? files
+    : Array.from(files).map((file) => ({ file, relativePath: (file as any).webkitRelativePath || file.name }))
+);
+
+const pdfItems = (items: UploadItem[]) => (
+  items.filter(({ file }) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))
+);
+
 export function GooglePicker({
   onClose,
   libraryId,
@@ -48,6 +58,7 @@ export function GooglePicker({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queuedFolders, setQueuedFolders] = useState<UploadItem[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -159,18 +170,25 @@ export function GooglePicker({
     return collected.flat();
   };
 
-  // ── Main upload handler ───────────────────────────────────────────────────
-  const handleFiles = useCallback(async (files: FileList | UploadItem[] | null) => {
+  const queueFolders = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
     setError(null);
 
-    const items: UploadItem[] = Array.isArray(files)
-      ? files
-      : Array.from(files).map((file) => ({ file, relativePath: (file as any).webkitRelativePath || file.name }));
+    const pdfs = pdfItems(toUploadItems(files));
+    if (pdfs.length === 0) {
+      setError('No PDF files found. Please select a folder containing PDFs.');
+      return;
+    }
 
-    const pdfs = items.filter(
-      ({ file }) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-    );
+    setQueuedFolders((prev) => [...prev, ...pdfs]);
+  }, []);
+
+  // ── Main upload handler ───────────────────────────────────────────────────
+  const uploadItems = useCallback(async (items: UploadItem[]) => {
+    if (items.length === 0) return;
+    setError(null);
+
+    const pdfs = pdfItems(items);
 
     if (pdfs.length === 0) {
       setError('No PDF files found. Please select PDF files or a folder containing PDFs.');
@@ -211,6 +229,7 @@ export function GooglePicker({
       }
 
       setProgress({ total: pdfs.length, done: pdfs.length, current: '' });
+      setQueuedFolders([]);
       // Brief success pause before closing
       setTimeout(onClose, 500);
     } catch (err) {
@@ -219,6 +238,20 @@ export function GooglePicker({
       setProgress(null);
     }
   }, [libraryId, channelId, onLocalUploaded, onSelect, onClose, initialFolderId]);
+
+  const handleFiles = useCallback((files: FileList | UploadItem[] | null) => {
+    if (!files || files.length === 0) return;
+    const items = toUploadItems(files);
+    if (queuedFolders.length > 0) {
+      setQueuedFolders((prev) => [...prev, ...pdfItems(items)]);
+      return;
+    }
+    uploadItems(items);
+  }, [queuedFolders.length, uploadItems]);
+
+  const uploadQueuedFolders = useCallback(() => {
+    uploadItems(queuedFolders);
+  }, [queuedFolders, uploadItems]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     stopBrowserDrop(e);
@@ -233,6 +266,13 @@ export function GooglePicker({
       window.removeEventListener('drop', stopBrowserDrop);
     };
   }, [stopBrowserDrop]);
+
+  const queuedPdfCount = queuedFolders.length;
+  const queuedFolderNames = Array.from(new Set(
+    queuedFolders
+      .map((item) => item.relativePath.split('/')[0])
+      .filter(Boolean)
+  ));
 
   return (
     <div
@@ -310,6 +350,17 @@ export function GooglePicker({
             )}
           </div>
 
+          {queuedPdfCount > 0 && !uploading && (
+            <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+              <p className="text-xs font-medium text-blue-300">
+                {queuedPdfCount} PDF{queuedPdfCount === 1 ? '' : 's'} queued from {queuedFolderNames.length} folder{queuedFolderNames.length === 1 ? '' : 's'}
+              </p>
+              <p className="mt-1 truncate text-[11px] text-room-muted">
+                {queuedFolderNames.join(', ')}
+              </p>
+            </div>
+          )}
+
           {/* Hidden inputs */}
           <input
             ref={fileInputRef}
@@ -332,13 +383,13 @@ export function GooglePicker({
             multiple
             className="hidden"
             onChange={(e) => {
-              handleFiles(e.target.files);
+              queueFolders(e.target.files);
               e.currentTarget.value = '';
             }}
           />
 
           {/* Action buttons */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className={queuedPdfCount > 0 ? 'grid grid-cols-3 gap-3' : 'grid grid-cols-2 gap-3'}>
             <button
               onClick={() => !uploading && fileInputRef.current?.click()}
               disabled={uploading}
@@ -354,14 +405,24 @@ export function GooglePicker({
               title="Upload an entire folder — subfolders are preserved"
             >
               <FolderPlus size={16} />
-              Select Folder
+              {queuedPdfCount > 0 ? 'Add Folder' : 'Select Folder'}
             </button>
+            {queuedPdfCount > 0 && (
+              <button
+                onClick={() => !uploading && uploadQueuedFolders()}
+                disabled={uploading}
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-wait transition-colors min-h-[44px]"
+              >
+                <Upload size={16} />
+                Upload
+              </button>
+            )}
           </div>
 
           <p className="text-xs text-room-muted text-center">
             {initialFolderId
               ? 'Selected files will be added to this folder.'
-              : 'Folder picker support varies by browser; drag multiple folders here together for multi-folder uploads.'}
+              : 'Add folders one by one, then upload the queued folders together.'}
           </p>
         </div>
       </div>
