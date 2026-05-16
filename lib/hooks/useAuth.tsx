@@ -9,6 +9,7 @@ import {
   createContext, useContext,
 } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { withTimeout } from '@/lib/runtime/recovery';
 import type { User, Session } from '@supabase/supabase-js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -19,6 +20,7 @@ interface AuthState {
   userName: string;
   avatarUrl: string | null;
   loading: boolean;
+  initError: string | null;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateDisplayName: (name: string) => Promise<boolean>;
@@ -38,6 +40,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>('Reader');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const userRef = useRef<User | null>(null);
@@ -67,7 +70,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch {}
         return { name, url };
       }
-    } catch {
+    } catch (err) {
+      console.warn('[AuthProvider] profile sync failed:', err);
       // DB may not exist yet — non-fatal
     }
     return null;
@@ -92,7 +96,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (cachedAvatar) setAvatarUrl(cachedAvatar);
     } catch {}
 
-    const profile = await syncProfileFromDB(u);
+    const profile = await withTimeout(syncProfileFromDB(u), 5_000, 'profile sync')
+      .catch((err) => {
+        console.warn('[AuthProvider] profile sync timed out/failed:', err);
+        return null;
+      });
 
     // Bootstrap: if no DB profile yet, derive name from OAuth metadata
     if (!profile || profile.name === 'Reader') {
@@ -118,38 +126,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Session initialization ────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
+    let loadingWatchdog: ReturnType<typeof setTimeout> | undefined;
 
-    supabase.auth.getSession().then(async ({ data: { session: s }, error }) => {
+    const finishLoading = () => {
+      if (loadingWatchdog) window.clearTimeout(loadingWatchdog);
+      if (mounted) setLoading(false);
+    };
+
+    withTimeout(
+      supabase.auth.getSession(),
+      8_000,
+      'auth session restore'
+    ).then(async ({ data: { session: s }, error }) => {
       if (!mounted) return;
-      if (error) console.warn('[AuthProvider] getSession error:', error.message);
+      if (error) {
+        console.warn('[AuthProvider] getSession error:', error.message);
+        setInitError(error.message);
+      }
 
       let activeSession = s;
       if (s?.expires_at) {
         const expiresAt = s.expires_at * 1000;
         if (expiresAt - Date.now() < 60_000) {
-          const refreshed = await supabase.auth.refreshSession();
-          if (!refreshed.error) activeSession = refreshed.data.session;
+          const refreshed = await withTimeout(
+            supabase.auth.refreshSession(),
+            8_000,
+            'auth session refresh'
+          ).catch((refreshError) => {
+            console.warn('[AuthProvider] refreshSession failed:', refreshError);
+            return null;
+          });
+          if (refreshed && !refreshed.error) {
+            activeSession = refreshed.data.session;
+          } else if (refreshed?.error) {
+            console.warn('[AuthProvider] refreshSession error:', refreshed.error.message);
+            setInitError(refreshed.error.message);
+          }
         }
       }
 
       setSession(activeSession);
       await updateIdentity(activeSession?.user ?? null);
-      if (mounted) setLoading(false);
-    }).catch(() => {
-      if (mounted) setLoading(false);
-    });
+    }).catch((err) => {
+      console.warn('[AuthProvider] session initialization failed:', err);
+      if (mounted) {
+        setInitError(err instanceof Error ? err.message : String(err));
+        setSession(null);
+        updateIdentity(null).catch(() => {});
+      }
+    }).finally(finishLoading);
+
+    loadingWatchdog = window.setTimeout(() => {
+      if (!mounted) return;
+      console.warn('[AuthProvider] initialization watchdog released loading state');
+      setInitError((current) => current ?? 'Session restore took too long. You can retry or sign in again.');
+      setLoading(false);
+    }, 10_000);
+
+    const handleAuthChange = async (event: string, s: Session | null) => {
+      if (!mounted) return;
+      console.info('[AuthProvider] auth state change:', event);
+      setSession(s);
+      await withTimeout(updateIdentity(s?.user ?? null), 5_000, 'auth identity update')
+        .catch((err) => {
+          console.warn('[AuthProvider] identity update failed:', err);
+          setInitError(err instanceof Error ? err.message : String(err));
+        });
+      setLoading(false);
+    };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, s) => {
-        if (!mounted) return;
-        setSession(s);
-        await updateIdentity(s?.user ?? null);
-        setLoading(false);
+      (event, s) => {
+        handleAuthChange(event, s);
       }
     );
 
     return () => {
       mounted = false;
+      if (loadingWatchdog) window.clearTimeout(loadingWatchdog);
       subscription.unsubscribe();
     };
   }, [supabase, updateIdentity]);
@@ -179,7 +233,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       )
-      .subscribe(); // .on() before .subscribe()
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[AuthProvider] profile realtime status:', status);
+        }
+      }); // .on() before .subscribe()
 
     return () => { supabase.removeChannel(channel); };
   }, [supabase, user?.id]);
@@ -307,11 +365,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     userName,
     avatarUrl,
     loading,
+    initError,
     signInWithGoogle,
     signOut,
     updateDisplayName,
     updateAvatarUrl,
-  }), [user, session, userName, avatarUrl, loading, signInWithGoogle, signOut, updateDisplayName, updateAvatarUrl]);
+  }), [user, session, userName, avatarUrl, loading, initError, signInWithGoogle, signOut, updateDisplayName, updateAvatarUrl]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

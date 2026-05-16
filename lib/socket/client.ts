@@ -22,6 +22,22 @@ export function getSocket(): AppSocket {
       timeout: 20_000,
       autoConnect: true, // Enable autoConnect for reliability
     });
+
+    socket.on('connect', () => {
+      console.info('[socket] connected', socket?.id);
+    });
+    socket.on('disconnect', (reason) => {
+      console.warn('[socket] disconnected', reason);
+    });
+    socket.on('connect_error', (error) => {
+      console.warn('[socket] connect error', error.message);
+    });
+    socket.io.on('reconnect_attempt', (attempt) => {
+      console.info('[socket] reconnect attempt', attempt);
+    });
+    socket.io.on('reconnect_failed', () => {
+      console.warn('[socket] reconnect failed');
+    });
   }
   return socket;
 }
@@ -58,4 +74,3 @@ if (typeof window !== 'undefined') {
     }
   });
 }
-

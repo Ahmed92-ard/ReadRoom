@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import type { LibraryData, RoomData, PDFFolder } from '@/types';
+import { fetchWithTimeout } from '@/lib/runtime/recovery';
 
 // Re-export RoomData as ChannelData for components that still use that name
 export type { LibraryData };
@@ -55,7 +56,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   fetchLibraries: async () => {
     set({ loadingLibraries: true, error: null });
     try {
-      const res = await fetch('/api/libraries');
+      const res = await fetchWithTimeout('/api/libraries');
       if (!res.ok) throw new Error('Failed to load libraries');
       const data = await res.json();
       set({ libraries: data.libraries ?? [], loadingLibraries: false });
@@ -65,9 +66,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   fetchChannels: async (libraryId) => {
-    set({ loadingChannels: true });
+    set({ loadingChannels: true, error: null });
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels`);
+      const res = await fetchWithTimeout(`/api/libraries/${libraryId}/channels`);
       if (!res.ok) throw new Error('Failed to load rooms');
       const data = await res.json();
       // Normalize: add server_id alias for components that still read it
@@ -84,7 +85,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   fetchFolders: async (libraryId, roomId) => {
     try {
-      const res = await fetch(`/api/libraries/${libraryId}/channels/${roomId}/folders`);
+      const res = await fetchWithTimeout(`/api/libraries/${libraryId}/channels/${roomId}/folders`);
       if (!res.ok) return;
       const data = await res.json();
       set({ folders: data.folders ?? [] });

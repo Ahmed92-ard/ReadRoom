@@ -68,8 +68,36 @@ export function resetReadRoomRuntimeState() {
     sessionStorage.removeItem('__readroom_sw_reloaded__');
   } catch {}
 
+  try {
+    const dbApi = indexedDB as IDBFactory & {
+      databases?: () => Promise<Array<{ name?: string }>>;
+    };
+    dbApi.databases?.()
+      .then((databases) => {
+        databases
+          .map((db) => db.name)
+          .filter((name): name is string => Boolean(name))
+          .filter((name) => /readroom|pdf-reading-room/i.test(name))
+          .forEach((name) => {
+            console.warn('[runtime] deleting stale IndexedDB database', name);
+            indexedDB.deleteDatabase(name);
+          });
+      })
+      .catch((err) => console.warn('[runtime] IndexedDB scan failed', err));
+  } catch (err) {
+    console.warn('[runtime] IndexedDB reset failed', err);
+  }
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.controller?.postMessage({ type: 'CLEAR_CACHES' });
+  }
+
+  if ('caches' in window) {
+    caches.keys()
+      .then((keys) => Promise.all(
+        keys.filter((key) => key.startsWith('readroom-')).map((key) => caches.delete(key))
+      ))
+      .catch((err) => console.warn('[runtime] cache reset failed', err));
   }
 }
 

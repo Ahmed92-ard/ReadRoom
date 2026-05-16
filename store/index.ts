@@ -3,32 +3,10 @@
 
 import { create } from 'zustand';
 import type { UserMeta, PDFMeta, RoomState, ChatMessage, ConnectionStatus } from '@/types';
+import { ensureRuntimeStateVersion } from '@/lib/runtime/recovery';
 
-// ── Store version — bump this when store shape changes to clear stale state ──
-const STORE_VERSION = 4;
-
-function checkStoreVersion() {
-  if (typeof window === 'undefined') return;
-  try {
-    const stored = parseInt(localStorage.getItem('readroom:store-version') ?? '0', 10);
-    if (stored < STORE_VERSION) {
-      // Clear all readroom localStorage keys to prevent stale state crashes
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key?.startsWith('readroom:') || key?.startsWith('readroom_')) {
-          keysToRemove.push(key);
-        }
-      }
-      keysToRemove.forEach((k) => localStorage.removeItem(k));
-      localStorage.setItem('readroom:store-version', String(STORE_VERSION));
-    }
-  } catch { /* localStorage unavailable */ }
-}
-
-// Run version check once on module load
 if (typeof window !== 'undefined') {
-  checkStoreVersion();
+  ensureRuntimeStateVersion();
 }
 
 // ── Room store ────────────────────────────────────────────────────────────────

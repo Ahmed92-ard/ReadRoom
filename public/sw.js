@@ -1,10 +1,10 @@
-// ReadRoom Service Worker - runtime-v8
+// ReadRoom Service Worker - runtime-v9
 //
 // This worker is intentionally conservative: navigations, APIs, auth routes,
 // and app-shell assets go to the network first so an installed PWA cannot keep
 // booting with a mixed old/new Next.js deployment.
 
-const SW_VERSION = 'runtime-v8';
+const SW_VERSION = 'runtime-v9';
 const RUNTIME_CACHE = `readroom-${SW_VERSION}`;
 const CACHE_ALLOWLIST = new Set([RUNTIME_CACHE]);
 

@@ -4,10 +4,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
-import { BookOpen, Users, MessageSquare, Zap } from 'lucide-react';
+import { resetReadRoomRuntimeState } from '@/lib/runtime/recovery';
+import { AlertCircle, BookOpen, RotateCcw, Users, MessageSquare, Zap } from 'lucide-react';
 
 export default function AuthPage() {
-  const { user, loading, signInWithGoogle } = useAuth();
+  const { user, loading, initError, signInWithGoogle } = useAuth();
   const router = useRouter();
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,10 +34,33 @@ export default function AuthPage() {
     await signInWithGoogle();
   };
 
+  const handleRecovery = () => {
+    resetReadRoomRuntimeState();
+    window.location.reload();
+  };
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-room-bg flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-room-bg flex items-center justify-center px-6">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          {initError && (
+            <div className="mt-5 max-w-sm rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3">
+              <div className="flex items-center justify-center gap-2 text-sm font-medium text-red-200">
+                <AlertCircle size={16} />
+                Sign-in restore is stuck
+              </div>
+              <p className="mt-2 text-xs text-room-muted">{initError}</p>
+              <button
+                onClick={handleRecovery}
+                className="mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-red-500 px-4 text-sm font-medium text-white hover:bg-red-400"
+              >
+                <RotateCcw size={15} />
+                Reset local app cache
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -93,9 +117,18 @@ export default function AuthPage() {
           <h2 className="text-2xl font-bold text-room-text mb-2">Welcome back</h2>
           <p className="text-room-muted text-sm mb-8">Sign in to join your reading rooms.</p>
 
-          {error && (
-            <div className="mb-6 px-4 py-3 rounded-xl bg-red-900/20 border border-red-500/30 text-sm text-red-300">
-              {error}
+          {(error || initError) && (
+            <div className="mb-6 rounded-xl bg-red-900/20 border border-red-500/30 px-4 py-3 text-sm text-red-300">
+              <p>{error || initError}</p>
+              {initError && (
+                <button
+                  onClick={handleRecovery}
+                  className="mt-3 inline-flex min-h-[38px] items-center justify-center gap-2 rounded-lg bg-red-500 px-3 text-xs font-medium text-white hover:bg-red-400"
+                >
+                  <RotateCcw size={14} />
+                  Reset local app cache
+                </button>
+              )}
             </div>
           )}
 
