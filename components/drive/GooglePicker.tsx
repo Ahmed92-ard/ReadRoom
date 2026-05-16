@@ -1,29 +1,48 @@
 'use client';
 
 // LocalFilePicker.tsx (exported as GooglePicker for drop-in compatibility)
-// Local device upload dialog — supports:
-//   A. Single or multiple PDF files
-//   B. Entire folders (webkitdirectory) with full nested hierarchy preserved
 //
-// Folder hierarchy is preserved exactly:
-//   FolderA/Physics/notes1.pdf  → creates FolderA → Physics → uploads notes1.pdf inside
-//   FolderA/Math/notes2.pdf     → reuses FolderA → creates Math → uploads notes2.pdf inside
+// ── Multi-folder selection strategy ──────────────────────────────────────────
 //
-// The folderCache Map ensures each folder path is only created once per upload session.
+// The OS file dialog opened by <input webkitdirectory> does NOT support
+// Ctrl+click to select multiple folders simultaneously — this is a fundamental
+// OS-level constraint that no browser can override via HTML input.
+//
+// TRUE multi-folder selection is implemented using the File System Access API
+// (showDirectoryPicker), available in Chromium-based browsers (Chrome, Edge,
+// Brave, Opera). The flow:
+//   1. User clicks "Select Folders"
+//   2. A folder picker opens — user picks the FIRST folder
+//   3. Immediately another picker opens — user picks the SECOND folder
+//   4. This repeats until the user clicks Cancel (meaning "I'm done")
+//   5. All selected folders are uploaded together in one batch
+//
+// This is the only way to achieve true multi-folder selection without a queue
+// system, because the File System Access API is the only browser API that
+// allows programmatic re-invocation of the folder picker in a single gesture.
+//
+// Fallback for Firefox/Safari: single webkitdirectory picker (one folder at a
+// time, but still preserves full nested hierarchy).
+//
+// Drag-and-drop: supports multiple folders dropped simultaneously on all
+// browsers via the DataTransferItem.webkitGetAsEntry() API.
 
 import React, { useCallback, useRef, useState } from 'react';
-import { Upload, X, FolderPlus, File as FileIcon, AlertCircle } from 'lucide-react';
+import { Upload, X, FolderPlus, File as FileIcon, AlertCircle, FolderOpen } from 'lucide-react';
 
 interface LocalFilePickerProps {
   onClose: () => void;
   libraryId?: string;
   channelId?: string;
-  /** Called after each PDF is successfully uploaded — receives the serialized PDF */
   onLocalUploaded?: (pdf: any) => void | Promise<void>;
   initialFolderId?: string | null;
-  // Legacy props kept for drop-in compat — not used
   onSelect?: (pdf: any) => void | Promise<void>;
   mode?: 'replace' | 'add';
+}
+
+interface UploadItem {
+  file: File;
+  relativePath: string; // e.g. "FolderA/SubFolder/notes.pdf"
 }
 
 interface UploadProgress {
@@ -32,20 +51,67 @@ interface UploadProgress {
   current: string;
 }
 
-interface UploadItem {
-  file: File;
-  relativePath: string;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function isPdf(file: File) {
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 }
 
-const toUploadItems = (files: FileList | UploadItem[]): UploadItem[] => (
-  Array.isArray(files)
-    ? files
-    : Array.from(files).map((file) => ({ file, relativePath: (file as any).webkitRelativePath || file.name }))
-);
+function fileBasename(relativePath: string): string {
+  return relativePath.split('/').pop() || relativePath;
+}
 
-const pdfItems = (items: UploadItem[]) => (
-  items.filter(({ file }) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))
-);
+/** Detect File System Access API support (Chromium only) */
+function hasFSA(): boolean {
+  return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+}
+
+/** Recursively collect all PDF UploadItems from a FileSystemDirectoryHandle */
+async function collectFromDirectoryHandle(
+  handle: FileSystemDirectoryHandle,
+  pathPrefix = ''
+): Promise<UploadItem[]> {
+  const items: UploadItem[] = [];
+  for await (const [name, entry] of (handle as any).entries()) {
+    if (entry.kind === 'file') {
+      const file: File = await (entry as FileSystemFileHandle).getFile();
+      if (isPdf(file)) {
+        items.push({ file, relativePath: `${pathPrefix}${name}` });
+      }
+    } else if (entry.kind === 'directory') {
+      const nested = await collectFromDirectoryHandle(
+        entry as FileSystemDirectoryHandle,
+        `${pathPrefix}${name}/`
+      );
+      items.push(...nested);
+    }
+  }
+  return items;
+}
+
+/** Recursively collect UploadItems from a DataTransferEntry (drag-and-drop) */
+async function collectFromEntry(entry: any, pathPrefix = ''): Promise<UploadItem[]> {
+  if (entry.isFile) {
+    const file: File = await new Promise((res, rej) => entry.file(res, rej));
+    if (!isPdf(file)) return [];
+    return [{ file, relativePath: `${pathPrefix}${file.name}` }];
+  }
+  if (!entry.isDirectory) return [];
+
+  const reader = entry.createReader();
+  const allEntries: any[] = [];
+  for (;;) {
+    const batch: any[] = await new Promise((res, rej) => reader.readEntries(res, rej));
+    if (batch.length === 0) break;
+    allEntries.push(...batch);
+  }
+  const nested = await Promise.all(
+    allEntries.map((child) => collectFromEntry(child, `${pathPrefix}${entry.name}/`))
+  );
+  return nested.flat();
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function GooglePicker({
   onClose,
@@ -58,28 +124,18 @@ export function GooglePicker({
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [queuedFolders, setQueuedFolders] = useState<UploadItem[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const stopBrowserDrop = useCallback((e: DragEvent | React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
+  // ── Server helpers ────────────────────────────────────────────────────────
 
-  const uploadFilename = (file: File, relativePath?: string) => {
-    relativePath = relativePath || ((file as any).webkitRelativePath as string | undefined);
-    return relativePath?.split('/').pop() || file.name;
-  };
-
-  // ── Upload a single file to the server ───────────────────────────────────
-  const uploadFile = async (file: File, folderId: string | null, relativePath?: string): Promise<any> => {
-    if (!libraryId || !channelId) throw new Error('Room context required for upload');
+  const uploadFile = async (file: File, folderId: string | null, relativePath: string): Promise<any> => {
+    if (!libraryId || !channelId) throw new Error('Room context required');
     const formData = new FormData();
-    formData.append('file', file, uploadFilename(file, relativePath));
+    // Use basename only for the filename stored in DB
+    formData.append('file', file, fileBasename(relativePath));
     if (folderId) formData.append('folderId', folderId);
-
     const res = await fetch(
       `/api/libraries/${libraryId}/channels/${channelId}/pdfs/upload`,
       { method: 'POST', body: formData }
@@ -89,7 +145,6 @@ export function GooglePicker({
     return data.pdf;
   };
 
-  // ── Create a folder in the room, return its id ────────────────────────────
   const createFolder = async (name: string, parentId: string | null): Promise<string> => {
     if (!libraryId || !channelId) throw new Error('Room context required');
     const res = await fetch(
@@ -105,133 +160,62 @@ export function GooglePicker({
     return data.folder.id;
   };
 
-  // ── Resolve folder id for a relative path, creating folders as needed ────
-  // folderCache: "FolderA/Physics" → folderId
-  // This ensures each unique path is only created once per upload batch.
+  /**
+   * Resolve (and create if needed) the folder for a given relative path.
+   * folderCache prevents duplicate API calls for the same path within a batch.
+   */
   const resolveFolderPath = async (
     relativePath: string,
     folderCache: Map<string, string>
   ): Promise<string | null> => {
-    // relativePath: "FolderA/Physics/notes.pdf" or "notes.pdf"
     const parts = relativePath.split('/');
-    if (parts.length <= 1) return initialFolderId; // selected folder or root
+    if (parts.length <= 1) return initialFolderId;
 
-    const folderParts = parts.slice(0, -1); // strip filename
+    const folderParts = parts.slice(0, -1);
     let parentId: string | null = initialFolderId;
 
     for (let i = 0; i < folderParts.length; i++) {
-      const pathKey = `${initialFolderId ?? 'root'}:${folderParts.slice(0, i + 1).join('/')}`;
-      if (folderCache.has(pathKey)) {
-        parentId = folderCache.get(pathKey)!;
+      const cacheKey = `${initialFolderId ?? 'root'}:${folderParts.slice(0, i + 1).join('/')}`;
+      if (folderCache.has(cacheKey)) {
+        parentId = folderCache.get(cacheKey)!;
       } else {
-        const folderId = await createFolder(folderParts[i], parentId);
-        folderCache.set(pathKey, folderId);
-        parentId = folderId;
+        const id = await createFolder(folderParts[i], parentId);
+        folderCache.set(cacheKey, id);
+        parentId = id;
       }
     }
     return parentId;
   };
 
-  const readDirectoryEntries = (reader: any): Promise<any[]> => (
-    new Promise((resolve, reject) => reader.readEntries(resolve, reject))
-  );
+  // ── Core upload batch ─────────────────────────────────────────────────────
 
-  const collectEntryFiles = async (entry: any, pathPrefix = ''): Promise<UploadItem[]> => {
-    if (entry.isFile) {
-      const file = await new Promise<File>((resolve, reject) => entry.file(resolve, reject));
-      return [{ file, relativePath: `${pathPrefix}${file.name}` }];
-    }
-    if (!entry.isDirectory) return [];
-
-    const reader = entry.createReader();
-    const batches: any[] = [];
-    for (;;) {
-      const entries = await readDirectoryEntries(reader);
-      if (entries.length === 0) break;
-      batches.push(...entries);
-    }
-
-    const nested = await Promise.all(
-      batches.map((child) => collectEntryFiles(child, `${pathPrefix}${entry.name}/`))
-    );
-    return nested.flat();
-  };
-
-  const getDroppedItems = async (dataTransfer: DataTransfer): Promise<UploadItem[]> => {
-    const entries = Array.from(dataTransfer.items ?? [])
-      .map((item) => (item as any).webkitGetAsEntry?.())
-      .filter(Boolean);
-
-    if (entries.length === 0) {
-      return Array.from(dataTransfer.files).map((file) => ({ file, relativePath: (file as any).webkitRelativePath || file.name }));
-    }
-
-    const collected = await Promise.all(entries.map((entry) => collectEntryFiles(entry)));
-    return collected.flat();
-  };
-
-  const queueFolders = useCallback((files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setError(null);
-
-    const pdfs = pdfItems(toUploadItems(files));
+  const runUpload = useCallback(async (items: UploadItem[]) => {
+    const pdfs = items.filter(({ file }) => isPdf(file));
     if (pdfs.length === 0) {
-      setError('No PDF files found. Please select a folder containing PDFs.');
+      setError('No PDF files found in the selection.');
       return;
     }
 
-    setQueuedFolders((prev) => [...prev, ...pdfs]);
-  }, []);
-
-  // ── Main upload handler ───────────────────────────────────────────────────
-  const uploadItems = useCallback(async (items: UploadItem[]) => {
-    if (items.length === 0) return;
     setError(null);
-
-    const pdfs = pdfItems(items);
-
-    if (pdfs.length === 0) {
-      setError('No PDF files found. Please select PDF files or a folder containing PDFs.');
-      return;
-    }
-
     setUploading(true);
     setProgress({ total: pdfs.length, done: 0, current: '' });
 
-    // Shared folder cache for this entire upload batch
-    // Prevents duplicate folder creation when multiple files share the same parent
     const folderCache = new Map<string, string>();
 
     try {
       for (let i = 0; i < pdfs.length; i++) {
         const { file, relativePath } = pdfs[i];
-        setProgress({ total: pdfs.length, done: i, current: file.name });
+        setProgress({ total: pdfs.length, done: i, current: fileBasename(relativePath) });
 
-        // webkitRelativePath is set when using webkitdirectory input
-        // e.g. "MyFolder/SubFolder/notes.pdf"
-        // Falls back to just the filename for single-file uploads
         const folderId = await resolveFolderPath(relativePath, folderCache);
-
         const pdf = await uploadFile(file, folderId, relativePath);
 
-        if (onLocalUploaded) {
-          await onLocalUploaded(pdf);
-        } else if (onSelect) {
-          await onSelect({
-            fileId: pdf.driveId,
-            filename: pdf.filename,
-            owner: 'Local Upload',
-            thumbnail: null,
-            totalPages: null,
-            url: pdf.url,
-          });
-        }
+        if (onLocalUploaded) await onLocalUploaded(pdf);
+        else if (onSelect) await onSelect({ fileId: pdf.driveId, filename: pdf.filename, owner: 'Local Upload', thumbnail: null, totalPages: null, url: pdf.url });
       }
 
       setProgress({ total: pdfs.length, done: pdfs.length, current: '' });
-      setQueuedFolders([]);
-      // Brief success pause before closing
-      setTimeout(onClose, 500);
+      setTimeout(onClose, 400);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setUploading(false);
@@ -239,40 +223,118 @@ export function GooglePicker({
     }
   }, [libraryId, channelId, onLocalUploaded, onSelect, onClose, initialFolderId]);
 
-  const handleFiles = useCallback((files: FileList | UploadItem[] | null) => {
-    if (!files || files.length === 0) return;
-    const items = toUploadItems(files);
-    if (queuedFolders.length > 0) {
-      setQueuedFolders((prev) => [...prev, ...pdfItems(items)]);
+  // ── Multi-folder via File System Access API (Chromium) ────────────────────
+  //
+  // Opens folder pickers one after another in a single click handler.
+  // Each picker is opened immediately after the previous one closes.
+  // When the user cancels (AbortError), we stop and upload everything collected.
+
+  const handleSelectFoldersFSA = useCallback(async () => {
+    if (uploading) return;
+    const allItems: UploadItem[] = [];
+
+    try {
+      // Keep opening pickers until the user cancels
+      for (;;) {
+        let handle: FileSystemDirectoryHandle;
+        try {
+          handle = await (window as any).showDirectoryPicker({ mode: 'read' });
+        } catch (err: any) {
+          // AbortError = user clicked Cancel = they're done selecting
+          if (err?.name === 'AbortError') break;
+          throw err;
+        }
+
+        const items = await collectFromDirectoryHandle(handle, `${handle.name}/`);
+        allItems.push(...items);
+
+        // After each folder, immediately open another picker.
+        // The browser allows this because we're still within the same user gesture chain.
+        // (Each showDirectoryPicker call is awaited synchronously in the loop.)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
       return;
     }
-    uploadItems(items);
-  }, [queuedFolders.length, uploadItems]);
 
-  const uploadQueuedFolders = useCallback(() => {
-    uploadItems(queuedFolders);
-  }, [queuedFolders, uploadItems]);
+    if (allItems.length === 0) {
+      setError('No PDF files found in the selected folders.');
+      return;
+    }
+
+    await runUpload(allItems);
+  }, [uploading, runUpload]);
+
+  // ── Single-folder fallback (Firefox / Safari / webkitdirectory) ───────────
+
+  const handleFolderInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    e.currentTarget.value = '';
+    if (!files || files.length === 0) return;
+
+    const items: UploadItem[] = Array.from(files).map((file) => ({
+      file,
+      relativePath: (file as any).webkitRelativePath || file.name,
+    }));
+    await runUpload(items);
+  }, [runUpload]);
+
+  // ── File picker (individual PDFs) ─────────────────────────────────────────
+
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    e.currentTarget.value = '';
+    if (!files || files.length === 0) return;
+
+    const items: UploadItem[] = Array.from(files).map((file) => ({
+      file,
+      relativePath: file.name,
+    }));
+    await runUpload(items);
+  }, [runUpload]);
+
+  // ── Drag-and-drop (supports multiple folders on all browsers) ─────────────
+
+  const stopBrowserDrop = useCallback((e: DragEvent | React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
-    stopBrowserDrop(e);
-    handleFiles(await getDroppedItems(e.dataTransfer));
-  }, [handleFiles, stopBrowserDrop]);
+    e.preventDefault();
+    e.stopPropagation();
+    if (uploading) return;
+
+    const entries = Array.from(e.dataTransfer.items ?? [])
+      .map((item) => (item as any).webkitGetAsEntry?.())
+      .filter(Boolean);
+
+    let items: UploadItem[];
+    if (entries.length > 0) {
+      const nested = await Promise.all(entries.map((entry: any) => collectFromEntry(entry)));
+      items = nested.flat();
+    } else {
+      items = Array.from(e.dataTransfer.files).map((file) => ({
+        file,
+        relativePath: (file as any).webkitRelativePath || file.name,
+      }));
+    }
+
+    await runUpload(items);
+  }, [uploading, runUpload]);
 
   React.useEffect(() => {
-    window.addEventListener('dragover', stopBrowserDrop);
-    window.addEventListener('drop', stopBrowserDrop);
+    window.addEventListener('dragover', stopBrowserDrop as any);
+    window.addEventListener('drop', stopBrowserDrop as any);
     return () => {
-      window.removeEventListener('dragover', stopBrowserDrop);
-      window.removeEventListener('drop', stopBrowserDrop);
+      window.removeEventListener('dragover', stopBrowserDrop as any);
+      window.removeEventListener('drop', stopBrowserDrop as any);
     };
   }, [stopBrowserDrop]);
 
-  const queuedPdfCount = queuedFolders.length;
-  const queuedFolderNames = Array.from(new Set(
-    queuedFolders
-      .map((item) => item.relativePath.split('/')[0])
-      .filter(Boolean)
-  ));
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const useFSA = hasFSA();
 
   return (
     <div
@@ -291,7 +353,7 @@ export function GooglePicker({
             <div>
               <h2 className="text-base font-semibold text-room-text">Add PDFs</h2>
               <p className="text-xs text-room-muted">
-                {initialFolderId ? 'Upload files into the selected folder' : 'Upload files or an entire folder'}
+                {initialFolderId ? 'Upload into selected folder' : 'Files, folders, or drag & drop'}
               </p>
             </div>
           </div>
@@ -343,23 +405,18 @@ export function GooglePicker({
             ) : (
               <>
                 <Upload size={32} className="text-room-muted mx-auto mb-3" />
-                <p className="text-sm font-medium text-room-text mb-1">Drop PDF files or folders here</p>
-                <p className="text-xs text-room-muted">or click to browse your device</p>
+                <p className="text-sm font-medium text-room-text mb-1">
+                  Drop PDF files or folders here
+                </p>
+                <p className="text-xs text-room-muted">
+                  {useFSA
+                    ? 'Drop multiple folders at once, or use the buttons below'
+                    : 'or click to browse your device'}
+                </p>
                 <p className="text-xs text-room-muted mt-1">Max 100 MB per file</p>
               </>
             )}
           </div>
-
-          {queuedPdfCount > 0 && !uploading && (
-            <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2">
-              <p className="text-xs font-medium text-blue-300">
-                {queuedPdfCount} PDF{queuedPdfCount === 1 ? '' : 's'} queued from {queuedFolderNames.length} folder{queuedFolderNames.length === 1 ? '' : 's'}
-              </p>
-              <p className="mt-1 truncate text-[11px] text-room-muted">
-                {queuedFolderNames.join(', ')}
-              </p>
-            </div>
-          )}
 
           {/* Hidden inputs */}
           <input
@@ -368,28 +425,22 @@ export function GooglePicker({
             accept="application/pdf,.pdf"
             multiple
             className="hidden"
-            onChange={(e) => {
-              handleFiles(e.target.files);
-              e.currentTarget.value = '';
-            }}
+            onChange={handleFileInputChange}
           />
-          {/* webkitdirectory: selects the entire folder including all subfolders */}
+          {/* Fallback folder input for non-Chromium browsers */}
           <input
             ref={folderInputRef}
             type="file"
-            // @ts-ignore — non-standard but supported in all major desktop browsers
+            // @ts-ignore
             webkitdirectory=""
             directory=""
             multiple
             className="hidden"
-            onChange={(e) => {
-              queueFolders(e.target.files);
-              e.currentTarget.value = '';
-            }}
+            onChange={handleFolderInputChange}
           />
 
           {/* Action buttons */}
-          <div className={queuedPdfCount > 0 ? 'grid grid-cols-3 gap-3' : 'grid grid-cols-2 gap-3'}>
+          <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => !uploading && fileInputRef.current?.click()}
               disabled={uploading}
@@ -398,31 +449,36 @@ export function GooglePicker({
               <FileIcon size={16} />
               Select Files
             </button>
-            <button
-              onClick={() => !uploading && folderInputRef.current?.click()}
-              disabled={uploading}
-              className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium bg-room-bg border border-room-border text-room-text hover:bg-room-hover disabled:opacity-50 disabled:cursor-wait transition-colors min-h-[44px]"
-              title="Upload an entire folder — subfolders are preserved"
-            >
-              <FolderPlus size={16} />
-              {queuedPdfCount > 0 ? 'Add Folder' : 'Select Folder'}
-            </button>
-            {queuedPdfCount > 0 && (
+
+            {useFSA ? (
+              // Chromium: true multi-folder via File System Access API
               <button
-                onClick={() => !uploading && uploadQueuedFolders()}
+                onClick={handleSelectFoldersFSA}
                 disabled={uploading}
-                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-wait transition-colors min-h-[44px]"
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium bg-room-bg border border-room-border text-room-text hover:bg-room-hover disabled:opacity-50 disabled:cursor-wait transition-colors min-h-[44px]"
+                title="Pick folders one by one — each picker opens immediately after the previous. Cancel to finish and upload."
               >
-                <Upload size={16} />
-                Upload
+                <FolderOpen size={16} />
+                Select Folders
+              </button>
+            ) : (
+              // Firefox / Safari: single folder via webkitdirectory
+              <button
+                onClick={() => !uploading && folderInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium bg-room-bg border border-room-border text-room-text hover:bg-room-hover disabled:opacity-50 disabled:cursor-wait transition-colors min-h-[44px]"
+                title="Select a folder — all PDFs inside will be uploaded with their subfolder structure"
+              >
+                <FolderPlus size={16} />
+                Select Folder
               </button>
             )}
           </div>
 
           <p className="text-xs text-room-muted text-center">
-            {initialFolderId
-              ? 'Selected files will be added to this folder.'
-              : 'Add folders one by one, then upload the queued folders together.'}
+            {useFSA
+              ? 'Select Folders: each picker opens right after the previous — cancel when done.'
+              : 'Folder uploads preserve the full subfolder structure.'}
           </p>
         </div>
       </div>
