@@ -42,6 +42,15 @@ function isModernChatSchemaError(error: any) {
 
 async function serializeMessage(row: any, db: any): Promise<ChatMessage> {
   const profile = row.sender ?? row.users ?? null;
+  let replyTo = row.reply_to ?? null;
+  if (!replyTo && row.reply_to_message_id) {
+    const { data } = await db
+      .from('messages')
+      .select('id, sender_id, sender_name, content, attachment_type')
+      .eq('id', row.reply_to_message_id)
+      .maybeSingle();
+    replyTo = data ?? null;
+  }
   const attachments: ChatAttachment[] = await Promise.all((row.attachments ?? []).map(async (a: any) => ({
     id: a.id,
     messageId: a.message_id,
@@ -65,12 +74,12 @@ async function serializeMessage(row: any, db: any): Promise<ChatMessage> {
     avatarUrl: profile?.avatar_url ?? row.avatar_url ?? null,
     content: row.content ?? '',
     replyToMessageId: row.reply_to_message_id ?? null,
-    replyTo: row.reply_to ? {
-      id: row.reply_to.id,
-      userId: row.reply_to.sender_id ?? '',
-      userName: row.reply_to.sender_name ?? 'Reader',
-      content: row.reply_to.content ?? '',
-      attachmentType: row.reply_to.attachment_type ?? null,
+    replyTo: replyTo ? {
+      id: replyTo.id,
+      userId: replyTo.sender_id ?? '',
+      userName: replyTo.sender_name ?? 'Reader',
+      content: replyTo.content ?? '',
+      attachmentType: replyTo.attachment_type ?? null,
     } : null,
     attachmentUrl: row.attachment_url ?? firstAttachment?.url ?? null,
     attachmentType: row.attachment_type ?? firstAttachment?.kind ?? null,

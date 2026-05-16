@@ -9,7 +9,9 @@ import {
   Download,
   Edit3,
   File,
+  Info,
   Image as ImageIcon,
+  MoreVertical,
   Paperclip,
   Reply,
   Search,
@@ -35,6 +37,11 @@ const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return 'Not yet';
+  return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDay(ts: number) {
@@ -92,6 +99,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
   const [hasOlder, setHasOlder] = useState(true);
   const [activeActionsId, setActiveActionsId] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<ChatMessage | null>(null);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -169,11 +178,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
     if (!socket.connected) socket.connect();
 
     const upsert = (msg: ChatMessage) => {
-      if (msg.roomId !== roomId) return;
+        if (msg.roomId !== roomId) return;
       updateMessages((prev) => {
         const existing = prev.find((m) => m.id === msg.id);
         return existing
-          ? prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m))
+          ? prev.map((m) => (m.id === msg.id ? { ...m, ...msg, replyTo: msg.replyTo ?? m.replyTo, replyToMessageId: msg.replyToMessageId ?? m.replyToMessageId } : m))
           : [...prev, msg].sort((a, b) => a.ts - b.ts);
       });
       const currentSelf = selfRef.current;
@@ -520,8 +529,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
       });
       if (!res.ok) throw new Error('Failed to send message');
       const { message } = await res.json();
-      updateMessages((prev) => prev.map((m) => (m.id === optimisticId ? message : m)));
-      getSocket().emit('chat:message', message);
+      const finalMessage = {
+        ...message,
+        replyTo: message.replyTo ?? optimistic.replyTo,
+        replyToMessageId: message.replyToMessageId ?? optimistic.replyToMessageId,
+      };
+      updateMessages((prev) => prev.map((m) => (m.id === optimisticId ? finalMessage : m)));
+      getSocket().emit('chat:message', finalMessage);
     } catch (err) {
       console.error('[chat] send failed:', err);
       updateMessages((prev) => prev.filter((m) => m.id !== optimisticId));
@@ -576,6 +590,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }
   }, [canUseAdvancedApi, messagesEndpoint, roomId, updateMessages]);
 
+  const confirmClearForMe = useCallback(async () => {
+    setClearConfirmOpen(false);
+    await clearForMe();
+  }, [clearForMe]);
+
   const openMedia = useCallback(async () => {
     setMediaOpen(true);
     const res = await fetch(`${messagesEndpoint}?limit=120&media=1`);
@@ -619,6 +638,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   const resolvedTyping = Object.values(typing).map((t) => t.name).slice(0, 2).join(', ');
 
+  const resolveReceiptName = useCallback((userId: string) => {
+    const baseId = userId.split('_')[0];
+    if (self?.userId.split('_')[0] === baseId) return 'You';
+    const found = Array.from(users.values()).find((u) => u.userId.split('_')[0] === baseId);
+    return found?.userName ?? 'Reader';
+  }, [self, users]);
+
   const mediaByKind = useMemo(() => ({
     images: mediaMessages.filter((m) => m.attachmentType === 'image'),
     videos: mediaMessages.filter((m) => m.attachmentType === 'video'),
@@ -628,6 +654,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const visibleMediaSections = useMemo(() => (
     (['images', 'videos', 'pdfs', 'files'] as const).filter((kind) => mediaByKind[kind].length > 0)
   ), [mediaByKind]);
+  const activeInfoMessage = infoMessage
+    ? messages.find((m) => m.id === infoMessage.id) ?? infoMessage
+    : null;
 
   const renderAttachment = (msg: ChatMessage) => {
     const attachmentData = msg.attachments?.[0];
@@ -657,7 +686,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2">
         <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={16} /></button>
         {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={16} /></button>}
-        {canUseAdvancedApi && <button onClick={clearForMe} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={16} /></button>}
+        {canUseAdvancedApi && <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={16} /></button>}
         <div className="min-w-0 flex-1 text-center text-xs font-semibold uppercase tracking-wide text-room-muted">Chat</div>
         {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={16} /></button>}
       </div>
@@ -689,8 +718,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const displayName = isSelf ? self?.userName ?? msg.userName : msg.userName;
           const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId.startsWith(msg.userId.split('_')[0]));
           const receipts = msg.receipts ?? [];
-          const read = isSelf && receipts.some((r) => r.userId !== self?.userId && r.readAt);
-          const delivered = isSelf && receipts.some((r) => r.userId !== self?.userId && (r.deliveredAt || r.readAt));
+          const selfBaseId = self?.userId.split('_')[0];
+          const read = isSelf && receipts.some((r) => r.userId !== selfBaseId && r.readAt);
+          const delivered = isSelf && receipts.some((r) => r.userId !== selfBaseId && (r.deliveredAt || r.readAt));
           const actionsOpen = activeActionsId === msg.id;
 
           return (
@@ -707,7 +737,6 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 onTouchStart={() => startLongPress(msg.id)}
                 onTouchMove={cancelLongPress}
                 onTouchEnd={cancelLongPress}
-                onFocus={() => setActiveActionsId(msg.id)}
                 onBlur={(e) => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActiveActionsId(null);
                 }}
@@ -726,39 +755,53 @@ export function Chat({ roomId, onClose }: ChatProps) {
                       <span className="text-[10px] text-room-muted">{formatTime(msg.ts)}</span>
                     </div>
                   )}
-                  <div className={`rounded-xl border px-3 py-2 text-sm leading-relaxed shadow-sm ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
-                    {msg.replyTo && (
-                      <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-2 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-1 text-left">
-                        <span className="block truncate text-[11px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
-                        <span className="line-clamp-2 text-xs text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
-                      </button>
-                    )}
-                    {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
-                    {renderAttachment(msg)}
-                    <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-room-muted">
-                      {msg.editedAt && <span>edited</span>}
-                      {grouped && <span>{formatTime(msg.ts)}</span>}
-                      {isSelf && (read ? <CheckCheck size={13} className="text-blue-300" /> : delivered ? <CheckCheck size={13} /> : <Check size={13} />)}
+                  <div className={`relative flex items-start gap-1 ${isSelf ? 'flex-row-reverse' : ''}`}>
+                    <div className={`rounded-lg border px-2.5 py-1.5 text-sm leading-relaxed shadow-sm ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
+                      {msg.replyTo && (
+                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1.5 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-1 text-left">
+                          <span className="block truncate text-[11px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
+                          <span className="line-clamp-2 text-xs text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
+                        </button>
+                      )}
+                      {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
+                      {renderAttachment(msg)}
+                      <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-room-muted">
+                        {msg.editedAt && <span>edited</span>}
+                        {grouped && <span>{formatTime(msg.ts)}</span>}
+                        {isSelf && (read ? <CheckCheck size={13} className="text-blue-300" /> : delivered ? <CheckCheck size={13} /> : <Check size={13} />)}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className={`mt-1 flex flex-wrap items-center gap-1 ${isSelf ? 'justify-end' : 'justify-start'}`}>
                     {canUseAdvancedApi && (
-                      <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Reply">
-                        <Reply size={13} />
-                      </button>
+                      <div className="relative flex shrink-0 items-center gap-0.5 pt-0.5">
+                        <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Reply">
+                          <Reply size={13} />
+                        </button>
+                        <button
+                          onClick={() => setActiveActionsId((id) => (id === msg.id ? null : msg.id))}
+                          className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text"
+                          aria-label="Message actions"
+                        >
+                          <MoreVertical size={13} />
+                        </button>
+                        {actionsOpen && (
+                          <div className={`absolute top-7 z-20 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-xl ${isSelf ? 'right-0' : 'left-0'}`}>
+                            <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">
+                              {EMOJIS.map((emoji) => (
+                                <button key={emoji} onClick={() => { setActiveActionsId(null); toggleReaction(msg, emoji); }} className="rounded-md px-1.5 py-1 text-sm hover:bg-room-bg" aria-label={`React ${emoji}`}>{emoji}</button>
+                              ))}
+                            </div>
+                            {isSelf && <button onClick={() => { setEditing(msg); setInput(msg.content); setActiveActionsId(null); inputRef.current?.focus(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg"><Edit3 size={13} /> Edit</button>}
+                            {isSelf && <button onClick={() => { setInfoMessage(msg); setActiveActionsId(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg"><Info size={13} /> Message info</button>}
+                            {isSelf && <button onClick={() => { setActiveActionsId(null); removeMessage(msg); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-300 hover:bg-room-bg"><Trash2 size={13} /> Delete</button>}
+                          </div>
+                        )}
+                      </div>
                     )}
-                    <div className={`${actionsOpen ? 'flex' : 'hidden md:group-hover:flex md:group-focus-within:flex'} flex-wrap items-center gap-1`}>
-                      {canUseAdvancedApi && isSelf && <button onClick={() => { setEditing(msg); setInput(msg.content); setActiveActionsId(null); inputRef.current?.focus(); }} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Edit"><Edit3 size={13} /></button>}
-                      {canUseAdvancedApi && isSelf && <button onClick={() => { setActiveActionsId(null); removeMessage(msg); }} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-red-300" aria-label="Delete"><Trash2 size={13} /></button>}
-                      {canUseAdvancedApi && <div className="flex rounded-full bg-room-bg px-1">
-                        {EMOJIS.map((emoji) => <button key={emoji} onClick={() => { setActiveActionsId(null); toggleReaction(msg, emoji); }} className="px-1 py-0.5 text-xs" aria-label={`React ${emoji}`}>{emoji}</button>)}
-                      </div>}
                     </div>
-                  </div>
 
                   {reactionGroups(msg.reactions).length > 0 && (
-                    <div className={`mt-1 flex flex-wrap gap-1 ${isSelf ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`mt-0.5 flex flex-wrap gap-1 ${isSelf ? 'justify-end' : 'justify-start'}`}>
                       {reactionGroups(msg.reactions).map(([emoji, items]) => (
                         <button key={emoji} onClick={() => toggleReaction(msg, emoji)} className="rounded-full border border-room-border bg-room-bg px-2 py-0.5 text-xs text-room-text">{emoji} {items.length}</button>
                       ))}
@@ -806,6 +849,70 @@ export function Chat({ roomId, onClose }: ChatProps) {
           </button>
         </div>
       </div>
+
+      {clearConfirmOpen && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-sm rounded-xl border border-room-border bg-room-surface p-4 shadow-2xl">
+            <h3 className="text-sm font-semibold text-room-text">Clear chat for me?</h3>
+            <p className="mt-2 text-xs leading-relaxed text-room-muted">
+              This removes the visible chat history only for you. Other people will still keep their messages.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setClearConfirmOpen(false)} className="rounded-lg px-3 py-2 text-xs text-room-muted hover:bg-room-bg hover:text-room-text">Cancel</button>
+              <button onClick={confirmClearForMe} className="rounded-lg bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-200 hover:bg-red-500/25">Clear</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeInfoMessage && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4">
+          <div className="flex max-h-[82%] w-full max-w-md flex-col rounded-xl border border-room-border bg-room-surface shadow-2xl">
+            <div className="flex items-center gap-2 border-b border-room-border px-4 py-3">
+              <h3 className="flex-1 text-sm font-semibold text-room-text">Message info</h3>
+              <button onClick={() => setInfoMessage(null)} className="rounded-lg p-1.5 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close message info">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4">
+              <div className="mb-4 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-sm text-room-text">
+                <p className="line-clamp-3 whitespace-pre-wrap break-words">{summarize(activeInfoMessage)}</p>
+                <p className="mt-1 text-[10px] text-room-muted">Sent {formatDateTime(activeInfoMessage.createdAt ?? new Date(activeInfoMessage.ts).toISOString())}</p>
+              </div>
+              {(() => {
+                const selfBaseId = self?.userId.split('_')[0];
+                const receipts = (activeInfoMessage.receipts ?? []).filter((r) => r.userId !== selfBaseId);
+                const readReceipts = receipts.filter((r) => r.readAt);
+                const deliveredReceipts = receipts.filter((r) => r.deliveredAt || r.readAt);
+                const renderRows = (items: typeof receipts, field: 'deliveredAt' | 'readAt') => (
+                  items.length === 0
+                    ? <p className="rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-muted">No users yet</p>
+                    : <div className="space-y-1.5">
+                        {items.map((receipt) => (
+                          <div key={`${field}:${receipt.userId}`} className="flex items-center justify-between gap-3 rounded-lg border border-room-border bg-room-bg px-3 py-2">
+                            <span className="min-w-0 truncate text-xs font-medium text-room-text">{resolveReceiptName(receipt.userId)}</span>
+                            <span className="shrink-0 text-[10px] text-room-muted">{formatDateTime(receipt[field])}</span>
+                          </div>
+                        ))}
+                      </div>
+                );
+                return (
+                  <div className="space-y-4">
+                    <section>
+                      <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-room-muted"><CheckCheck size={13} /> Read by</h4>
+                      {renderRows(readReceipts, 'readAt')}
+                    </section>
+                    <section>
+                      <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-room-muted"><Check size={13} /> Delivered to</h4>
+                      {renderRows(deliveredReceipts, 'deliveredAt')}
+                    </section>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
 
       {mediaOpen && (
         <div className="absolute inset-0 z-20 flex flex-col bg-room-surface">
