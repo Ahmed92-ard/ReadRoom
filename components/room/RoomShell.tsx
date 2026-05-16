@@ -465,8 +465,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const showBrowserNotification = useCallback((activity: RoomActivity) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
-    // Only suppress when the tab is actively in the foreground AND chat is visible.
-    // If the window is minimized or tab is backgrounded, always show the notification.
     const tabIsVisible = document.visibilityState === 'visible';
     if (tabIsVisible && isChatVisibleRef.current) return;
 
@@ -480,13 +478,24 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         if (target?.avatarUrl) icon = target.avatarUrl;
       }
 
-      new Notification(activity.title, {
-        body: activity.body,
-        tag: activity.id,
+      // For cross-room messages, include the room name in the body
+      const isCrossRoom = activity.roomId !== roomId;
+      const notifBody = isCrossRoom && activity.body
+        ? `${activity.body}`
+        : activity.body;
+      const notifTitle = isCrossRoom && activity.userName
+        ? `${activity.userName}`
+        : activity.title;
+      // Tag by roomId+id so cross-room notifications don't collapse same-room ones
+      const tag = `${activity.roomId}:${activity.id}`;
+
+      new Notification(notifTitle ?? activity.title, {
+        body: notifBody,
+        tag,
         icon,
       });
     } catch {}
-  }, []);
+  }, [roomId]);
 
   const pushToast = useCallback((activity: RoomActivity) => {
     const toast: ToastActivity = { ...activity, toastId: `${activity.id}:${Date.now()}` };
@@ -877,14 +886,31 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     };
 
     const handleActivity = (activity: RoomActivity) => {
-      if (!activity?.id || activity.roomId !== roomId) return;
+      if (!activity?.id) return;
       if (processedNotificationIdsRef.current.has(activity.id)) return;
 
-      console.log('[RoomShell] notification:activity', activity.id, activity.type);
+      const isSameRoom = activity.roomId === roomId;
+      const activityUserBaseId = activity.userId?.split('_')[0];
+
+      // ── Cross-room messages: desktop notification only (no in-app toast) ──
+      // Only fire when the tab is not focused — avoids spam while user is active.
+      if (!isSameRoom && activity.type === 'chat:message') {
+        if (activityUserBaseId === initialUserId) return;
+        if (processedNotificationIdsRef.current.has(activity.id)) return;
+        processedNotificationIdsRef.current.add(activity.id);
+        const tabIsHidden = document.visibilityState !== 'visible';
+        if (tabIsHidden) {
+          showBrowserNotification(activity);
+        }
+        return;
+      }
+
+      // ── Same-room activities ──────────────────────────────────────────────
+      if (!isSameRoom) return;
+
       processedNotificationIdsRef.current.add(activity.id);
 
       // Skip own activities
-      const activityUserBaseId = activity.userId?.split('_')[0];
       if (activityUserBaseId === initialUserId) return;
 
       // Handle mention logic

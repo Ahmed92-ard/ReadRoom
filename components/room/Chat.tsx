@@ -267,8 +267,12 @@ export function Chat({ roomId, onClose }: ChatProps) {
       if (payload.roomId !== roomId || payload.userId.split('_')[0] === currentSelf?.userId.split('_')[0]) return;
       setTyping((prev) => {
         const next = { ...prev };
-        if (payload.typing) next[payload.userId] = { name: payload.userName, ts: payload.ts };
-        else delete next[payload.userId];
+        if (payload.typing) {
+          // Refresh ts so the cutoff timer resets correctly on each typing event
+          next[payload.userId] = { name: payload.userName, ts: Date.now() };
+        } else {
+          delete next[payload.userId];
+        }
         return next;
       });
     };
@@ -365,9 +369,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      const cutoff = Date.now() - 4500;
-      setTyping((prev) => Object.fromEntries(Object.entries(prev).filter(([, v]) => v.ts > cutoff)));
-    }, 1500);
+      const cutoff = Date.now() - 2000;
+      setTyping((prev) => {
+        const next = Object.fromEntries(Object.entries(prev).filter(([, v]) => v.ts > cutoff));
+        // Only trigger re-render if something actually changed
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
+    }, 500);
     return () => clearInterval(timer);
   }, []);
 
