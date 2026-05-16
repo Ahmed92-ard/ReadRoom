@@ -5,7 +5,7 @@ import { create } from 'zustand';
 import type { UserMeta, PDFMeta, RoomState, ChatMessage, ConnectionStatus } from '@/types';
 
 // ── Store version — bump this when store shape changes to clear stale state ──
-const STORE_VERSION = 3;
+const STORE_VERSION = 4;
 
 function checkStoreVersion() {
   if (typeof window === 'undefined') return;

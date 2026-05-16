@@ -39,7 +39,7 @@ function EmptyState({ onOpen }: { onOpen: () => void }) {
       <div>
         <h2 className="text-lg font-semibold text-room-text mb-1">No PDF loaded</h2>
         <p className="text-sm text-room-muted max-w-xs">
-          Open a PDF from Google Drive to start a shared reading session.
+          Upload a PDF from your device to start a shared reading session.
         </p>
       </div>
       <button
@@ -47,7 +47,7 @@ function EmptyState({ onOpen }: { onOpen: () => void }) {
         className="flex items-center gap-2 px-5 py-3 rounded-xl bg-blue-600 text-white font-medium text-sm hover:bg-blue-500 transition-colors min-h-[44px]"
       >
         <FolderOpen size={16} />
-        Open PDF from Google Drive
+        Upload PDF
       </button>
     </div>
   );
@@ -526,7 +526,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     touchStartY.current = null;
   };
 
-  const { driveToken, requestDriveAccess } = useAuth();
   const { activeLibraryId, updateChannel } = useWorkspaceStore();
 
   selfRef.current = self;
@@ -1065,56 +1064,32 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   const handlePDFSelect = useCallback(
     async (pdf: PDFMeta) => {
+      // handlePDFSelect is kept for GooglePicker onSelect compat.
+      // For local uploads, onLocalUploaded (handleRoomPdfUploaded) is used instead.
+      // This path handles any PDFMeta that already has a url (e.g. from local upload fallback).
       setPdfLibraryError(null);
       if (!libraryId || !channelId) return;
-
-      try {
-        const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              driveId: pdf.fileId,
-              filename: pdf.filename,
-              thumbnailUrl: pdf.thumbnail,
-              driveAccessToken: driveToken,
-              folderId: (pdf as any).folderId ?? null,
-            }),
-          });
-          const data = await res.json();
-
-          if (!res.ok) {
-            const message = data.hint || data.error || 'Failed to add PDF';
-            setPdfLibraryError(message);
-            console.error('[RoomShell] add PDF failed', { status: res.status, data });
-            if (res.status === 401) requestDriveAccess();
-            throw new Error(message);
-          }
-
-          const addedPdf = normalizeChannelPDF(data.pdf);
-          setChannelPDFs((prev) =>
-            prev.some((item) => item.id === addedPdf.id)
-              ? prev.map((item) => item.id === addedPdf.id ? addedPdf : item)
-              : [...prev, addedPdf]
-          );
-          await selectChannelPDF(addedPdf);
-          getSocket().emit('pdf:added', {
-            id: `pdf:added:${addedPdf.id}`,
-            roomId,
-            type: 'pdf:added',
-            title: `${initialUserName || 'Someone'} added a PDF`,
-            body: addedPdf.filename,
-            userId: initialUserId,
-            userName: initialUserName,
-            ts: Date.now(),
-            metadata: { pdf: addedPdf },
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          setPdfLibraryError(message);
-          throw err;
-        }
+      if (!pdf.url) {
+        setPdfLibraryError('Only local uploads are supported. Use the Upload button.');
+        return;
+      }
+      // If the PDF already has a url it was uploaded via the upload endpoint —
+      // treat it the same as handleRoomPdfUploaded.
+      const syntheticPdf = normalizeChannelPDF({
+        id: pdf.fileId,
+        room_id: channelId,
+        drive_id: pdf.fileId,
+        filename: pdf.filename,
+        thumbnail_url: pdf.thumbnail,
+        storage_path: null,
+        url: pdf.url,
+        position: 0,
+        folder_id: null,
+        created_at: new Date().toISOString(),
+      });
+      await handleRoomPdfUploaded(syntheticPdf);
     },
-    [libraryId, channelId, driveToken, normalizeChannelPDF, selectChannelPDF, setRoom, buildRoomState, roomId, setSyncState, requestDriveAccess, initialUserId, initialUserName]
+    [libraryId, channelId, normalizeChannelPDF]
   );
 
   const handleRoomPdfUploaded = useCallback(
@@ -1234,17 +1209,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
               {room?.pdf ? (
                 <div className="mb-4 p-3 bg-room-bg rounded-xl border border-room-border flex items-start gap-3 w-full">
-                  <img
-                    src={room.pdf.thumbnail ?? `https://drive.google.com/thumbnail?authuser=0&sz=w128&id=${room.pdf.fileId}`}
-                    alt={room.pdf.filename}
-                    className="w-12 h-16 object-cover rounded shadow-sm bg-room-surface flex-shrink-0"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                  />
+                  {room.pdf.thumbnail && (
+                    <img
+                      src={room.pdf.thumbnail}
+                      alt={room.pdf.filename}
+                      className="w-12 h-16 object-cover rounded shadow-sm bg-room-surface flex-shrink-0"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  )}
                   <div className="min-w-0 flex-1 flex flex-col justify-center h-16">
                     <p className="text-sm text-room-text font-semibold truncate leading-tight mb-1">{room.pdf.filename}</p>
-                    <p className="text-[10px] text-room-muted tracking-wider font-bold">
-                      {room.pdf.url ? 'ROOM LIBRARY' : 'GOOGLE DRIVE'}
-                    </p>
+                    <p className="text-[10px] text-room-muted tracking-wider font-bold">ROOM LIBRARY</p>
                   </div>
                 </div>
               ) : (
@@ -1257,7 +1232,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                     }}
                     className="px-4 py-2 bg-blue-500 text-white rounded-xl text-xs font-bold"
                   >
-                    Load from Drive
+                    Upload PDF
                   </button>
                 </div>
               )}
@@ -1420,24 +1395,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </header>
 
         <div className="flex-1 min-h-0 relative">
-          {room?.pdf && !room.pdf.url && !driveToken ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center space-y-4 px-6 max-w-sm">
-                <div className="w-16 h-16 rounded-full bg-blue-500/10 flex items-center justify-center text-2xl mx-auto mb-2">
-                  🔑
-                </div>
-                <h3 className="text-lg font-bold text-room-text">Authorization Required</h3>
-                <p className="text-room-muted text-sm">To view this PDF from your Google Drive, we need your permission.</p>
-                <button
-                  onClick={requestDriveAccess}
-                  className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 active:scale-95"
-                >
-                  <FolderOpen size={18} />
-                  Authorize Google Drive
-                </button>
-              </div>
-            </div>
-          ) : room?.pdf || openViewers.length > 0 ? (
+          {room?.pdf || openViewers.length > 0 ? (
             <div className={`h-full grid gap-2 p-2 ${openViewers.length > 0 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
               {room?.pdf && (
                 <section className="min-h-0 flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
@@ -1463,8 +1421,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                   <div className="flex-1 min-h-0">
                     <PDFViewer
                       pdf={room.pdf}
-                      accessToken={room.pdf.url ? null : driveToken}
-                      onRetry={room.pdf.url ? () => {} : requestDriveAccess}
+                      accessToken={null}
+                      onRetry={() => {}}
                       externalContainerRef={mainContainerRef}
                     />
                   </div>
@@ -1475,8 +1433,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 <SecondaryViewerSection
                   key={viewer.key}
                   viewer={viewer}
-                  driveToken={driveToken}
-                  requestDriveAccess={requestDriveAccess}
                   onClose={() => setOpenViewers((prev) => prev.filter((item) => item.key !== viewer.key))}
                   onStateChange={updateOpenViewerState}
                 />
@@ -1579,12 +1535,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       {showPicker && (
         <GooglePicker
-          driveToken={driveToken}
-          onRequestAccess={requestDriveAccess}
           onSelect={handlePDFSelect}
           onLocalUploaded={handleRoomPdfUploaded}
           onClose={() => setShowPicker(false)}
-          mode={libraryId && channelId ? 'add' : 'replace'}
           libraryId={libraryId}
           channelId={channelId}
         />
@@ -1597,14 +1550,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
 const SecondaryViewerSection = React.memo(({ 
   viewer, 
-  driveToken, 
-  requestDriveAccess, 
   onClose, 
   onStateChange 
 }: { 
   viewer: OpenViewer; 
-  driveToken: string | null; 
-  requestDriveAccess: () => void; 
   onClose: () => void;
   onStateChange: (key: string, patch: Partial<PDFViewerState>) => void;
 }) => {
@@ -1646,8 +1595,8 @@ const SecondaryViewerSection = React.memo(({
       <div className="flex-1 min-h-0">
         <PDFViewer
           pdf={viewer.pdf}
-          accessToken={viewer.pdf.url ? null : driveToken}
-          onRetry={viewer.pdf.url ? () => {} : requestDriveAccess}
+          accessToken={null}
+          onRetry={() => {}}
           viewerState={viewer.state}
           onViewerStateChange={handleStateChange}
           followModeOverride={Boolean(viewer.followUserId)}

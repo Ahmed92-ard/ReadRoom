@@ -1,4 +1,5 @@
-// types/index.ts — Canonical ReadRoom types. No legacy aliases.
+// types/index.ts — Canonical ReadRoom types.
+// Google Drive has been removed. All PDFs are local uploads.
 
 // ── User / Profile ────────────────────────────────────────────────────────────
 
@@ -41,12 +42,12 @@ export interface LibraryData {
   created_at: string;
 }
 
-// ── Room (was "channel") ──────────────────────────────────────────────────────
+// ── Room ──────────────────────────────────────────────────────────────────────
 
 export interface RoomData {
   id: string;
   library_id: string;
-  /** Kept as server_id for workspaceStore backward compat */
+  /** Alias kept for workspaceStore compat */
   server_id: string;
   name: string;
   description: string | null;
@@ -74,9 +75,9 @@ export interface PDFMeta {
 /** Serialized room_pdfs row (frontend shape) */
 export interface ChannelPDF {
   id: string;
-  channelId: string;   // = roomId
+  channelId: string;
   roomId: string;
-  driveId: string;
+  driveId: string;   // 'local:<uuid>' for device uploads
   filename: string;
   thumbnailUrl: string | null;
   storagePath?: string | null;
@@ -171,16 +172,6 @@ export type PDFLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface PageDimension { width: number; height: number; }
 export interface VisibleRange { start: number; end: number; }
-
-// ── Google Drive ──────────────────────────────────────────────────────────────
-
-export interface GoogleDriveFile {
-  id: string;
-  name: string;
-  mimeType: string;
-  thumbnailLink?: string;
-  owners?: Array<{ emailAddress: string }>;
-}
 
 // ── Socket.io event maps ──────────────────────────────────────────────────────
 

@@ -60,10 +60,10 @@ export default function AuthPage() {
           </p>
           <div className="space-y-5">
             {[
-              { icon: BookOpen, title: 'Shared PDF Reading', desc: 'Open PDFs from Google Drive and read in sync with your group' },
+              { icon: BookOpen, title: 'Shared PDF Reading', desc: 'Upload PDFs from your device and read in sync with your group' },
               { icon: MessageSquare, title: 'Live Chat', desc: 'Discuss chapters in real-time while reading together' },
               { icon: Users, title: 'Presence Awareness', desc: 'See exactly which page everyone is on' },
-              { icon: Zap, title: 'Channels for Every Book', desc: 'Novels, textbooks, religious texts — organized in channels' },
+              { icon: Zap, title: 'Rooms for Every Book', desc: 'Novels, textbooks, religious texts — organized in rooms' },
             ].map(({ icon: Icon, title, desc }) => (
               <div key={title} className="flex items-start gap-4">
                 <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">

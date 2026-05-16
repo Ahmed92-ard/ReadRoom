@@ -1,20 +1,22 @@
 // app/api/libraries/[libraryId]/channels/[channelId]/pdfs/[pdfId]/route.ts
+// All room members can delete PDFs and set the current PDF.
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { PDF_BUCKET, PDF_TABLE, requireRoomInLibrary } from '@/lib/backend/readroom';
 
+type Params = { libraryId: string; channelId: string; pdfId: string };
+
 export async function DELETE(
-  req: Request,
-  { params }: { params: Promise<{ libraryId: string; channelId: string; pdfId: string }> | { libraryId: string; channelId: string; pdfId: string } }
+  _req: Request,
+  { params }: { params: Promise<Params> | Params }
 ) {
-  const resolvedParams = await params;
-  const { libraryId, channelId, pdfId } = resolvedParams;
+  const { libraryId, channelId, pdfId } = await params;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Verify user is admin/owner
+  // Any library member can delete PDFs
   const { data: membership } = await supabase
     .from('library_members')
     .select('role')
@@ -22,9 +24,7 @@ export async function DELETE(
     .eq('user_id', user.id)
     .maybeSingle();
 
-  if (!membership || !['owner', 'admin'].includes(membership.role)) {
-    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-  }
+  if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const db = createAdminClient() ?? supabase;
   const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
@@ -38,7 +38,6 @@ export async function DELETE(
     .eq('room_id', channelId)
     .maybeSingle();
 
-  // Delete the PDF
   const { error } = await db
     .from(PDF_TABLE)
     .delete()
@@ -47,14 +46,14 @@ export async function DELETE(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // If this was the current PDF, set the next one
-  const { data: channel } = await supabase
+  // Update current_pdf_id if this was the active PDF
+  const { data: roomRow } = await supabase
     .from('rooms')
     .select('current_pdf_id')
     .eq('id', channelId)
-    .single();
+    .maybeSingle();
 
-  if (channel.current_pdf_id === pdfId) {
+  if (roomRow?.current_pdf_id === pdfId) {
     const { data: firstPdf } = await supabase
       .from(PDF_TABLE)
       .select('id')
@@ -68,17 +67,9 @@ export async function DELETE(
       .eq('id', channelId);
   }
 
+  // Clean up storage file
   if (existingPdf?.storage_path) {
-    const { error: storageError } = await db.storage.from(PDF_BUCKET).remove([existingPdf.storage_path]);
-    if (storageError) {
-      console.warn('[api/pdfs] shared storage cleanup failed', {
-        libraryId,
-        channelId,
-        pdfId,
-        storagePath: existingPdf.storage_path,
-        error: storageError.message,
-      });
-    }
+    await db.storage.from(PDF_BUCKET).remove([existingPdf.storage_path]).catch(() => {});
   }
 
   return NextResponse.json({ ok: true });
@@ -86,16 +77,14 @@ export async function DELETE(
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ libraryId: string; channelId: string; pdfId: string }> | { libraryId: string; channelId: string; pdfId: string } }
+  { params }: { params: Promise<Params> | Params }
 ) {
-  const resolvedParams = await params;
-  const { libraryId, channelId, pdfId } = resolvedParams;
+  const { libraryId, channelId, pdfId } = await params;
 
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Verify user is a member
   const { data: membership } = await supabase
     .from('library_members')
     .select('role')
@@ -105,14 +94,10 @@ export async function PATCH(
 
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
   const db = createAdminClient() ?? supabase;
-  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
-  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
-  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
-  // Update channel's current PDF
-  if (body.setCurrent) {
+  if (body?.setCurrent) {
     const { data: pdf } = await db
       .from(PDF_TABLE)
       .select('id')

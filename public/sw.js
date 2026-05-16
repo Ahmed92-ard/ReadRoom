@@ -1,6 +1,6 @@
-// ReadRoom Service Worker — v6
-// Fixes: "Failed to convert value to 'Response'" by always returning a valid Response.
-const CACHE_NAME = 'readroom-v6';
+// ReadRoom Service Worker — v7 (Drive removed, local-only uploads)
+// Bump CACHE_NAME whenever the app shell changes to force cache invalidation.
+const CACHE_NAME = 'readroom-v7';
 
 const STATIC_ASSETS = [
   '/manifest.json',

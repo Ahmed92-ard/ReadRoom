@@ -185,19 +185,20 @@ export function PDFViewer({
 
       try {
         const pdfjs = await loadPDFWorker();
-        const url = pdf.url || `https://www.googleapis.com/drive/v3/files/${pdf.fileId}?alt=media`;
+        // All PDFs are served from Supabase Storage via the /file route.
+        // pdf.url is always set for local uploads. Fall back to fileId as a
+        // last resort (should not happen in normal operation).
+        const url = pdf.url || `/api/pdf-fallback/${pdf.fileId}`;
 
-        console.log('[PDFViewer] initializing load', {
-          fileId: pdf.fileId,
+        console.log('[PDFViewer] loading', {
           filename: pdf.filename,
-          source: pdf.url ? 'shared-storage' : 'google-drive',
+          source: 'supabase-storage',
           url,
-          hasAccessToken: Boolean(accessToken),
         });
         
         loadingTask = pdfjs.getDocument({
           url,
-          httpHeaders: accessToken && !pdf.url ? { Authorization: `Bearer ${accessToken}` } : undefined,
+          httpHeaders: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
           cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
           cMapPacked: true,
           disableRange: false,
@@ -222,10 +223,8 @@ export function PDFViewer({
         clearTimeout(timeoutId);
         const message = err instanceof Error ? err.message : String(err);
         console.error('[PDFViewer] Error loading PDF:', {
-          fileId: pdf.fileId,
           filename: pdf.filename,
-          source: pdf.url ? 'shared-storage' : 'google-drive',
-          hasAccessToken: Boolean(accessToken),
+          url: pdf.url,
           error: err,
         });
         if (!cancelled) {
@@ -425,9 +424,7 @@ export function PDFViewer({
             <div>
               <p className="text-room-text font-bold text-lg mb-1">Failed to load PDF</p>
               <p className="text-room-muted text-sm leading-relaxed">
-                {pdf.url
-                  ? 'The shared room copy could not be fetched. Refresh the page or ask an admin to re-add the file.'
-                  : 'This usually happens if Drive access expired or the file permissions changed.'}
+                The PDF file could not be loaded. Try refreshing the page or ask a room member to re-upload the file.
               </p>
               {loadError && (
                 <p className="mt-2 text-[11px] text-room-muted/80 break-words">
