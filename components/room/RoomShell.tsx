@@ -402,7 +402,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     if (tabIsVisible && isChatVisibleRef.current) return;
 
     try {
-      let icon = '/icons/icon-192.png';
+      let icon = '/icons/app_icon_192.png';
       if (activity.userId) {
         const users = usePresenceStore.getState().users;
         const self = usePresenceStore.getState().self;
