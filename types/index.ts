@@ -132,12 +132,99 @@ export interface ChatMessage {
   avatarColor: string;
   avatarUrl?: string | null;
   content: string;
+  replyToMessageId?: string | null;
+  replyTo?: ChatReplyPreview | null;
   attachmentUrl?: string | null;
-  attachmentType?: 'image' | 'pdf' | 'link' | null;
+  attachmentType?: ChatAttachmentKind | 'link' | null;
+  attachmentName?: string | null;
+  attachmentSize?: number | null;
+  attachmentMime?: string | null;
+  storagePath?: string | null;
+  attachments?: ChatAttachment[];
+  reactions?: ChatReaction[];
+  receipts?: ChatReadReceipt[];
   deleted?: boolean;
   editedAt?: string | null;
   ts: number;
   createdAt?: string;
+}
+
+export type ChatAttachmentKind = 'image' | 'video' | 'file' | 'pdf';
+
+export interface ChatReplyPreview {
+  id: string;
+  userId: string;
+  userName: string;
+  content: string;
+  attachmentType?: ChatAttachmentKind | 'link' | null;
+}
+
+export interface ChatAttachment {
+  id: string;
+  messageId: string;
+  roomId: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: ChatAttachmentKind;
+  storagePath: string;
+  url?: string | null;
+  createdAt?: string;
+}
+
+export interface ChatReaction {
+  messageId: string;
+  userId: string;
+  emoji: string;
+  createdAt?: string;
+}
+
+export interface ChatReadReceipt {
+  messageId: string;
+  roomId: string;
+  userId: string;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+}
+
+export interface ChatTypingEvent {
+  roomId: string;
+  userId: string;
+  userName: string;
+  typing: boolean;
+  ts: number;
+}
+
+export interface ChatMessageMutation {
+  roomId: string;
+  message: ChatMessage;
+}
+
+export interface ChatMessageDelete {
+  roomId: string;
+  messageId: string;
+}
+
+export interface ChatReactionMutation {
+  roomId: string;
+  messageId: string;
+  userId: string;
+  emoji: string;
+  active: boolean;
+}
+
+export interface ChatReadMutation {
+  roomId: string;
+  messageIds: string[];
+  userId: string;
+  readAt: string;
+}
+
+export interface ChatDeliveryMutation {
+  roomId: string;
+  messageIds: string[];
+  userId: string;
+  deliveredAt: string;
 }
 
 // ── Activity / Notifications ──────────────────────────────────────────────────
@@ -181,6 +268,12 @@ export interface ClientToServerEvents {
   'sync:state':            (payload: SyncPayload) => void;
   'presence:update':       (payload: { roomId: string; user: Partial<UserMeta> }) => void;
   'chat:message':          (payload: ChatMessage) => void;
+  'chat:update':           (payload: ChatMessageMutation) => void;
+  'chat:delete':           (payload: ChatMessageDelete) => void;
+  'chat:typing':           (payload: ChatTypingEvent) => void;
+  'chat:reaction':         (payload: ChatReactionMutation) => void;
+  'chat:delivered':        (payload: ChatDeliveryMutation) => void;
+  'chat:read':             (payload: ChatReadMutation) => void;
   'pdf:added':             (payload: RoomActivity) => void;
   'library:updated':       (payload: RoomActivity) => void;
   'notification:activity': (payload: RoomActivity) => void;
@@ -196,6 +289,12 @@ export interface ServerToClientEvents {
   'presence:update':       (payload: UserMeta) => void;
   'presence:left':         (payload: { userId: string }) => void;
   'chat:message':          (payload: ChatMessage) => void;
+  'chat:update':           (payload: ChatMessageMutation) => void;
+  'chat:delete':           (payload: ChatMessageDelete) => void;
+  'chat:typing':           (payload: ChatTypingEvent) => void;
+  'chat:reaction':         (payload: ChatReactionMutation) => void;
+  'chat:delivered':        (payload: ChatDeliveryMutation) => void;
+  'chat:read':             (payload: ChatReadMutation) => void;
   'pdf:added':             (payload: RoomActivity) => void;
   'library:updated':       (payload: RoomActivity) => void;
   'notification:activity': (payload: RoomActivity) => void;

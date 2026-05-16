@@ -146,6 +146,45 @@ export function initSocketServer(httpServer: HTTPServer) {
       }
     });
 
+    socket.on('chat:update', (payload) => {
+      const targetRoom = currentRoom ?? payload.roomId;
+      if (!targetRoom || payload.roomId !== targetRoom) return;
+      socket.to(targetRoom).emit('chat:update', payload);
+    });
+
+    socket.on('chat:delete', (payload) => {
+      const targetRoom = currentRoom ?? payload.roomId;
+      if (!targetRoom || payload.roomId !== targetRoom) return;
+      socket.to(targetRoom).emit('chat:delete', payload);
+    });
+
+    socket.on('chat:typing', (payload) => {
+      const targetRoom = currentRoom ?? payload.roomId;
+      if (!targetRoom || payload.roomId !== targetRoom) return;
+      socket.to(targetRoom).emit('chat:typing', {
+        ...payload,
+        ts: payload.ts || Date.now(),
+      });
+    });
+
+    socket.on('chat:reaction', (payload) => {
+      const targetRoom = currentRoom ?? payload.roomId;
+      if (!targetRoom || payload.roomId !== targetRoom) return;
+      socket.to(targetRoom).emit('chat:reaction', payload);
+    });
+
+    socket.on('chat:delivered', (payload) => {
+      const targetRoom = currentRoom ?? payload.roomId;
+      if (!targetRoom || payload.roomId !== targetRoom) return;
+      socket.to(targetRoom).emit('chat:delivered', payload);
+    });
+
+    socket.on('chat:read', (payload) => {
+      const targetRoom = currentRoom ?? payload.roomId;
+      if (!targetRoom || payload.roomId !== targetRoom) return;
+      socket.to(targetRoom).emit('chat:read', payload);
+    });
+
     socket.on('pdf:added', async (payload: RoomActivity) => {
       if (currentRoom && payload.roomId !== currentRoom) return;
       const targetRoom = currentRoom ?? payload.roomId;

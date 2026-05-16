@@ -1,30 +1,68 @@
 'use client';
 
-// Chat.tsx — Permanent Supabase-backed chat with stable mount lifecycle.
-// Key design decisions:
-//   1. Messages are loaded from Supabase (permanent) via the channel messages API.
-//   2. The component is intentionally kept mounted via CSS visibility, not unmounted,
-//      so scroll position and loaded messages survive panel open/close.
-//   3. Realtime updates come via Socket.IO (same as before).
-//   4. Profile data (name, avatar) is resolved from the centralized presence store
-//      which is kept in sync with Supabase profiles.
+// Chat.tsx — persistent WhatsApp/Discord-style room chat.
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Send, Trash2 } from 'lucide-react';
-import { usePresenceStore } from '@/store/presenceStore';
-import { getSocket } from '@/lib/socket/client';
-import type { ChatMessage } from '@/types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Check,
+  CheckCheck,
+  Download,
+  Edit3,
+  File,
+  Image as ImageIcon,
+  Paperclip,
+  Reply,
+  Search,
+  Send,
+  SmilePlus,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useParams } from 'next/navigation';
+import { getSocket } from '@/lib/socket/client';
+import { usePresenceStore } from '@/store/presenceStore';
+import type { ChatAttachment, ChatMessage, ChatReaction } from '@/types';
 
 interface ChatProps {
   roomId: string;
   onClose?: () => void;
 }
 
-// ── Message cache: survives panel open/close without remounting ───────────────
-// Keyed by roomId so switching rooms still fetches fresh data.
 const messageCache = new Map<string, ChatMessage[]>();
 const loadedRooms = new Set<string>();
+const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+function formatTime(ts: number) {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDay(ts: number) {
+  const d = new Date(ts);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+}
+
+function summarize(msg: ChatMessage) {
+  if (msg.content) return msg.content;
+  if (msg.attachmentName) return msg.attachmentName;
+  if (msg.attachmentType) return `${msg.attachmentType} attachment`;
+  return 'Message';
+}
+
+function reactionGroups(reactions: ChatReaction[] = []) {
+  const groups = new Map<string, ChatReaction[]>();
+  reactions.forEach((r) => groups.set(r.emoji, [...(groups.get(r.emoji) ?? []), r]));
+  return Array.from(groups.entries());
+}
+
+function attachmentIcon(kind?: string | null) {
+  if (kind === 'image') return ImageIcon;
+  return File;
+}
 
 export function Chat({ roomId, onClose }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
@@ -32,26 +70,57 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const params = useParams();
   const libraryId = params?.libraryId as string | undefined;
   const channelId = params?.channelId as string | undefined;
+  const canUseAdvancedApi = Boolean(libraryId && channelId);
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => messageCache.get(roomId) ?? []);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(!loadedRooms.has(roomId));
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [typing, setTyping] = useState<Record<string, { name: string; ts: number }>>({});
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaMessages, setMediaMessages] = useState<ChatMessage[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const typingStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingThrottleRef = useRef(0);
 
-  // ── Determine the messages API endpoint ──────────────────────────────────
-  // Prefer the new Supabase-backed channel messages endpoint when we have
-  // libraryId + channelId. Fall back to the legacy Redis endpoint otherwise.
-  const messagesEndpoint = libraryId && channelId
+  const messagesEndpoint = canUseAdvancedApi
     ? `/api/libraries/${libraryId}/channels/${channelId}/messages`
     : `/api/rooms/${roomId}/messages`;
+  const attachmentsEndpoint = `/api/libraries/${libraryId}/channels/${channelId}/messages/attachments`;
 
-  // ── Load initial messages ─────────────────────────────────────────────────
+  const updateMessages = useCallback((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+    setMessages((prev) => {
+      const next = updater(prev);
+      messageCache.set(roomId, next);
+      return next;
+    });
+  }, [roomId]);
+
+  const loadMessages = useCallback(async (opts?: { before?: string; search?: string }) => {
+    const before = opts?.before ? `&before=${encodeURIComponent(opts.before)}` : '';
+    const q = opts?.search ? `&search=${encodeURIComponent(opts.search)}` : '';
+    const res = await fetch(`${messagesEndpoint}?limit=80${before}${q}`);
+    if (!res.ok) throw new Error('Failed to load messages');
+    const { messages: loaded } = await res.json();
+    return (loaded as ChatMessage[]).sort((a, b) => a.ts - b.ts);
+  }, [messagesEndpoint]);
+
   useEffect(() => {
-    if (loadedRooms.has(roomId)) {
+    if (loadedRooms.has(roomId) && !search) {
       setMessages(messageCache.get(roomId) ?? []);
       setLoading(false);
       return;
@@ -59,101 +128,186 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
     let cancelled = false;
     setLoading(true);
-
-    const load = async () => {
-      try {
-        const res = await fetch(`${messagesEndpoint}?limit=100`);
-        if (!res.ok) throw new Error('Failed to load messages');
-        const { messages: loaded } = await res.json();
+    loadMessages(search ? { search } : undefined)
+      .then((loaded) => {
         if (cancelled) return;
-        const sorted = (loaded as ChatMessage[]).sort((a, b) => a.ts - b.ts);
-        messageCache.set(roomId, sorted);
-        loadedRooms.add(roomId);
-        setMessages(sorted);
+        if (!search) {
+          messageCache.set(roomId, loaded);
+          loadedRooms.add(roomId);
+        }
+        setMessages(loaded);
         setError(null);
-      } catch (err) {
+      })
+      .catch((err) => {
         if (!cancelled) {
           console.error('[chat] load failed:', err);
           setError('Failed to load messages');
         }
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [loadMessages, roomId, search]);
+
+  useEffect(() => {
+    const socket = getSocket();
+
+    const upsert = (msg: ChatMessage) => {
+      if (msg.roomId !== roomId) return;
+      updateMessages((prev) => {
+        const existing = prev.find((m) => m.id === msg.id);
+        const next = existing
+          ? prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m))
+          : [...prev, msg].sort((a, b) => a.ts - b.ts);
+        return next.length > 500 ? next.slice(-500) : next;
+      });
+      const own = self?.userId && msg.userId.startsWith(self.userId.split('_')[0]);
+      if (!own && !isAtBottom) {
+        setUnreadCount((n) => n + 1);
+        setFirstUnreadId((id) => id ?? msg.id);
       }
     };
 
-    load();
-    return () => { cancelled = true; };
-  }, [roomId, messagesEndpoint]);
+    const handleDelete = (payload: { roomId: string; messageId: string }) => {
+      if (payload.roomId !== roomId) return;
+      updateMessages((prev) => prev.filter((m) => m.id !== payload.messageId));
+    };
 
-  // ── Socket listener — stable, never torn down while roomId is the same ────
-  useEffect(() => {
-    const socket = getSocket();
+    const handleReaction = (payload: { roomId: string; messageId: string; userId: string; emoji: string; active: boolean }) => {
+      if (payload.roomId !== roomId) return;
+      updateMessages((prev) => prev.map((m) => {
+        if (m.id !== payload.messageId) return m;
+        const reactions = (m.reactions ?? []).filter((r) => !(r.userId === payload.userId && r.emoji === payload.emoji));
+        return { ...m, reactions: payload.active ? [...reactions, { messageId: m.id, userId: payload.userId, emoji: payload.emoji }] : reactions };
+      }));
+    };
 
-    const handleMessage = (msg: ChatMessage) => {
-      if (msg.roomId !== roomId) return;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        const next = [...prev, msg];
-        const trimmed = next.length > 500 ? next.slice(-500) : next;
-        messageCache.set(roomId, trimmed);
-        return trimmed;
+    const handleRead = (payload: { roomId: string; messageIds: string[]; userId: string; readAt: string }) => {
+      if (payload.roomId !== roomId) return;
+      const ids = new Set(payload.messageIds);
+      updateMessages((prev) => prev.map((m) => {
+        if (!ids.has(m.id)) return m;
+        const receipts = (m.receipts ?? []).filter((r) => r.userId !== payload.userId);
+        return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: payload.userId, deliveredAt: payload.readAt, readAt: payload.readAt }] };
+      }));
+    };
+
+    const handleDelivered = (payload: { roomId: string; messageIds: string[]; userId: string; deliveredAt: string }) => {
+      if (payload.roomId !== roomId) return;
+      const ids = new Set(payload.messageIds);
+      updateMessages((prev) => prev.map((m) => {
+        if (!ids.has(m.id)) return m;
+        const existing = (m.receipts ?? []).find((r) => r.userId === payload.userId);
+        const receipts = (m.receipts ?? []).filter((r) => r.userId !== payload.userId);
+        return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: payload.userId, deliveredAt: existing?.deliveredAt ?? payload.deliveredAt, readAt: existing?.readAt ?? null }] };
+      }));
+    };
+
+    const handleTyping = (payload: { roomId: string; userId: string; userName: string; typing: boolean; ts: number }) => {
+      if (payload.roomId !== roomId || payload.userId.split('_')[0] === self?.userId.split('_')[0]) return;
+      setTyping((prev) => {
+        const next = { ...prev };
+        if (payload.typing) next[payload.userId] = { name: payload.userName, ts: payload.ts };
+        else delete next[payload.userId];
+        return next;
       });
     };
 
-    // On reconnect: fetch any messages missed while disconnected
-    const handleReconnect = async () => {
-      try {
-        const res = await fetch(`${messagesEndpoint}?limit=30`);
-        if (!res.ok) return;
-        const { messages: refreshed } = await res.json();
-        setMessages((prev) => {
-          const existingIds = new Set(prev.map((m) => m.id));
-          const newMsgs = (refreshed as ChatMessage[]).filter((m) => !existingIds.has(m.id));
-          if (newMsgs.length === 0) return prev;
-          const merged = [...prev, ...newMsgs].sort((a, b) => a.ts - b.ts);
-          const trimmed = merged.length > 500 ? merged.slice(-500) : merged;
-          messageCache.set(roomId, trimmed);
-          return trimmed;
-        });
-      } catch { /* best-effort */ }
-    };
+    const handleUpdate = (payload: { roomId: string; message: ChatMessage }) => upsert(payload.message);
 
-    socket.on('chat:message', handleMessage);
-    socket.on('connect', handleReconnect);
+    socket.on('chat:message', upsert);
+    socket.on('chat:update', handleUpdate);
+    socket.on('chat:delete', handleDelete);
+    socket.on('chat:reaction', handleReaction);
+    socket.on('chat:delivered', handleDelivered);
+    socket.on('chat:read', handleRead);
+    socket.on('chat:typing', handleTyping);
     return () => {
-      socket.off('chat:message', handleMessage);
-      socket.off('connect', handleReconnect);
+      socket.off('chat:message', upsert);
+      socket.off('chat:update', handleUpdate);
+      socket.off('chat:delete', handleDelete);
+      socket.off('chat:reaction', handleReaction);
+      socket.off('chat:delivered', handleDelivered);
+      socket.off('chat:read', handleRead);
+      socket.off('chat:typing', handleTyping);
     };
-  }, [roomId, messagesEndpoint]);
+  }, [isAtBottom, roomId, self?.userId, updateMessages]);
 
-  // ── Profile updates: refresh displayed names/avatars in real time ─────────
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const cutoff = Date.now() - 4500;
+      setTyping((prev) => Object.fromEntries(Object.entries(prev).filter(([, v]) => v.ts > cutoff)));
+    }, 1500);
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     const socket = getSocket();
     const handleProfileUpdate = (payload: { userId: string; userName: string; avatarUrl: string | null }) => {
-      // Update any messages from this user with the new name/avatar
-      setMessages((prev) => {
+      updateMessages((prev) => {
         const baseId = payload.userId.split('_')[0];
-        const needsUpdate = prev.some((m) => m.userId.startsWith(baseId) && (m.userName !== payload.userName || m.avatarUrl !== payload.avatarUrl));
-        if (!needsUpdate) return prev;
-        const next = prev.map((m) =>
+        return prev.map((m) => (
           m.userId.startsWith(baseId)
             ? { ...m, userName: payload.userName, avatarUrl: payload.avatarUrl }
             : m
-        );
-        messageCache.set(roomId, next);
-        return next;
+        ));
       });
     };
     socket.on('profile:updated', handleProfileUpdate);
     return () => { socket.off('profile:updated', handleProfileUpdate); };
-  }, [roomId]);
+  }, [updateMessages]);
 
-  // ── Auto-scroll to bottom on new messages (only if already at bottom) ─────
   useEffect(() => {
     if (isAtBottom) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setUnreadCount(0);
+      setFirstUnreadId(null);
     }
   }, [messages, isAtBottom]);
+
+  useEffect(() => {
+    if (!self || !isAtBottom || !canUseAdvancedApi) return;
+    const selfBaseId = self.userId.split('_')[0];
+    const readable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId === selfBaseId && r.readAt));
+    if (readable.length === 0) return;
+    const messageIds = readable.map((m) => m.id);
+    const readAt = new Date().toISOString();
+    fetch(messagesEndpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', messageIds }),
+    }).then((res) => {
+      if (res.ok) {
+        updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
+          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt: readAt, readAt }] }
+          : m));
+        getSocket().emit('chat:read', { roomId, messageIds, userId: selfBaseId, readAt });
+      }
+    }).catch(() => {});
+  }, [canUseAdvancedApi, isAtBottom, messages, messagesEndpoint, roomId, self, updateMessages]);
+
+  useEffect(() => {
+    if (!self || !canUseAdvancedApi) return;
+    const selfBaseId = self.userId.split('_')[0];
+    const deliverable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId === selfBaseId && (r.deliveredAt || r.readAt)));
+    if (deliverable.length === 0) return;
+    const messageIds = deliverable.map((m) => m.id);
+    const deliveredAt = new Date().toISOString();
+    fetch(messagesEndpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delivered', messageIds }),
+    }).then((res) => {
+      if (res.ok) {
+        updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
+          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt, readAt: null }] }
+          : m));
+        getSocket().emit('chat:delivered', { roomId, messageIds, userId: selfBaseId, deliveredAt });
+      }
+    }).catch(() => {});
+  }, [canUseAdvancedApi, messages, messagesEndpoint, roomId, self, updateMessages]);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -162,204 +316,384 @@ export function Chat({ roomId, onClose }: ChatProps) {
     setIsAtBottom(atBottom);
   }, []);
 
-  // ── Send message ──────────────────────────────────────────────────────────
-  const send = useCallback(async () => {
-    if (!self || !input.trim()) return;
+  const loadOlder = useCallback(async () => {
+    const first = messages[0];
+    if (!first?.createdAt || loadingOlder || search) return;
+    const el = scrollRef.current;
+    const previousHeight = el?.scrollHeight ?? 0;
+    setLoadingOlder(true);
+    try {
+      const older = await loadMessages({ before: first.createdAt });
+      updateMessages((prev) => {
+        const ids = new Set(prev.map((m) => m.id));
+        return [...older.filter((m) => !ids.has(m.id)), ...prev].sort((a, b) => a.ts - b.ts);
+      });
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - previousHeight;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [loadMessages, loadingOlder, messages, search, updateMessages]);
 
-    const messageId = crypto.randomUUID();
+  const emitTyping = useCallback((value: string) => {
+    if (!self) return;
     const now = Date.now();
+    if (now - typingThrottleRef.current > 1200) {
+      typingThrottleRef.current = now;
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: Boolean(value), ts: now });
+    }
+    if (typingStopRef.current) clearTimeout(typingStopRef.current);
+    typingStopRef.current = setTimeout(() => {
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
+    }, 2200);
+  }, [roomId, self]);
 
-    const payload: ChatMessage = {
-      id: messageId,
+  const uploadAttachment = useCallback(async () => {
+    if (!attachment || !canUseAdvancedApi) return null;
+    setUploading(true);
+    const form = new FormData();
+    form.append('file', attachment);
+    const res = await fetch(attachmentsEndpoint, { method: 'POST', body: form });
+    setUploading(false);
+    if (!res.ok) throw new Error('Failed to upload attachment');
+    const data = await res.json();
+    return data.attachment;
+  }, [attachment, attachmentsEndpoint, canUseAdvancedApi]);
+
+  const send = useCallback(async () => {
+    if (!self || (!input.trim() && !attachment) || uploading) return;
+
+    if (editing) {
+      const content = input.trim();
+      const res = await fetch(messagesEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'edit', messageId: editing.id, content }),
+      });
+      if (!res.ok) return setError('Failed to edit message');
+      const { message } = await res.json();
+      updateMessages((prev) => prev.map((m) => (m.id === message.id ? message : m)));
+      getSocket().emit('chat:update', { roomId, message });
+      setEditing(null);
+      setInput('');
+      return;
+    }
+
+    const optimisticId = crypto.randomUUID();
+    const text = input.trim().slice(0, 2000);
+    const optimistic: ChatMessage = {
+      id: optimisticId,
       roomId,
       userId: self.userId,
       userName: self.userName,
       avatarColor: self.avatarColor,
       avatarUrl: self.avatarUrl ?? null,
-      content: input.trim().slice(0, 2000),
-      ts: now,
+      content: text,
+      replyToMessageId: replyTo?.id ?? null,
+      replyTo: replyTo ? { id: replyTo.id, userId: replyTo.userId, userName: replyTo.userName, content: summarize(replyTo), attachmentType: replyTo.attachmentType } : null,
+      attachmentName: attachment?.name ?? null,
+      attachmentType: attachment ? (attachment.type.startsWith('image/') ? 'image' : attachment.type.startsWith('video/') ? 'video' : attachment.type === 'application/pdf' ? 'pdf' : 'file') : null,
+      ts: Date.now(),
+      receipts: [],
+      reactions: [],
     };
 
-    // Optimistic UI
-    setMessages((prev) => {
-      const next = [...prev, payload];
-      messageCache.set(roomId, next);
-      return next;
-    });
+    updateMessages((prev) => [...prev, optimistic]);
     setInput('');
+    setAttachment(null);
+    setReplyTo(null);
     setIsAtBottom(true);
 
-    requestAnimationFrame(() => { inputRef.current?.focus(); });
-
-    // Persist first so the canonical DB row and realtime payload share one ID.
     try {
+      const uploaded = await uploadAttachment();
       const res = await fetch(messagesEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: payload.content,
-          userName: payload.userName,
-          avatarColor: payload.avatarColor,
-          avatarUrl: payload.avatarUrl,
+          id: optimisticId,
+          content: text,
+          userName: self.userName,
+          avatarColor: self.avatarColor,
+          avatarUrl: self.avatarUrl,
+          replyToMessageId: optimistic.replyToMessageId,
+          attachment: uploaded,
         }),
       });
-
-      if (!res.ok) {
-        // Rollback optimistic update
-        setMessages((prev) => {
-          const next = prev.filter((m) => m.id !== messageId);
-          messageCache.set(roomId, next);
-          return next;
-        });
-        setError('Failed to send message');
-        setTimeout(() => setError(null), 3000);
-        return;
-      }
-
-      const { message: persisted } = await res.json();
-      const finalMessage: ChatMessage = persisted ?? payload;
-      setMessages((prev) => {
-        const next = prev.map((m) => (m.id === messageId ? finalMessage : m));
-        messageCache.set(roomId, next);
-        return next;
-      });
-
-      // Broadcast the persisted message to other users after the DB write.
-      getSocket().emit('chat:message', finalMessage);
+      if (!res.ok) throw new Error('Failed to send message');
+      const { message } = await res.json();
+      updateMessages((prev) => prev.map((m) => (m.id === optimisticId ? message : m)));
+      getSocket().emit('chat:message', message);
     } catch (err) {
       console.error('[chat] send failed:', err);
-      setMessages((prev) => {
-        const next = prev.filter((m) => m.id !== messageId);
-        messageCache.set(roomId, next);
-        return next;
-      });
+      updateMessages((prev) => prev.filter((m) => m.id !== optimisticId));
       setError('Failed to send message');
       setTimeout(() => setError(null), 3000);
+    } finally {
+      requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [self, input, roomId, messagesEndpoint]);
+  }, [attachment, editing, input, messagesEndpoint, roomId, self, updateMessages, uploadAttachment, uploading, replyTo]);
 
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
+  const removeMessage = useCallback(async (msg: ChatMessage) => {
+    const res = await fetch(messagesEndpoint, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId: msg.id }),
+    });
+    if (!res.ok) return setError('Failed to delete message');
+    updateMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    getSocket().emit('chat:delete', { roomId, messageId: msg.id });
+  }, [messagesEndpoint, roomId, updateMessages]);
+
+  const toggleReaction = useCallback(async (msg: ChatMessage, emoji: string) => {
+    if (!self || !canUseAdvancedApi) return;
+    const selfBaseId = self.userId.split('_')[0];
+    const active = !(msg.reactions ?? []).some((r) => r.userId === selfBaseId && r.emoji === emoji);
+    updateMessages((prev) => prev.map((m) => {
+      if (m.id !== msg.id) return m;
+      const reactions = (m.reactions ?? []).filter((r) => !(r.userId === selfBaseId && r.emoji === emoji));
+      return { ...m, reactions: active ? [...reactions, { messageId: msg.id, userId: selfBaseId, emoji }] : reactions };
+    }));
+    await fetch(messagesEndpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reaction', messageId: msg.id, emoji, active }),
+    });
+    getSocket().emit('chat:reaction', { roomId, messageId: msg.id, userId: selfBaseId, emoji, active });
+  }, [canUseAdvancedApi, messagesEndpoint, roomId, self, updateMessages]);
+
+  const clearForMe = useCallback(async () => {
+    if (!canUseAdvancedApi) return;
+    const res = await fetch(messagesEndpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear' }),
+    });
+    if (res.ok) {
+      updateMessages(() => []);
+      loadedRooms.delete(roomId);
+      setUnreadCount(0);
     }
+  }, [canUseAdvancedApi, messagesEndpoint, roomId, updateMessages]);
+
+  const openMedia = useCallback(async () => {
+    setMediaOpen(true);
+    const res = await fetch(`${messagesEndpoint}?limit=120&media=1`);
+    if (res.ok) {
+      const { messages: loaded } = await res.json();
+      setMediaMessages(loaded);
+    }
+  }, [messagesEndpoint]);
+
+  const jumpTo = useCallback((id: string) => {
+    const el = document.getElementById(`chat-msg-${id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-blue-400/70');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400/70'), 1200);
+    } else {
+      setError('Original message is outside the loaded history');
+      setTimeout(() => setError(null), 2500);
+    }
+  }, []);
+
+  const resolvedTyping = Object.values(typing).map((t) => t.name).slice(0, 2).join(', ');
+
+  const mediaByKind = useMemo(() => ({
+    images: mediaMessages.filter((m) => m.attachmentType === 'image'),
+    videos: mediaMessages.filter((m) => m.attachmentType === 'video'),
+    files: mediaMessages.filter((m) => m.attachmentType === 'file'),
+    pdfs: mediaMessages.filter((m) => m.attachmentType === 'pdf'),
+  }), [mediaMessages]);
+
+  const renderAttachment = (msg: ChatMessage) => {
+    const attachmentData = msg.attachments?.[0];
+    const url = attachmentData?.url ?? msg.attachmentUrl;
+    const name = attachmentData?.name ?? msg.attachmentName ?? 'Attachment';
+    const kind = attachmentData?.kind ?? msg.attachmentType;
+    if (!url && !name) return null;
+    if (kind === 'image' && url) {
+      return <a href={url} target="_blank" rel="noopener noreferrer"><img src={url} alt={name} loading="lazy" className="mt-2 max-h-56 rounded-lg object-cover border border-room-border" /></a>;
+    }
+    if (kind === 'video' && url) {
+      return <video src={url} controls preload="metadata" className="mt-2 max-h-56 w-full rounded-lg border border-room-border" />;
+    }
+    const Icon = attachmentIcon(kind);
+    return (
+      <a href={url ?? '#'} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg/70 px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
+        <Icon size={16} className="text-blue-300" />
+        <span className="min-w-0 flex-1 truncate">{name}</span>
+        <Download size={14} className="text-room-muted" />
+      </a>
+    );
   };
 
-  // ── Name / avatar resolution (live from presence store) ──────────────────
-  const resolveName = useCallback((msgUserId: string, fallback: string) => {
-    const baseId = msgUserId.split('_')[0];
-    if (self?.userId.startsWith(baseId)) return self.userName;
-    return (
-      Array.from(users.values()).find((u) => u.userId.startsWith(baseId) && u.userName !== 'Reader')?.userName ??
-      fallback
-    );
-  }, [self, users]);
-
-  const resolveAvatar = useCallback((msgUserId: string, fallbackColor: string, fallbackUrl?: string | null) => {
-    const baseId = msgUserId.split('_')[0];
-    if (self?.userId.startsWith(baseId)) {
-      return { color: self.avatarColor, initials: self.avatarInitials, url: self.avatarUrl };
-    }
-    const user = Array.from(users.values()).find((u) => u.userId.startsWith(baseId));
-    if (user) return { color: user.avatarColor, initials: user.avatarInitials, url: user.avatarUrl };
-    return { color: fallbackColor, initials: '?', url: fallbackUrl };
-  }, [self, users]);
-
   return (
-    <div className="flex flex-col h-full bg-room-surface">
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-3 space-y-3"
-      >
-        {loading && (
-          <p className="text-center text-xs text-room-muted py-8">Loading messages…</p>
-        )}
-
-        {!loading && messages.length === 0 && (
-          <p className="text-center text-xs text-room-muted py-8">No messages yet. Say hello!</p>
-        )}
-
-        {messages.map((msg) => {
-          if (msg.deleted) return null;
-          const currentName = resolveName(msg.userId, msg.userName);
-          const av = resolveAvatar(msg.userId, msg.avatarColor, msg.avatarUrl);
-          const isSelf = self?.userId.startsWith(msg.userId.split('_')[0]);
-
-          return (
-            <div key={msg.id} className="flex items-start gap-2.5 group">
-              {/* Avatar */}
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0 mt-0.5 overflow-hidden ring-1 ring-room-border"
-                style={av.url ? {} : { backgroundColor: av.color }}
-              >
-                {av.url ? (
-                  <img src={av.url} alt={currentName} className="w-full h-full object-cover" />
-                ) : (
-                  av.initials
-                )}
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold text-room-text truncate">{currentName}</span>
-                  <span className="text-[10px] text-room-muted flex-shrink-0">
-                    {new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-                <p className="text-sm text-room-text/90 mt-0.5 break-words whitespace-pre-wrap leading-relaxed">
-                  {msg.content}
-                </p>
-                {msg.attachmentUrl && (
-                  <a
-                    href={msg.attachmentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 inline-block text-xs text-blue-400 hover:underline"
-                  >
-                    📎 Attachment
-                  </a>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        <div ref={bottomRef} />
+    <div className="relative flex h-full flex-col bg-room-surface">
+      <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2">
+        <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={16} /></button>
+        {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={16} /></button>}
+        {canUseAdvancedApi && <button onClick={clearForMe} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={16} /></button>}
+        <div className="min-w-0 flex-1 text-center text-xs font-semibold uppercase tracking-wide text-room-muted">Chat</div>
+        {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={16} /></button>}
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="flex-none px-3 py-2 bg-red-900/20 border-t border-red-900/50 text-xs text-red-200">
-          {error}
+      {searchOpen && (
+        <div className="flex flex-none items-center gap-2 border-b border-room-border px-3 py-2">
+          <Search size={15} className="text-room-muted" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search text, sender, files" className="min-w-0 flex-1 bg-transparent text-sm text-room-text outline-none placeholder:text-room-muted" />
+          {search && <button onClick={() => setSearch('')} className="text-room-muted hover:text-room-text" aria-label="Clear search"><X size={15} /></button>}
         </div>
       )}
 
-      {/* Input */}
-      <div className="flex-none p-3 border-t border-room-border">
-        <div className="flex items-center gap-2 bg-room-bg rounded-xl border border-room-border px-3 focus-within:border-blue-500/50 transition-colors">
-          <input
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-3">
+        {!search && messages.length > 0 && (
+          <button onClick={loadOlder} disabled={loadingOlder} className="mx-auto mb-3 block rounded-full border border-room-border px-3 py-1 text-xs text-room-muted hover:text-room-text disabled:opacity-50">
+            {loadingOlder ? 'Loading…' : 'Load older'}
+          </button>
+        )}
+        {loading && <p className="py-8 text-center text-xs text-room-muted">Loading messages…</p>}
+        {!loading && messages.length === 0 && <p className="py-8 text-center text-xs text-room-muted">{search ? 'No matching messages' : 'No messages yet. Say hello!'}</p>}
+
+        {messages.map((msg, index) => {
+          const prev = messages[index - 1];
+          const sameUser = prev?.userId === msg.userId;
+          const closeTime = prev ? msg.ts - prev.ts < 2 * 60 * 1000 : false;
+          const grouped = sameUser && closeTime && formatDay(prev.ts) === formatDay(msg.ts);
+          const showDay = !prev || formatDay(prev.ts) !== formatDay(msg.ts);
+          const isSelf = Boolean(self?.userId && msg.userId.startsWith(self.userId.split('_')[0]));
+          const displayName = isSelf ? self?.userName ?? msg.userName : msg.userName;
+          const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId.startsWith(msg.userId.split('_')[0]));
+          const receipts = msg.receipts ?? [];
+          const read = isSelf && receipts.some((r) => r.userId !== self?.userId && r.readAt);
+          const delivered = isSelf && receipts.some((r) => r.userId !== self?.userId && (r.deliveredAt || r.readAt));
+
+          return (
+            <React.Fragment key={msg.id}>
+              {showDay && <div className="sticky top-2 z-10 mx-auto my-3 w-fit rounded-full bg-room-bg/90 px-3 py-1 text-[10px] font-medium text-room-muted shadow-sm">{formatDay(msg.ts)}</div>}
+              {firstUnreadId === msg.id && <div className="my-3 border-t border-blue-400/40 pt-2 text-center text-[10px] font-semibold uppercase tracking-wide text-blue-300">Unread</div>}
+              <div id={`chat-msg-${msg.id}`} className={`group flex gap-2.5 rounded-lg px-1.5 py-1 transition ${grouped ? 'mt-0.5' : 'mt-3'} ${isSelf ? 'flex-row-reverse' : ''}`}>
+                {!grouped ? (
+                  <div className="mt-0.5 h-7 w-7 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-room-border" style={avatar?.avatarUrl ? {} : { backgroundColor: avatar?.avatarColor ?? msg.avatarColor }}>
+                    {avatar?.avatarUrl || msg.avatarUrl ? <img src={avatar?.avatarUrl ?? msg.avatarUrl ?? ''} alt={displayName} className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[11px] font-semibold text-white">{avatar?.avatarInitials ?? '?'}</div>}
+                  </div>
+                ) : <div className="h-7 w-7 flex-shrink-0" />}
+
+                <div className={`min-w-0 max-w-[86%] ${isSelf ? 'items-end' : 'items-start'} flex flex-col`}>
+                  {!grouped && (
+                    <div className={`mb-0.5 flex items-baseline gap-2 ${isSelf ? 'flex-row-reverse' : ''}`}>
+                      <span className="truncate text-sm font-semibold text-room-text">{isSelf ? 'You' : displayName}</span>
+                      <span className="text-[10px] text-room-muted">{formatTime(msg.ts)}</span>
+                    </div>
+                  )}
+                  <div className={`rounded-xl border px-3 py-2 text-sm leading-relaxed shadow-sm ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
+                    {msg.replyTo && (
+                      <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-2 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-1 text-left">
+                        <span className="block truncate text-[11px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
+                        <span className="line-clamp-2 text-xs text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
+                      </button>
+                    )}
+                    {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
+                    {renderAttachment(msg)}
+                    <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-room-muted">
+                      {msg.editedAt && <span>edited</span>}
+                      {grouped && <span>{formatTime(msg.ts)}</span>}
+                      {isSelf && (read ? <CheckCheck size={13} className="text-blue-300" /> : delivered ? <CheckCheck size={13} /> : <Check size={13} />)}
+                    </div>
+                  </div>
+
+                  <div className={`mt-1 flex flex-wrap items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 ${isSelf ? 'justify-end' : 'justify-start'}`}>
+                    {canUseAdvancedApi && <button onClick={() => setReplyTo(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Reply"><Reply size={13} /></button>}
+                    {canUseAdvancedApi && isSelf && <button onClick={() => { setEditing(msg); setInput(msg.content); inputRef.current?.focus(); }} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text" aria-label="Edit"><Edit3 size={13} /></button>}
+                    {canUseAdvancedApi && isSelf && <button onClick={() => removeMessage(msg)} className="rounded-full bg-room-bg p-1 text-room-muted hover:text-red-300" aria-label="Delete"><Trash2 size={13} /></button>}
+                    {canUseAdvancedApi && <div className="flex rounded-full bg-room-bg px-1">
+                      {EMOJIS.map((emoji) => <button key={emoji} onClick={() => toggleReaction(msg, emoji)} className="px-1 py-0.5 text-xs" aria-label={`React ${emoji}`}>{emoji}</button>)}
+                    </div>}
+                  </div>
+
+                  {reactionGroups(msg.reactions).length > 0 && (
+                    <div className={`mt-1 flex flex-wrap gap-1 ${isSelf ? 'justify-end' : 'justify-start'}`}>
+                      {reactionGroups(msg.reactions).map(([emoji, items]) => (
+                        <button key={emoji} onClick={() => toggleReaction(msg, emoji)} className="rounded-full border border-room-border bg-room-bg px-2 py-0.5 text-xs text-room-text">{emoji} {items.length}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+        <div ref={bottomRef} />
+      </div>
+
+      {unreadCount > 0 && <button onClick={() => { setIsAtBottom(true); bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }} className="absolute bottom-24 right-4 rounded-full bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg">Jump to latest ({unreadCount})</button>}
+
+      {resolvedTyping && <div className="flex-none px-3 py-1 text-xs italic text-room-muted">{resolvedTyping} {Object.keys(typing).length === 1 ? 'is' : 'are'} typing…</div>}
+      {error && <div className="flex-none border-t border-red-900/50 bg-red-900/20 px-3 py-2 text-xs text-red-200">{error}</div>}
+
+      {(replyTo || editing || attachment) && (
+        <div className="flex flex-none items-center gap-2 border-t border-room-border bg-room-bg/60 px-3 py-2">
+          <div className="min-w-0 flex-1 text-xs text-room-muted">
+            {editing ? <span>Editing message</span> : replyTo ? <span>Replying to <b className="text-room-text">{replyTo.userName}</b>: {summarize(replyTo)}</span> : null}
+            {attachment && <span className="block truncate text-room-text"><Paperclip size={12} className="mr-1 inline" />{attachment.name}</span>}
+          </div>
+          <button onClick={() => { setReplyTo(null); setEditing(null); setAttachment(null); setInput(''); }} className="rounded-lg p-1 text-room-muted hover:text-room-text" aria-label="Cancel"><X size={16} /></button>
+        </div>
+      )}
+
+      <div className="flex-none border-t border-room-border p-3">
+        <div className="flex items-end gap-2 rounded-xl border border-room-border bg-room-bg px-2 transition-colors focus-within:border-blue-500/50">
+          <input ref={fileRef} type="file" className="hidden" onChange={(e) => setAttachment(e.target.files?.[0] ?? null)} accept="image/*,video/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" />
+          {canUseAdvancedApi && <button onClick={() => fileRef.current?.click()} className="mb-1.5 rounded-lg p-2 text-room-muted hover:bg-room-surface hover:text-room-text" aria-label="Attach file"><Paperclip size={18} /></button>}
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
+            onChange={(e) => { setInput(e.target.value); emitTyping(e.target.value); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Message the room…"
+            rows={1}
             maxLength={2000}
-            className="flex-1 bg-transparent py-2.5 text-sm text-room-text placeholder:text-room-muted outline-none"
+            className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent py-2.5 text-sm text-room-text outline-none placeholder:text-room-muted"
           />
-          <button
-            onClick={send}
-            onMouseDown={(e) => e.preventDefault()}
-            disabled={!input.trim()}
-            className="p-2 rounded-xl text-blue-400 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors min-w-[36px] min-h-[36px] md:min-w-[40px] md:min-h-[40px] flex items-center justify-center"
-            aria-label="Send"
-          >
-            <Send size={18} />
+          <button onClick={send} onMouseDown={(e) => e.preventDefault()} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
+            {uploading ? <SmilePlus size={18} className="animate-pulse" /> : <Send size={18} />}
           </button>
         </div>
       </div>
+
+      {mediaOpen && (
+        <div className="absolute inset-0 z-20 flex flex-col bg-room-surface">
+          <div className="flex items-center gap-2 border-b border-room-border px-3 py-2">
+            <h3 className="flex-1 text-sm font-semibold text-room-text">Media and Files</h3>
+            <button onClick={() => setMediaOpen(false)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={16} /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3">
+            {(['images', 'videos', 'pdfs', 'files'] as const).map((kind) => (
+              <section key={kind} className="mb-5">
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-room-muted">{kind}</h4>
+                {mediaByKind[kind].length === 0 ? <p className="text-xs text-room-muted">No {kind}</p> : (
+                  <div className={kind === 'images' || kind === 'videos' ? 'grid grid-cols-3 gap-2' : 'space-y-2'}>
+                    {mediaByKind[kind].map((m) => {
+                      const a = m.attachments?.[0];
+                      const url = a?.url ?? m.attachmentUrl ?? '#';
+                      const name = a?.name ?? m.attachmentName ?? 'Attachment';
+                      return kind === 'images' ? (
+                        <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="aspect-square overflow-hidden rounded-lg border border-room-border bg-room-bg"><img src={url} alt={name} loading="lazy" className="h-full w-full object-cover" /></a>
+                      ) : (
+                        <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
+                          {React.createElement(attachmentIcon(m.attachmentType), { size: 16, className: 'text-blue-300' })}
+                          <span className="min-w-0 flex-1 truncate">{name}</span>
+                          <Download size={14} className="text-room-muted" />
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

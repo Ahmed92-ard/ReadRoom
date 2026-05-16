@@ -1,30 +1,12 @@
 // app/api/libraries/[libraryId]/channels/[channelId]/messages/route.ts
-// Permanent Supabase-backed chat messages — replaces ephemeral Redis storage.
+// Permanent Supabase-backed modern chat API.
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import type { ChatMessage } from '@/types';
+import type { ChatAttachment, ChatMessage } from '@/types';
 import { requireRoomInLibrary } from '@/lib/backend/readroom';
 
 type Params = { libraryId: string; channelId: string };
-
-function serializeMessage(row: any): ChatMessage {
-  const profile = row.sender ?? row.users ?? null;
-  return {
-    id: row.id,
-    roomId: row.room_id,
-    userId: row.sender_id ?? row.user_id ?? '',
-    userName: profile?.display_name ?? row.sender_name ?? row.user_name ?? 'Reader',
-    avatarColor: row.avatar_color ?? '#6366f1',
-    avatarUrl: profile?.avatar_url ?? row.avatar_url ?? null,
-    content: row.content,
-    attachmentUrl: row.attachment_url ?? null,
-    attachmentType: row.attachment_type ?? null,
-    deleted: row.deleted ?? false,
-    editedAt: row.edited_at ?? null,
-    ts: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-    createdAt: row.created_at,
-  };
-}
+const CHAT_BUCKET = 'chat-attachments';
 
 async function verifyMembership(supabase: ReturnType<typeof createClient>, libraryId: string, userId: string) {
   const { data } = await supabase
@@ -36,10 +18,93 @@ async function verifyMembership(supabase: ReturnType<typeof createClient>, libra
   return data;
 }
 
-export async function GET(
-  req: Request,
-  { params }: { params: Promise<Params> | Params }
-) {
+async function signedUrl(db: any, storagePath?: string | null) {
+  if (!storagePath) return null;
+  const { data } = await db.storage.from(CHAT_BUCKET).createSignedUrl(storagePath, 60 * 60);
+  return data?.signedUrl ?? null;
+}
+
+async function serializeMessage(row: any, db: any): Promise<ChatMessage> {
+  const profile = row.sender ?? row.users ?? null;
+  const attachments: ChatAttachment[] = await Promise.all((row.attachments ?? []).map(async (a: any) => ({
+    id: a.id,
+    messageId: a.message_id,
+    roomId: a.room_id,
+    name: a.name,
+    mimeType: a.mime_type,
+    sizeBytes: Number(a.size_bytes ?? 0),
+    kind: a.kind,
+    storagePath: a.storage_path,
+    url: await signedUrl(db, a.storage_path),
+    createdAt: a.created_at,
+  })));
+  const firstAttachment = attachments[0];
+
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    userId: row.sender_id ?? row.user_id ?? '',
+    userName: profile?.display_name ?? row.sender_name ?? row.user_name ?? 'Reader',
+    avatarColor: row.avatar_color ?? '#6366f1',
+    avatarUrl: profile?.avatar_url ?? row.avatar_url ?? null,
+    content: row.content ?? '',
+    replyToMessageId: row.reply_to_message_id ?? null,
+    replyTo: row.reply_to ? {
+      id: row.reply_to.id,
+      userId: row.reply_to.sender_id ?? '',
+      userName: row.reply_to.sender_name ?? 'Reader',
+      content: row.reply_to.content ?? '',
+      attachmentType: row.reply_to.attachment_type ?? null,
+    } : null,
+    attachmentUrl: row.attachment_url ?? firstAttachment?.url ?? null,
+    attachmentType: row.attachment_type ?? firstAttachment?.kind ?? null,
+    attachmentName: row.attachment_name ?? firstAttachment?.name ?? null,
+    attachmentSize: Number(row.attachment_size ?? firstAttachment?.sizeBytes ?? 0) || null,
+    attachmentMime: row.attachment_mime ?? firstAttachment?.mimeType ?? null,
+    storagePath: row.storage_path ?? firstAttachment?.storagePath ?? null,
+    attachments,
+    reactions: (row.reactions ?? []).map((r: any) => ({
+      messageId: r.message_id,
+      userId: r.user_id,
+      emoji: r.emoji,
+      createdAt: r.created_at,
+    })),
+    receipts: (row.receipts ?? []).map((r: any) => ({
+      messageId: r.message_id,
+      roomId: r.room_id,
+      userId: r.user_id,
+      deliveredAt: r.delivered_at,
+      readAt: r.read_at,
+    })),
+    deleted: row.deleted ?? false,
+    editedAt: row.edited_at ?? null,
+    ts: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    createdAt: row.created_at,
+  };
+}
+
+async function getClearTime(db: any, roomId: string, userId: string) {
+  const { data } = await db
+    .from('message_clears')
+    .select('cleared_at')
+    .eq('room_id', roomId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return data?.cleared_at ?? null;
+}
+
+function messageSelect() {
+  return `
+    *,
+    sender:users!messages_sender_id_fkey(id, display_name, avatar_url),
+    reply_to:messages!messages_reply_to_message_id_fkey(id, sender_id, sender_name, content, attachment_type),
+    attachments:message_attachments(*),
+    reactions:message_reactions(*),
+    receipts:message_read_receipts(*)
+  `;
+}
+
+export async function GET(req: Request, { params }: { params: Promise<Params> | Params }) {
   const { libraryId, channelId } = await params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -48,48 +113,46 @@ export async function GET(
   const membership = await verifyMembership(supabase, libraryId, user.id);
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
-  const url = new URL(req.url);
-  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
-  const before = url.searchParams.get('before'); // ISO timestamp for pagination
-
   const db = createAdminClient() ?? supabase;
   const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
   if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
   if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
+  const url = new URL(req.url);
+  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
+  const before = url.searchParams.get('before');
+  const search = url.searchParams.get('search')?.trim();
+  const media = url.searchParams.get('media') === '1';
+  const clearTime = await getClearTime(db, channelId, user.id);
+
   let query = db
     .from('messages')
-    .select('*, sender:users!messages_sender_id_fkey(id, display_name, avatar_url)')
+    .select(messageSelect())
     .eq('room_id', channelId)
     .eq('deleted', false)
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  if (before) {
-    query = query.lt('created_at', before);
+  if (before) query = query.lt('created_at', before);
+  if (clearTime) query = query.gt('created_at', clearTime);
+  if (media) query = query.not('attachment_type', 'is', null);
+  if (search) {
+    const safe = search.replaceAll('%', '\\%').replaceAll('_', '\\_');
+    query = query.or(`content.ilike.%${safe}%,sender_name.ilike.%${safe}%,attachment_name.ilike.%${safe}%`);
   }
 
   const { data: rows, error } = await query;
-
   if (error) {
-    // Graceful fallback: if the messages table doesn't exist yet (migration not run),
-    // return empty array instead of 500 so the UI still loads.
-    if (error.code === '42P01') {
-      return NextResponse.json({ messages: [] });
-    }
+    if (error.code === '42P01') return NextResponse.json({ messages: [] });
     console.error('[api/messages] GET failed:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Return in ascending order (oldest first) for display
-  const messages = (rows ?? []).map(serializeMessage).reverse();
-  return NextResponse.json({ messages });
+  const messages = await Promise.all((rows ?? []).map((row: any) => serializeMessage(row, db)));
+  return NextResponse.json({ messages: messages.reverse(), clearedAt: clearTime });
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<Params> | Params }
-) {
+export async function POST(req: Request, { params }: { params: Promise<Params> | Params }) {
   const { libraryId, channelId } = await params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -99,27 +162,21 @@ export async function POST(
   if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
 
   const body = await req.json().catch(() => null);
-  if (!body?.content?.trim()) {
-    return NextResponse.json({ error: 'content is required' }, { status: 400 });
-  }
+  const content = String(body?.content ?? '').trim().slice(0, 2000);
+  const attachment = body?.attachment ?? null;
+  if (!content && !attachment) return NextResponse.json({ error: 'content or attachment is required' }, { status: 400 });
 
-  const content = String(body.content).trim().slice(0, 2000);
   const db = createAdminClient() ?? supabase;
   const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
   if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
   if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
-  const { data: profile } = await db
-    .from('users')
-    .select('display_name, avatar_url')
-    .eq('id', user.id)
-    .maybeSingle();
-
+  const { data: profile } = await db.from('users').select('display_name, avatar_url').eq('id', user.id).maybeSingle();
   const senderName = String(profile?.display_name ?? body.userName ?? body.senderName ?? 'Reader').trim().slice(0, 64);
   const avatarColor = String(body.avatarColor ?? '#6366f1').slice(0, 32);
   const avatarUrl = profile?.avatar_url ?? (body.avatarUrl ? String(body.avatarUrl).slice(0, 512) : null);
-  const attachmentUrl = body.attachmentUrl ? String(body.attachmentUrl).slice(0, 512) : null;
-  const attachmentType = body.attachmentType ?? null;
+  const replyToMessageId = body.replyToMessageId ? String(body.replyToMessageId) : null;
+  const type = attachment?.kind ?? body.attachmentType ?? null;
 
   const { data: row, error } = await db
     .from('messages')
@@ -130,29 +187,127 @@ export async function POST(
       sender_name: senderName,
       avatar_color: avatarColor,
       avatar_url: avatarUrl,
-      content,
-      attachment_url: attachmentUrl,
-      attachment_type: attachmentType,
+      content: content || (attachment ? '' : String(body.content ?? '')),
+      reply_to_message_id: replyToMessageId,
+      attachment_url: attachment?.url ?? body.attachmentUrl ?? null,
+      attachment_type: type,
+      attachment_name: attachment?.name ?? null,
+      attachment_size: attachment?.sizeBytes ?? null,
+      attachment_mime: attachment?.mimeType ?? null,
+      storage_path: attachment?.storagePath ?? null,
     })
-    .select()
+    .select(messageSelect())
     .single();
 
   if (error) {
-    // Graceful fallback if migration not yet applied
-    if (error.code === '42P01') {
-      return NextResponse.json({ message: { id: body.id ?? crypto.randomUUID(), roomId: channelId, userId: user.id, userName: senderName, avatarColor, avatarUrl, content, ts: Date.now() } });
-    }
+    if (error.code === '42P01') return NextResponse.json({ message: { id: body.id ?? crypto.randomUUID(), roomId: channelId, userId: user.id, userName: senderName, avatarColor, avatarUrl, content, ts: Date.now() } });
     console.error('[api/messages] POST failed:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ message: serializeMessage(row) }, { status: 201 });
+  const insertedRow = row as any;
+  if (!insertedRow?.id) {
+    return NextResponse.json({ error: 'Message insert returned no row' }, { status: 500 });
+  }
+
+  if (attachment?.storagePath) {
+    const { error: attachError } = await db.from('message_attachments').insert({
+      message_id: insertedRow.id,
+      room_id: channelId,
+      uploader_id: user.id,
+      name: String(attachment.name ?? 'Attachment').slice(0, 240),
+      mime_type: String(attachment.mimeType ?? 'application/octet-stream').slice(0, 160),
+      size_bytes: Number(attachment.sizeBytes ?? 0),
+      kind: attachment.kind,
+      storage_path: attachment.storagePath,
+    });
+    if (attachError) console.warn('[api/messages] attachment metadata failed:', attachError);
+  }
+
+  const { data: hydrated } = await db.from('messages').select(messageSelect()).eq('id', insertedRow.id).single();
+  return NextResponse.json({ message: await serializeMessage(hydrated ?? insertedRow, db) }, { status: 201 });
 }
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: Promise<Params> | Params }
-) {
+export async function PATCH(req: Request, { params }: { params: Promise<Params> | Params }) {
+  const { libraryId, channelId } = await params;
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const membership = await verifyMembership(supabase, libraryId, user.id);
+  if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
+
+  const db = createAdminClient() ?? supabase;
+  const { data: room, error: roomError } = await requireRoomInLibrary(db, libraryId, channelId);
+  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
+  const body = await req.json().catch(() => null);
+  const action = body?.action ?? 'edit';
+
+  if (action === 'clear') {
+    const { error } = await db.from('message_clears').upsert({ room_id: channelId, user_id: user.id, cleared_at: new Date().toISOString() }, { onConflict: 'room_id,user_id' });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === 'read') {
+    const messageIds = Array.isArray(body.messageIds) ? body.messageIds.slice(0, 200) : [];
+    const now = new Date().toISOString();
+    const rows = messageIds.map((messageId: string) => ({ room_id: channelId, message_id: messageId, user_id: user.id, delivered_at: now, read_at: now }));
+    if (rows.length) {
+      const { error } = await db.from('message_read_receipts').upsert(rows, { onConflict: 'message_id,user_id' });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, readAt: now, messageIds });
+  }
+
+  if (action === 'delivered') {
+    const messageIds = Array.isArray(body.messageIds) ? body.messageIds.slice(0, 200) : [];
+    const now = new Date().toISOString();
+    const rows = messageIds.map((messageId: string) => ({ room_id: channelId, message_id: messageId, user_id: user.id, delivered_at: now }));
+    if (rows.length) {
+      const { error } = await db.from('message_read_receipts').upsert(rows, { onConflict: 'message_id,user_id' });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, deliveredAt: now, messageIds });
+  }
+
+  if (action === 'reaction') {
+    const messageId = String(body.messageId ?? '');
+    const emoji = String(body.emoji ?? '').slice(0, 16);
+    const active = Boolean(body.active);
+    if (!messageId || !emoji) return NextResponse.json({ error: 'messageId and emoji required' }, { status: 400 });
+    if (active) {
+      const { error } = await db.from('message_reactions').upsert({ message_id: messageId, user_id: user.id, emoji }, { onConflict: 'message_id,user_id,emoji' });
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    } else {
+      const { error } = await db.from('message_reactions').delete().eq('message_id', messageId).eq('user_id', user.id).eq('emoji', emoji);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  const messageId = String(body?.messageId ?? '');
+  const content = String(body?.content ?? '').trim().slice(0, 2000);
+  if (!messageId || !content) return NextResponse.json({ error: 'messageId and content required' }, { status: 400 });
+
+  const { data: msg } = await db.from('messages').select('sender_id').eq('id', messageId).eq('room_id', channelId).maybeSingle();
+  if (!msg) return NextResponse.json({ error: 'Message not found' }, { status: 404 });
+  if (msg.sender_id !== user.id) return NextResponse.json({ error: 'Only the sender can edit this message' }, { status: 403 });
+
+  const { data: row, error } = await db
+    .from('messages')
+    .update({ content, edited_at: new Date().toISOString() })
+    .eq('id', messageId)
+    .select(messageSelect())
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ message: await serializeMessage(row, db) });
+}
+
+export async function DELETE(req: Request, { params }: { params: Promise<Params> | Params }) {
   const { libraryId, channelId } = await params;
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -170,26 +325,13 @@ export async function DELETE(
   if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
   if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
-  // Soft delete — only sender or admin/owner can delete
-  const { data: msg } = await db
-    .from('messages')
-    .select('sender_id')
-    .eq('id', messageId)
-    .eq('room_id', channelId)
-    .maybeSingle();
-
+  const { data: msg } = await db.from('messages').select('sender_id').eq('id', messageId).eq('room_id', channelId).maybeSingle();
   if (!msg) return NextResponse.json({ error: 'Message not found' }, { status: 404 });
 
   const isOwner = ['owner', 'admin'].includes(membership.role);
-  if (msg.sender_id !== user.id && !isOwner) {
-    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
-  }
+  if (msg.sender_id !== user.id && !isOwner) return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
 
-  const { error } = await db
-    .from('messages')
-    .update({ deleted: true })
-    .eq('id', messageId);
-
+  const { error } = await db.from('messages').update({ deleted: true, deleted_at: new Date().toISOString() }).eq('id', messageId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
