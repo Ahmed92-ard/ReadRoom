@@ -713,6 +713,19 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   const resolvedTyping = Object.values(typing).map((t) => t.name).slice(0, 2).join(', ');
 
+  // Build typing user metadata for avatar display
+  const typingUsers = Object.entries(typing).slice(0, 3).map(([userId, { name }]) => {
+    const baseId = userId.split('_')[0];
+    const found = Array.from(users.values()).find((u) => u.userId.split('_')[0] === baseId);
+    return {
+      userId,
+      name,
+      avatarUrl: found?.avatarUrl ?? null,
+      avatarColor: found?.avatarColor ?? '#6366f1',
+      avatarInitials: found?.avatarInitials ?? name.slice(0, 2).toUpperCase(),
+    };
+  });
+
   const resolveReceiptName = useCallback((userId: string) => {
     const baseId = userId.split('_')[0];
     if (self?.userId.split('_')[0] === baseId) return 'You';
