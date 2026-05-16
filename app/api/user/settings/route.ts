@@ -2,35 +2,81 @@
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
+function normalizeDisplayName(value: unknown) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, 64);
+}
+
+function derivedName(user: any) {
+  return normalizeDisplayName(
+    user.user_metadata?.full_name ||
+    user.user_metadata?.name ||
+    user.user_metadata?.given_name ||
+    user.email?.split('@')[0] ||
+    'Reader'
+  ) || 'Reader';
+}
+
+function isProfileComplete(profile: any, user: any) {
+  if (user.user_metadata?.readroom_profile_complete === true) return true;
+  const name = normalizeDisplayName(profile?.display_name);
+  if (!name || name === 'Reader') return false;
+  const emailPrefix = normalizeDisplayName(user.email?.split('@')[0] ?? '');
+  return Boolean(emailPrefix && name !== emailPrefix) || name.includes(' ');
+}
+
 export async function GET() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { data: profile, error } = await supabase
+  const db = createAdminClient() ?? supabase;
+  const { data: existingProfile, error: readError } = await db
     .from('users')
     .select('id, email, display_name, avatar_url, bio, created_at, updated_at')
     .eq('id', user.id)
     .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
 
-  // If no profile row yet (auth trigger hasn't fired), synthesize one from auth metadata
-  if (!profile) {
-    return NextResponse.json({
-      profile: {
-        id: user.id,
-        email: user.email ?? null,
-        display_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Reader',
-        avatar_url: user.user_metadata?.avatar_url ?? null,
-        bio: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-    });
+  let safeDerivedName = derivedName(user);
+  if (!existingProfile && safeDerivedName !== 'Reader') {
+    const { data: taken } = await db
+      .from('users')
+      .select('id')
+      .ilike('display_name', safeDerivedName)
+      .neq('id', user.id)
+      .limit(1);
+    if ((taken ?? []).length > 0) safeDerivedName = 'Reader';
   }
 
-  return NextResponse.json({ profile });
+  const writePayload = existingProfile
+    ? {
+        id: user.id,
+        email: user.email ?? existingProfile.email ?? null,
+        display_name: existingProfile.display_name || safeDerivedName,
+        avatar_url: existingProfile.avatar_url ?? user.user_metadata?.avatar_url ?? null,
+        bio: existingProfile.bio ?? null,
+      }
+    : {
+        id: user.id,
+        email: user.email ?? null,
+        display_name: safeDerivedName,
+        avatar_url: user.user_metadata?.avatar_url ?? null,
+        bio: null,
+      };
+
+  const { data: profile, error } = await db
+    .from('users')
+    .upsert(writePayload, { onConflict: 'id', ignoreDuplicates: false })
+    .select('id, email, display_name, avatar_url, bio, created_at, updated_at')
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({
+    profile,
+    profileComplete: isProfileComplete(profile, user),
+  });
 }
 
 export async function PATCH(req: Request) {
@@ -42,7 +88,13 @@ export async function PATCH(req: Request) {
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
 
   const updates: Record<string, any> = {};
-  if (body.displayName !== undefined) updates.display_name = String(body.displayName).trim().slice(0, 64);
+  if (body.displayName !== undefined) {
+    const displayName = normalizeDisplayName(body.displayName);
+    if (displayName.length < 2) {
+      return NextResponse.json({ error: 'Username must be at least 2 characters' }, { status: 400 });
+    }
+    updates.display_name = displayName;
+  }
   if (body.avatarUrl !== undefined) updates.avatar_url = body.avatarUrl;
   if (body.bio !== undefined) updates.bio = body.bio ? String(body.bio).trim().slice(0, 500) : null;
 
@@ -54,6 +106,26 @@ export async function PATCH(req: Request) {
   // Fall back to user client — the UPDATE policy allows users to update their own row.
   const db = createAdminClient() ?? supabase;
 
+  const { data: currentProfile } = await db
+    .from('users')
+    .select('display_name, avatar_url, bio')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (updates.display_name) {
+    const { data: existing, error: lookupError } = await db
+      .from('users')
+      .select('id')
+      .ilike('display_name', updates.display_name)
+      .neq('id', user.id)
+      .limit(1);
+
+    if (lookupError) return NextResponse.json({ error: lookupError.message }, { status: 500 });
+    if ((existing ?? []).length > 0) {
+      return NextResponse.json({ error: 'That username is already taken' }, { status: 409 });
+    }
+  }
+
   // Upsert: creates the row if the auth trigger hasn't fired yet,
   // or updates it if it already exists.
   const { data: profile, error } = await db
@@ -64,11 +136,13 @@ export async function PATCH(req: Request) {
         email: user.email ?? null,
         display_name:
           updates.display_name ??
-          user.user_metadata?.full_name ??
-          user.email?.split('@')[0] ??
-          'Reader',
-        avatar_url: updates.avatar_url ?? user.user_metadata?.avatar_url ?? null,
-        ...updates,
+          currentProfile?.display_name ??
+          derivedName(user),
+        avatar_url:
+          updates.avatar_url !== undefined
+            ? updates.avatar_url
+            : currentProfile?.avatar_url ?? user.user_metadata?.avatar_url ?? null,
+        bio: updates.bio !== undefined ? updates.bio : currentProfile?.bio ?? null,
       },
       { onConflict: 'id' }
     )
@@ -82,8 +156,30 @@ export async function PATCH(req: Request) {
 
   // Keep auth metadata in sync with display name
   if (updates.display_name) {
-    await supabase.auth.updateUser({ data: { full_name: updates.display_name } }).catch(() => {});
+    await supabase.auth.updateUser({
+      data: {
+        full_name: updates.display_name,
+        readroom_profile_complete: true,
+      },
+    }).catch(() => {});
   }
 
-  return NextResponse.json({ profile });
+  if (updates.display_name || updates.avatar_url !== undefined) {
+    const messageUpdates: Record<string, any> = {};
+    if (updates.display_name) messageUpdates.sender_name = updates.display_name;
+    if (updates.avatar_url !== undefined) messageUpdates.avatar_url = updates.avatar_url;
+    const { error: messageError } = await db
+      .from('messages')
+      .update(messageUpdates)
+      .eq('sender_id', user.id);
+    if (messageError) console.warn('[api/user/settings] message backfill failed:', messageError);
+  }
+
+  return NextResponse.json({ profile, profileComplete: isProfileComplete(profile, {
+    ...user,
+    user_metadata: {
+      ...user.user_metadata,
+      readroom_profile_complete: Boolean(updates.display_name) || user.user_metadata?.readroom_profile_complete,
+    },
+  }) });
 }

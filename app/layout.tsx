@@ -1,6 +1,7 @@
 import '../styles/globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
 import { AuthProvider } from '@/lib/hooks/useAuth';
+import { ProfileOnboarding } from '@/components/ui/ProfileOnboarding';
 
 export const metadata = {
   title: 'ReadRoom',
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <AuthProvider>
           <ThemeProvider>{children}</ThemeProvider>
+          <ProfileOnboarding />
         </AuthProvider>
       </body>
     </html>

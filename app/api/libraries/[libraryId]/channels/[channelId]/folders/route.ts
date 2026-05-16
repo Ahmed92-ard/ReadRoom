@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import {
   getDbClient,
+  PDF_BUCKET,
   PDF_TABLE,
   requireLibraryMember,
   serializeRoomPdf,
@@ -210,19 +211,64 @@ export async function DELETE(
   };
   await collectDescendants(folderId);
 
-  // Move all PDFs in these folders to root (null folder_id)
-  await db
-    .from('room_pdfs')
-    .update({ folder_id: null })
-    .in('folder_id', Array.from(allFolderIds));
+  const folderIds = Array.from(allFolderIds);
+
+  const { data: pdfsToDelete, error: pdfLookupError } = await db
+    .from(PDF_TABLE)
+    .select('id, storage_path')
+    .eq('room_id', channelId)
+    .in('folder_id', folderIds);
+
+  if (pdfLookupError) return NextResponse.json({ error: pdfLookupError.message }, { status: 500 });
+
+  const pdfIds = (pdfsToDelete ?? []).map((pdf) => pdf.id);
+  const storagePaths = (pdfsToDelete ?? [])
+    .map((pdf) => pdf.storage_path)
+    .filter((path): path is string => Boolean(path));
+
+  if (pdfIds.length > 0) {
+    const { error: pdfDeleteError } = await db
+      .from(PDF_TABLE)
+      .delete()
+      .eq('room_id', channelId)
+      .in('id', pdfIds);
+
+    if (pdfDeleteError) return NextResponse.json({ error: pdfDeleteError.message }, { status: 500 });
+
+    const { data: roomRow } = await db
+      .from('rooms')
+      .select('current_pdf_id')
+      .eq('id', channelId)
+      .maybeSingle();
+
+    if (roomRow?.current_pdf_id && pdfIds.includes(roomRow.current_pdf_id)) {
+      const { data: firstPdf } = await db
+        .from(PDF_TABLE)
+        .select('id')
+        .eq('room_id', channelId)
+        .order('position', { ascending: true })
+        .limit(1);
+
+      await db
+        .from('rooms')
+        .update({ current_pdf_id: firstPdf?.[0]?.id ?? null })
+        .eq('id', channelId);
+    }
+  }
+
+  if (storagePaths.length > 0) {
+    await db.storage.from(PDF_BUCKET).remove(storagePaths).catch((err: unknown) => {
+      console.warn('[folders] storage cleanup failed:', err);
+    });
+  }
 
   // Delete all folders (cascade handles children via DB FK, but we do it explicitly)
   const { error } = await db
     .from('pdf_folders')
     .delete()
-    .in('id', Array.from(allFolderIds))
+    .in('id', folderIds)
     .eq('room_id', channelId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, deletedCount: allFolderIds.size });
+  return NextResponse.json({ ok: true, deletedCount: allFolderIds.size, deletedPdfCount: pdfIds.length });
 }

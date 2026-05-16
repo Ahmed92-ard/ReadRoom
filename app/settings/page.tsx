@@ -18,7 +18,7 @@ interface UserProfile {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { signOut, updateDisplayName, updateAvatarUrl } = useAuth();
   const { theme, setTheme } = useUIStore();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -57,18 +57,10 @@ export default function SettingsPage() {
     if (!newName.trim()) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/user/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: newName.trim() }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProfile(data.profile);
+      const ok = await updateDisplayName(newName.trim());
+      if (ok) {
+        setProfile((p) => p ? { ...p, display_name: newName.trim() } : p);
         setEditingName(false);
-        // Sync with other tabs via localStorage
-        localStorage.setItem('readroom_user_name', data.profile.display_name);
-        localStorage.setItem('readroom_name_update_ts', Date.now().toString());
       }
     } catch (err) {
       console.error('Failed to update name:', err);
@@ -77,13 +69,10 @@ export default function SettingsPage() {
     }
   };
 
-  const handleAvatarUploaded = (avatarUrl: string) => {
+  const handleAvatarUploaded = async (avatarUrl: string) => {
     setProfile((p) => p ? { ...p, avatar_url: avatarUrl } : p);
     setShowUploadAvatar(false);
-    // Persist for room presence sync
-    try {
-      if (user?.id) localStorage.setItem(`readroom_avatar_url_${user.id}`, avatarUrl);
-    } catch {}
+    await updateAvatarUrl(avatarUrl);
   };
 
   const handleBack = () => {

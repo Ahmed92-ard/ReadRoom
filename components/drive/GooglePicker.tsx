@@ -20,6 +20,7 @@ interface LocalFilePickerProps {
   channelId?: string;
   /** Called after each PDF is successfully uploaded — receives the serialized PDF */
   onLocalUploaded?: (pdf: any) => void | Promise<void>;
+  initialFolderId?: string | null;
   // Legacy props kept for drop-in compat — not used
   onSelect?: (pdf: any) => void | Promise<void>;
   mode?: 'replace' | 'add';
@@ -37,6 +38,7 @@ export function GooglePicker({
   channelId,
   onLocalUploaded,
   onSelect,
+  initialFolderId = null,
 }: LocalFilePickerProps) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
@@ -86,13 +88,13 @@ export function GooglePicker({
   ): Promise<string | null> => {
     // relativePath: "FolderA/Physics/notes.pdf" or "notes.pdf"
     const parts = relativePath.split('/');
-    if (parts.length <= 1) return null; // root level — no folder
+    if (parts.length <= 1) return initialFolderId; // selected folder or root
 
     const folderParts = parts.slice(0, -1); // strip filename
-    let parentId: string | null = null;
+    let parentId: string | null = initialFolderId;
 
     for (let i = 0; i < folderParts.length; i++) {
-      const pathKey = folderParts.slice(0, i + 1).join('/');
+      const pathKey = `${initialFolderId ?? 'root'}:${folderParts.slice(0, i + 1).join('/')}`;
       if (folderCache.has(pathKey)) {
         parentId = folderCache.get(pathKey)!;
       } else {
@@ -160,7 +162,7 @@ export function GooglePicker({
       setUploading(false);
       setProgress(null);
     }
-  }, [libraryId, channelId, onLocalUploaded, onSelect, onClose]);
+  }, [libraryId, channelId, onLocalUploaded, onSelect, onClose, initialFolderId]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -178,7 +180,9 @@ export function GooglePicker({
             </div>
             <div>
               <h2 className="text-base font-semibold text-room-text">Add PDFs</h2>
-              <p className="text-xs text-room-muted">Upload files or an entire folder</p>
+              <p className="text-xs text-room-muted">
+                {initialFolderId ? 'Upload files into the selected folder' : 'Upload files or an entire folder'}
+              </p>
             </div>
           </div>
           <button
@@ -278,7 +282,7 @@ export function GooglePicker({
           </div>
 
           <p className="text-xs text-room-muted text-center">
-            Folder uploads preserve the full subfolder structure inside the room.
+            {initialFolderId ? 'Selected files will be added to this folder.' : 'Folder uploads preserve the full subfolder structure inside the room.'}
           </p>
         </div>
       </div>

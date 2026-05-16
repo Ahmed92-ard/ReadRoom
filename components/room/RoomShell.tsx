@@ -23,7 +23,7 @@ import { usePresence } from '@/lib/hooks/usePresence';
 import { getSocket } from '@/lib/socket/client';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { usePresenceStore } from '@/store/presenceStore';
-import type { PDFMeta, ChannelPDF, RoomActivity } from '@/types';
+import type { PDFMeta, ChannelPDF, RoomActivity, PDFFolder } from '@/types';
 
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
@@ -40,6 +40,39 @@ function collectAllPdfs(folders: import('@/types').PDFFolder[], rootPdfs: Channe
   };
   walk(folders);
   return result;
+}
+
+function flattenFolders(folders: PDFFolder[]): Array<{ id: string | null; name: string; depth: number }> {
+  const result: Array<{ id: string | null; name: string; depth: number }> = [
+    { id: null, name: 'Room root', depth: 0 },
+  ];
+  const walk = (nodes: PDFFolder[], depth: number) => {
+    nodes.forEach((folder) => {
+      result.push({ id: folder.id, name: folder.name, depth });
+      walk(folder.children, depth + 1);
+    });
+  };
+  walk(folders, 0);
+  return result;
+}
+
+function collectFolderPdfIds(folders: PDFFolder[], folderId: string): Set<string> {
+  const ids = new Set<string>();
+  const walk = (folder: PDFFolder) => {
+    folder.pdfs.forEach((pdf) => ids.add(pdf.id));
+    folder.children.forEach(walk);
+  };
+  const find = (nodes: PDFFolder[]): PDFFolder | null => {
+    for (const node of nodes) {
+      if (node.id === folderId) return node;
+      const child = find(node.children);
+      if (child) return child;
+    }
+    return null;
+  };
+  const start = find(folders);
+  if (start) walk(start);
+  return ids;
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
@@ -234,8 +267,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const [currentChannelPdfId, setCurrentChannelPdfId] = useState<string | null>(null);
   const [openViewers, setOpenViewers] = useState<OpenViewer[]>([]);
   const [showPicker, setShowPicker] = useState(false);
+  const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
   const [pdfLibraryError, setPdfLibraryError] = useState<string | null>(null);
   const [deletingPdfId, setDeletingPdfId] = useState<string | null>(null);
+  const [pendingDeletePdf, setPendingDeletePdf] = useState<ChannelPDF | null>(null);
+  const [pendingDeleteFolderId, setPendingDeleteFolderId] = useState<string | null>(null);
+  const [movingPdf, setMovingPdf] = useState<ChannelPDF | null>(null);
+  const [moveTargetFolderId, setMoveTargetFolderId] = useState<string | null>(null);
+  const [movingPdfId, setMovingPdfId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastActivity[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [mobileSheetExpanded, setMobileSheetExpanded] = useState(false);
@@ -822,6 +861,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         setRoom(buildRoomState(channelPdfToMeta(addedPdf)));
         publishActivePdf(addedPdf.id, addedPdf.filename);
       }
+      fetchFolderTree();
     };
 
     const handleLibraryUpdated = (activity: RoomActivity) => {
@@ -1024,11 +1064,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     [channelPdfToMeta, setRoom, buildRoomState, setSyncState, selectionStorageKey, publishActivePdf]
   );
 
-  const deleteChannelPDF = useCallback(
+  const performDeleteChannelPDF = useCallback(
     async (pdf: ChannelPDF) => {
       if (!libraryId || !channelId) return;
-      const confirmed = window.confirm(`Delete "${pdf.filename}" from this room?`);
-      if (!confirmed) return;
 
       setPdfLibraryError(null);
       setDeletingPdfId(pdf.id);
@@ -1087,6 +1125,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         setPdfLibraryError(message);
       } finally {
         setDeletingPdfId(null);
+        setPendingDeletePdf(null);
       }
     },
     [
@@ -1106,6 +1145,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       fetchFolderTree,
     ]
   );
+
+  const requestDeleteChannelPDF = useCallback((pdf: ChannelPDF) => {
+    setPendingDeletePdf(pdf);
+  }, []);
 
   const handlePDFSelect = useCallback(
     async (pdf: PDFMeta) => {
@@ -1164,11 +1207,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   // ── Folder operation handlers ─────────────────────────────────────────────
 
-  const handleDeleteFolder = useCallback(async (folderId: string) => {
+  const performDeleteFolder = useCallback(async (folderId: string) => {
     if (!libraryId || !channelId) return;
-    const confirmed = window.confirm('Delete this folder? PDFs inside will be moved to the root.');
-    if (!confirmed) return;
     try {
+      const deletedPdfIds = collectFolderPdfIds(folderTree, folderId);
       const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -1180,6 +1222,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         return;
       }
       await fetchFolderTree();
+      const remaining = channelPDFs.filter((pdf) => !deletedPdfIds.has(pdf.id));
+      if (currentChannelPdfId && !remaining.some((pdf) => pdf.id === currentChannelPdfId)) {
+        const nextPdf = remaining[0] ?? null;
+        setCurrentChannelPdfId(nextPdf?.id ?? null);
+        setRoom(buildRoomState(nextPdf ? channelPdfToMeta(nextPdf) : null));
+        publishActivePdf(nextPdf?.id ?? null, nextPdf?.filename ?? null);
+        setSyncState({ page: 1, scroll: 0, zoom: 1 });
+      }
       getSocket().emit('library:updated', {
         id: `library:folder-deleted:${folderId}:${Date.now()}`,
         roomId,
@@ -1191,8 +1241,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       });
     } catch (err) {
       setPdfLibraryError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPendingDeleteFolderId(null);
     }
-  }, [libraryId, channelId, fetchFolderTree, roomId, initialUserId, initialUserName]);
+  }, [libraryId, channelId, folderTree, fetchFolderTree, roomId, initialUserId, initialUserName, channelPDFs, currentChannelPdfId, setRoom, buildRoomState, channelPdfToMeta, publishActivePdf, setSyncState]);
+
+  const handleDeleteFolder = useCallback((folderId: string) => {
+    setPendingDeleteFolderId(folderId);
+  }, []);
 
   const handleRenameFolder = useCallback(async (folderId: string, newName: string) => {
     if (!libraryId || !channelId) return;
@@ -1240,6 +1296,52 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       setPdfLibraryError(err instanceof Error ? err.message : String(err));
     }
   }, [libraryId, channelId, fetchFolderTree, roomId, initialUserId, initialUserName]);
+
+  const handleUploadToFolder = useCallback((folderId: string | null) => {
+    setUploadFolderId(folderId);
+    setPdfLibraryError(null);
+    setShowPicker(true);
+  }, []);
+
+  const requestMovePdf = useCallback((pdf: ChannelPDF) => {
+    setMovingPdf(pdf);
+    setMoveTargetFolderId(pdf.folderId ?? null);
+  }, []);
+
+  const performMovePdf = useCallback(async () => {
+    if (!libraryId || !channelId || !movingPdf) return;
+    setMovingPdfId(movingPdf.id);
+    setPdfLibraryError(null);
+    try {
+      const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs/${movingPdf.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId: moveTargetFolderId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to move PDF');
+      await fetchFolderTree();
+      getSocket().emit('library:updated', {
+        id: `library:pdf-moved:${movingPdf.id}:${Date.now()}`,
+        roomId,
+        type: 'library:updated',
+        title: `${initialUserName || 'Someone'} moved a PDF`,
+        body: movingPdf.filename,
+        userId: initialUserId,
+        userName: initialUserName,
+        ts: Date.now(),
+        metadata: { action: 'moved', pdfId: movingPdf.id, folderId: moveTargetFolderId },
+      });
+      setMovingPdf(null);
+    } catch (err) {
+      setPdfLibraryError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMovingPdfId(null);
+    }
+  }, [libraryId, channelId, movingPdf, moveTargetFolderId, fetchFolderTree, roomId, initialUserName, initialUserId]);
+
+  const folderOptions = flattenFolders(folderTree);
+  const pendingDeleteFolderName = folderOptions.find((folder) => folder.id === pendingDeleteFolderId)?.name ?? 'this folder';
 
   const RightSidebarContent = (
     <div className="flex flex-col h-full">
@@ -1322,7 +1424,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 ROOM LIBRARY
               </span>
               <button
-                onClick={() => { setPdfLibraryError(null); setShowPicker(true); }}
+                onClick={() => handleUploadToFolder(null)}
                 className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
               >
                 + Upload
@@ -1344,9 +1446,11 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 activePdfId={currentChannelPdfId}
                 deletingPdfId={deletingPdfId}
                 onSelectPdf={selectChannelPDF}
-                onDeletePdf={deleteChannelPDF}
+                onDeletePdf={requestDeleteChannelPDF}
+                onMovePdf={requestMovePdf}
                 onOpenSideViewer={openPdfViewer}
                 onDeleteFolder={handleDeleteFolder}
+                onUploadToFolder={handleUploadToFolder}
                 onRenameFolder={handleRenameFolder}
                 onCreateFolder={handleCreateFolder}
                 libraryId={libraryId}
@@ -1499,8 +1603,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             </div>
           ) : (
             <EmptyState onOpen={() => {
-              setPdfLibraryError(null);
-              setShowPicker(true);
+              handleUploadToFolder(null);
             }} />
           )}
 
@@ -1592,13 +1695,91 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         ))}
       </div>
 
+      {(pendingDeletePdf || pendingDeleteFolderId) && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-room-border bg-room-surface p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-room-text">
+              {pendingDeletePdf ? 'Delete PDF?' : 'Delete folder?'}
+            </h2>
+            <p className="mt-2 text-sm text-room-muted">
+              {pendingDeletePdf
+                ? `"${pendingDeletePdf.filename}" will be removed from this room and storage.`
+                : `"${pendingDeleteFolderName}" and all nested folders and PDFs will be permanently deleted.`}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setPendingDeletePdf(null);
+                  setPendingDeleteFolderId(null);
+                }}
+                className="min-h-[42px] rounded-xl border border-room-border px-4 text-sm font-medium text-room-muted hover:bg-room-hover hover:text-room-text"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (pendingDeletePdf) performDeleteChannelPDF(pendingDeletePdf);
+                  else if (pendingDeleteFolderId) performDeleteFolder(pendingDeleteFolderId);
+                }}
+                disabled={Boolean(pendingDeletePdf && deletingPdfId === pendingDeletePdf.id)}
+                className="min-h-[42px] rounded-xl bg-red-500 px-4 text-sm font-medium text-white hover:bg-red-400 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {movingPdf && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-room-border bg-room-surface p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-room-text">Move PDF</h2>
+            <p className="mt-1 truncate text-sm text-room-muted">{movingPdf.filename}</p>
+            <label className="mt-4 block">
+              <span className="mb-2 block text-xs font-semibold text-room-muted">Destination</span>
+              <select
+                value={moveTargetFolderId ?? ''}
+                onChange={(e) => setMoveTargetFolderId(e.target.value || null)}
+                className="w-full rounded-xl border border-room-border bg-room-bg px-3 py-2.5 text-sm text-room-text outline-none focus:border-blue-500/60"
+              >
+                {folderOptions.map((folder) => (
+                  <option key={folder.id ?? 'root'} value={folder.id ?? ''}>
+                    {`${'  '.repeat(folder.depth)}${folder.name}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setMovingPdf(null)}
+                className="min-h-[42px] rounded-xl border border-room-border px-4 text-sm font-medium text-room-muted hover:bg-room-hover hover:text-room-text"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performMovePdf}
+                disabled={movingPdfId === movingPdf.id}
+                className="min-h-[42px] rounded-xl bg-blue-500 px-4 text-sm font-medium text-white hover:bg-blue-400 disabled:opacity-50"
+              >
+                {movingPdfId === movingPdf.id ? 'Moving…' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showPicker && (
         <GooglePicker
           onSelect={handlePDFSelect}
           onLocalUploaded={handleRoomPdfUploaded}
-          onClose={() => setShowPicker(false)}
+          onClose={() => {
+            setShowPicker(false);
+            setUploadFolderId(null);
+          }}
           libraryId={libraryId}
           channelId={channelId}
+          initialFolderId={uploadFolderId}
         />
       )}
     </div>

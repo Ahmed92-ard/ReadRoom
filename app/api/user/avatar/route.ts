@@ -82,11 +82,23 @@ export async function POST(req: Request) {
     const { data: urlData } = storageClient.storage.from(BUCKET).getPublicUrl(storagePath);
     const avatarUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
-    // Update the user's profile record
-    const { data: profile, error: updateError } = await supabase
+    // Update or repair the user's canonical profile record
+    const profileClient = admin ?? supabase;
+    const { data: existingProfile } = await profileClient
       .from('users')
-      .update({ avatar_url: avatarUrl })
+      .select('display_name, bio')
       .eq('id', user.id)
+      .maybeSingle();
+
+    const { data: profile, error: updateError } = await profileClient
+      .from('users')
+      .upsert({
+        id: user.id,
+        email: user.email ?? null,
+        display_name: existingProfile?.display_name || 'Reader',
+        avatar_url: avatarUrl,
+        bio: existingProfile?.bio ?? null,
+      }, { onConflict: 'id' })
       .select()
       .single();
 
@@ -94,6 +106,12 @@ export async function POST(req: Request) {
       console.error('[avatar] profile update error:', updateError);
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
+
+    const { error: messageError } = await profileClient
+      .from('messages')
+      .update({ avatar_url: avatarUrl })
+      .eq('sender_id', user.id);
+    if (messageError) console.warn('[avatar] message avatar backfill failed:', messageError);
 
     return NextResponse.json({ profile, avatarUrl });
   } catch (err) {

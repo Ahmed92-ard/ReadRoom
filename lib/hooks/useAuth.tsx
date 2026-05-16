@@ -21,6 +21,8 @@ interface AuthState {
   avatarUrl: string | null;
   loading: boolean;
   initError: string | null;
+  profileComplete: boolean;
+  refreshProfile: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateDisplayName: (name: string) => Promise<boolean>;
@@ -41,6 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
+  const [profileComplete, setProfileComplete] = useState(false);
   const [userName, setUserName] = useState<string>('Reader');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const userRef = useRef<User | null>(null);
@@ -48,11 +51,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Profile sync from DB ──────────────────────────────────────────────────
   const syncProfileFromDB = useCallback(async (u: User) => {
     try {
-      const { data: profile } = await supabase
-        .from('users')
-        .select('display_name, avatar_url')
-        .eq('id', u.id)
-        .maybeSingle();
+      const res = await fetch('/api/user/settings', { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to load profile');
+      const profile = data.profile;
 
       if (profile) {
         const name =
@@ -63,19 +65,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const url = profile.avatar_url ?? null;
         setUserName(name);
         setAvatarUrl(url);
+        setProfileComplete(Boolean(data.profileComplete));
         try {
           localStorage.setItem(`readroom_user_name_${u.id}`, name);
           if (url) localStorage.setItem(avatarKey(u.id), url);
           else localStorage.removeItem(avatarKey(u.id));
         } catch {}
-        return { name, url };
+        return { name, url, complete: Boolean(data.profileComplete) };
       }
     } catch (err) {
       console.warn('[AuthProvider] profile sync failed:', err);
       // DB may not exist yet — non-fatal
     }
     return null;
-  }, [supabase]);
+  }, []);
 
   const updateIdentity = useCallback(async (u: User | null) => {
     if (!u) {
@@ -83,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       userRef.current = null;
       setUserName('Reader');
       setAvatarUrl(null);
+      setProfileComplete(false);
       return;
     }
     setUser(u);
@@ -102,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null;
       });
 
-    // Bootstrap: if no DB profile yet, derive name from OAuth metadata
+    // Bootstrap local display only. Canonical username completion is handled by onboarding.
     if (!profile || profile.name === 'Reader') {
       const metaName =
         u.user_metadata?.full_name ||
@@ -113,14 +117,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (metaName !== 'Reader') {
         setUserName(metaName);
         try { localStorage.setItem(`readroom_user_name_${u.id}`, metaName); } catch {}
-        // Persist to DB in background
-        fetch('/api/user/settings', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ displayName: metaName }),
-        }).catch(() => {});
       }
     }
+  }, [syncProfileFromDB]);
+
+  const refreshProfile = useCallback(async () => {
+    if (!userRef.current) return;
+    await syncProfileFromDB(userRef.current);
   }, [syncProfileFromDB]);
 
   // ── Session initialization ────────────────────────────────────────────────
@@ -222,6 +225,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const updated = payload.new as any;
           if (updated.display_name) {
             setUserName(updated.display_name);
+            if (updated.display_name !== 'Reader') setProfileComplete(true);
             try { localStorage.setItem(`readroom_user_name_${user.id}`, updated.display_name); } catch {}
           }
           if (updated.avatar_url !== undefined) {
@@ -284,6 +288,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const uid = userRef.current.id;
       setUserName(trimmed);
+      setProfileComplete(true);
       try {
         localStorage.setItem(`readroom_user_name_${uid}`, trimmed);
         localStorage.setItem('readroom_user_name', trimmed); // cross-tab sync
@@ -366,11 +371,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     avatarUrl,
     loading,
     initError,
+    profileComplete,
+    refreshProfile,
     signInWithGoogle,
     signOut,
     updateDisplayName,
     updateAvatarUrl,
-  }), [user, session, userName, avatarUrl, loading, initError, signInWithGoogle, signOut, updateDisplayName, updateAvatarUrl]);
+  }), [user, session, userName, avatarUrl, loading, initError, profileComplete, refreshProfile, signInWithGoogle, signOut, updateDisplayName, updateAvatarUrl]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

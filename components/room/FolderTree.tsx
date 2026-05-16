@@ -7,7 +7,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   ChevronRight, ChevronDown, Folder, FolderOpen,
-  FileText, Trash2, Pencil, Check, X,
+  FileText, Trash2, Pencil, Check, X, FolderInput, Upload,
 } from 'lucide-react';
 import type { PDFFolder, ChannelPDF } from '@/types';
 
@@ -24,8 +24,10 @@ interface FolderTreeProps {
   deletingPdfId: string | null;
   onSelectPdf: (pdf: ChannelPDF) => void;
   onDeletePdf: (pdf: ChannelPDF) => void;
+  onMovePdf: (pdf: ChannelPDF) => void;
   onOpenSideViewer: (pdf: ChannelPDF) => void;
   onDeleteFolder: (folderId: string) => void;
+  onUploadToFolder: (folderId: string | null) => void;
   onRenameFolder: (folderId: string, newName: string) => Promise<void>;
   /** Called when a new folder should be created under parentId (null = root) */
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
@@ -42,6 +44,7 @@ function PdfRow({
   depth,
   onSelect,
   onDelete,
+  onMove,
   onOpenSide,
 }: {
   pdf: ChannelPDF;
@@ -50,6 +53,7 @@ function PdfRow({
   depth: number;
   onSelect: () => void;
   onDelete: () => void;
+  onMove: () => void;
   onOpenSide: () => void;
 }) {
   return (
@@ -76,6 +80,14 @@ function PdfRow({
           title="Open in side viewer"
         >
           Side
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onMove(); }}
+          className="p-1 rounded text-room-muted hover:text-room-text hover:bg-room-surface transition-colors"
+          title="Move to folder"
+          aria-label={`Move ${pdf.filename}`}
+        >
+          <FolderInput size={12} />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -108,8 +120,10 @@ function FolderNode({
   deletingPdfId,
   onSelectPdf,
   onDeletePdf,
+  onMovePdf,
   onOpenSideViewer,
   onDeleteFolder,
+  onUploadToFolder,
   onRenameFolder,
   onCreateFolder,
 }: {
@@ -119,8 +133,10 @@ function FolderNode({
   deletingPdfId: string | null;
   onSelectPdf: (pdf: ChannelPDF) => void;
   onDeletePdf: (pdf: ChannelPDF) => void;
+  onMovePdf: (pdf: ChannelPDF) => void;
   onOpenSideViewer: (pdf: ChannelPDF) => void;
   onDeleteFolder: (id: string) => void;
+  onUploadToFolder: (folderId: string | null) => void;
   onRenameFolder: (id: string, name: string) => Promise<void>;
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
 }) {
@@ -216,6 +232,13 @@ function FolderNode({
               <Folder size={11} />
             </button>
             <button
+              onClick={() => onUploadToFolder(folder.id)}
+              className="p-1 rounded text-room-muted hover:text-room-text hover:bg-room-surface transition-colors"
+              title="Upload into folder"
+            >
+              <Upload size={11} />
+            </button>
+            <button
               onClick={() => onDeleteFolder(folder.id)}
               className="p-1 rounded text-room-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
               title="Delete folder"
@@ -266,8 +289,10 @@ function FolderNode({
               deletingPdfId={deletingPdfId}
               onSelectPdf={onSelectPdf}
               onDeletePdf={onDeletePdf}
+              onMovePdf={onMovePdf}
               onOpenSideViewer={onOpenSideViewer}
               onDeleteFolder={onDeleteFolder}
+              onUploadToFolder={onUploadToFolder}
               onRenameFolder={onRenameFolder}
               onCreateFolder={onCreateFolder}
             />
@@ -283,6 +308,7 @@ function FolderNode({
               depth={depth + 1}
               onSelect={() => onSelectPdf(pdf)}
               onDelete={() => onDeletePdf(pdf)}
+              onMove={() => onMovePdf(pdf)}
               onOpenSide={() => onOpenSideViewer(pdf)}
             />
           ))}
@@ -311,8 +337,10 @@ export function FolderTree({
   deletingPdfId,
   onSelectPdf,
   onDeletePdf,
+  onMovePdf,
   onOpenSideViewer,
   onDeleteFolder,
+  onUploadToFolder,
   onRenameFolder,
   onCreateFolder,
 }: FolderTreeProps) {
@@ -341,8 +369,10 @@ export function FolderTree({
           deletingPdfId={deletingPdfId}
           onSelectPdf={onSelectPdf}
           onDeletePdf={onDeletePdf}
+          onMovePdf={onMovePdf}
           onOpenSideViewer={onOpenSideViewer}
           onDeleteFolder={onDeleteFolder}
+          onUploadToFolder={onUploadToFolder}
           onRenameFolder={onRenameFolder}
           onCreateFolder={onCreateFolder}
         />
@@ -358,6 +388,7 @@ export function FolderTree({
           depth={0}
           onSelect={() => onSelectPdf(pdf)}
           onDelete={() => onDeletePdf(pdf)}
+          onMove={() => onMovePdf(pdf)}
           onOpenSide={() => onOpenSideViewer(pdf)}
         />
       ))}
@@ -396,13 +427,22 @@ export function FolderTree({
 
       {/* Create root folder button */}
       {!creatingRoot && (
-        <button
-          onClick={() => setCreatingRoot(true)}
-          className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] text-room-muted hover:text-room-text hover:bg-room-hover transition-colors mt-1"
-        >
-          <Folder size={12} />
-          New folder
-        </button>
+        <div className="mt-1 flex flex-wrap gap-1">
+          <button
+            onClick={() => setCreatingRoot(true)}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] text-room-muted hover:text-room-text hover:bg-room-hover transition-colors"
+          >
+            <Folder size={12} />
+            New folder
+          </button>
+          <button
+            onClick={() => onUploadToFolder(null)}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] text-room-muted hover:text-room-text hover:bg-room-hover transition-colors"
+          >
+            <Upload size={12} />
+            Upload here
+          </button>
+        </div>
       )}
     </div>
   );

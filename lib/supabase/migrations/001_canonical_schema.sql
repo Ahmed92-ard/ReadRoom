@@ -123,7 +123,7 @@ CREATE TABLE pdf_folders (
 CREATE TABLE room_pdfs (
   id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   room_id       TEXT NOT NULL REFERENCES rooms(id)       ON DELETE CASCADE,
-  folder_id     TEXT          REFERENCES pdf_folders(id) ON DELETE SET NULL,
+  folder_id     TEXT          REFERENCES pdf_folders(id) ON DELETE CASCADE,
   -- Source: Google Drive file ID, or 'local:<uuid>' for device uploads
   drive_id      TEXT NOT NULL,
   filename      TEXT NOT NULL CHECK (char_length(filename) BETWEEN 1 AND 255),

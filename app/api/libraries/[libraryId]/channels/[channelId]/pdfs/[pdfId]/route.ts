@@ -114,5 +114,42 @@ export async function PATCH(
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  if (Object.prototype.hasOwnProperty.call(body ?? {}, 'folderId')) {
+    const folderId = body.folderId ? String(body.folderId) : null;
+
+    if (folderId) {
+      const { data: folder, error: folderError } = await db
+        .from('pdf_folders')
+        .select('id')
+        .eq('id', folderId)
+        .eq('room_id', channelId)
+        .maybeSingle();
+
+      if (folderError) return NextResponse.json({ error: folderError.message }, { status: 500 });
+      if (!folder) return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
+    }
+
+    const posQuery = db
+      .from(PDF_TABLE)
+      .select('position')
+      .eq('room_id', channelId)
+      .order('position', { ascending: false })
+      .limit(1);
+
+    const { data: existingPositions } = folderId
+      ? await posQuery.eq('folder_id', folderId)
+      : await posQuery.is('folder_id', null);
+
+    const position = (existingPositions?.[0]?.position ?? -1) + 1;
+
+    const { error } = await db
+      .from(PDF_TABLE)
+      .update({ folder_id: folderId, position })
+      .eq('id', pdfId)
+      .eq('room_id', channelId);
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
   return NextResponse.json({ ok: true });
 }
