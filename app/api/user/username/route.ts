@@ -8,7 +8,7 @@ function normalizeUsername(value: unknown) {
 function validateUsername(username: string) {
   if (username.length < 2) return 'Username must be at least 2 characters';
   if (username.length > 64) return 'Username must be 64 characters or fewer';
-  if (!/^[\p{L}\p{N}][\p{L}\p{N} _.-]*$/u.test(username)) {
+  if (!/^[A-Za-z0-9\u00C0-\u024F][A-Za-z0-9\u00C0-\u024F _.-]*$/.test(username)) {
     return 'Use letters, numbers, spaces, dots, dashes, or underscores';
   }
   return null;
