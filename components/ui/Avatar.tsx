@@ -18,6 +18,12 @@ const sizeMap = {
 
 export function Avatar({ user, size = 'md', showTooltip = true }: AvatarProps) {
   const [imgFailed, setImgFailed] = useState(false);
+  
+  // Reset failure state if URL changes (e.g. user updates their photo)
+  React.useEffect(() => {
+    setImgFailed(false);
+  }, [user.avatarUrl]);
+
   const showImage = user.avatarUrl && !imgFailed;
 
   return (

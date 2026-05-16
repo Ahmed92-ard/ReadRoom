@@ -14,6 +14,7 @@ interface ChatProps {
 
 export function Chat({ roomId, onClose }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
+  const users = usePresenceStore((s) => s.users);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -173,8 +174,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
         )}
 
         {messages.map((msg) => {
-          const users = usePresenceStore.getState().users;
-          const selfState = usePresenceStore.getState().self;
+          const selfState = self;
 
           const resolveName = (id: string, fallback: string) => {
             const baseId = id.split('_')[0];

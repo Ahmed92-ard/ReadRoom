@@ -94,6 +94,7 @@ app.prepare().then(() => {
         userName: cleanUserName,
         avatarColor: user.avatarColor || stringToColor(cleanUserId),
         avatarInitials: user.avatarInitials || makeInitials(cleanUserName),
+        avatarUrl: user.avatarUrl || null,
         joinedAt: user.joinedAt ?? Date.now(),
         isFollowing: false,
         page: user.page ?? 1,
@@ -184,6 +185,7 @@ app.prepare().then(() => {
         userName: finalName,
         avatarColor: user.avatarColor || stringToColor(cleanUserId),
         avatarInitials: user.avatarInitials || makeInitials(finalName),
+        avatarUrl: user.avatarUrl || null,
         joinedAt: user.joinedAt ?? Date.now(),
         isFollowing: user.isFollowing ?? false,
         page,
@@ -259,6 +261,7 @@ app.prepare().then(() => {
       userId: string;
       userName: string;
       avatarColor: string;
+      avatarUrl?: string | null;
       content: string;
       ts: number;
     }) => {
@@ -271,6 +274,7 @@ app.prepare().then(() => {
         userId: sanitizeString(payload.userId, 64),
         userName: sanitizeString(payload.userName, 64),
         avatarColor: payload.avatarColor || '#6366f1',
+        avatarUrl: payload.avatarUrl || null,
         content: sanitizeString(payload.content, 500),
         ts: payload.ts || Date.now(),
       };

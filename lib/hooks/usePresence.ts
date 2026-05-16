@@ -58,6 +58,7 @@ export function usePresence(
             userName: m.users.display_name || m.users.email?.split('@')[0] || 'Reader',
             avatarColor: stringToColor(m.user_id),
             avatarInitials: makeInitials(m.users.display_name || m.users.email || 'Reader'),
+            avatarUrl: m.users.avatar_url,
             joinedAt: new Date(m.joined_at).getTime(),
             isFollowing: false,
             page: 1,

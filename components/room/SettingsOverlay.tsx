@@ -5,10 +5,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, LogOut, User, Shield, Bell, Palette, Globe, ArrowLeft } from 'lucide-react';
+import { useParams } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { usePresenceStore } from '@/store/presenceStore';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
+import { getSocket } from '@/lib/socket/client';
 
 interface UserProfile {
   id: string;
@@ -69,6 +71,9 @@ export function SettingsOverlay() {
     finally { setSaving(false); }
   };
 
+  const params = useParams();
+  const roomId = params.id as string;
+
   const handleAvatarUploaded = (avatarUrl: string) => {
     setProfile((p) => p ? { ...p, avatar_url: avatarUrl } : p);
     setShowUploadAvatar(false);
@@ -76,6 +81,15 @@ export function SettingsOverlay() {
     try { localStorage.setItem('readroom:avatar-url', avatarUrl); } catch {}
     // Update self in room immediately
     updateSelf({ avatarUrl });
+    
+    // Broadcast to other users in the room
+    const currentSelf = usePresenceStore.getState().self;
+    if (currentSelf && roomId) {
+      getSocket().emit('presence:update', {
+        roomId,
+        user: { ...currentSelf, avatarUrl },
+      });
+    }
   };
 
   const close = () => setSettingsOpen(false);
