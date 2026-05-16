@@ -4,7 +4,7 @@ import { Wifi, WifiOff, RefreshCw, Loader2 } from 'lucide-react';
 import type { ConnectionStatus } from '@/types';
 
 const config: Record<ConnectionStatus, { label: string; className: string; Icon: any }> = {
-  connected:    { label: 'Synced',       className: 'text-emerald-400 bg-emerald-400/10', Icon: Wifi },
+  connected:    { label: 'Connected',    className: 'text-emerald-400 bg-emerald-400/10', Icon: Wifi },
   connecting:   { label: 'Connecting',   className: 'text-yellow-400 bg-yellow-400/10',  Icon: Loader2 },
   reconnecting: { label: 'Reconnecting', className: 'text-orange-400 bg-orange-400/10',  Icon: RefreshCw },
   disconnected: { label: 'Offline',      className: 'text-red-400 bg-red-400/10',        Icon: WifiOff },

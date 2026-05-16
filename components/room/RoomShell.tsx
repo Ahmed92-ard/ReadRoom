@@ -9,7 +9,6 @@ import { useRoomStore } from '@/store/roomStore';
 import { usePDFStore } from '@/store/pdfStore';
 import { PDFViewer, type PDFViewerState } from '@/components/pdf/PDFViewer';
 import { Avatar } from '@/components/ui/Avatar';
-import { PresenceBar } from './PresenceBar';
 import { Notes } from './Notes';
 import { PresenceList } from './PresenceList';
 import { GooglePicker } from '@/components/drive/GooglePicker';
@@ -827,17 +826,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => { delete (window as any).__readroom_roomId; };
   }, [roomId]);
 
-  // Restore saved avatar URL from the per-user fast cache into self on mount.
-  useEffect(() => {
-    try {
-      const savedUrl = localStorage.getItem(`readroom_avatar_url_${initialUserId}`);
-      if (savedUrl) {
-        usePresenceStore.getState().updateSelf({ avatarUrl: savedUrl });
-      }
-    } catch {}
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // ── Stable Socket Listeners ────────────────────────────────────────────────
   useEffect(() => {
     const socket = getSocket();
@@ -1418,11 +1406,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         <div className={activePanel === 'shelf' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
           <div className="flex flex-col h-full p-3">
             {/* Header */}
-            <div className="flex items-center justify-between mb-3 flex-shrink-0">
-              <span className="text-[11px] font-bold text-room-muted tracking-widest flex items-center gap-1.5">
-                <FolderOpen size={12} />
-                ROOM LIBRARY
-              </span>
+            <div className="flex items-center justify-end mb-3 flex-shrink-0">
               <button
                 onClick={() => handleUploadToFolder(null)}
                 className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
@@ -1542,9 +1526,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 />
               </div>
             )}
-            <div className="hidden md:block">
-              <PresenceBar />
-            </div>
             {/* Settings gear — opens overlay instead of navigating away */}
             <button
               onClick={() => setSettingsOpen(true)}
@@ -1820,7 +1801,7 @@ const SecondaryViewerSection = React.memo(({
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold text-room-text">{viewer.title}</p>
             <p className="text-[10px] text-room-muted">
-              {viewer.followUserId ? 'Synced follow viewer' : 'Secondary viewer'}
+              {viewer.followUserId ? 'Follow viewer' : 'Secondary viewer'}
             </p>
           </div>
         </div>

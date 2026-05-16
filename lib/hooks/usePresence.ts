@@ -77,11 +77,20 @@ export function usePresence(
           isActive: false, lastSeen: Date.now(),
         }));
         setMembers(members);
+        const canonicalSelf = members.find((m) => m.userId === userId);
+        if (canonicalSelf) {
+          updateSelf({
+            userName: canonicalSelf.userName,
+            avatarUrl: canonicalSelf.avatarUrl,
+            avatarColor: stringToColor(tabId),
+            avatarInitials: canonicalSelf.avatarInitials,
+          });
+        }
       })
       .catch((err) => console.error('[presence] failed to fetch members:', err));
 
     return () => { cancelled = true; };
-  }, [libraryId, setMembers]);
+  }, [libraryId, setMembers, tabId, updateSelf, userId]);
 
   // ── Supabase Realtime: profile changes from other sessions/devices ────────
   // CRITICAL: .on() MUST be called BEFORE .subscribe()
@@ -117,10 +126,6 @@ export function usePresence(
           // Update self if this is our own profile
           if (store.self?.userId.split('_')[0] === updatedUserId) {
             updateSelf(patch);
-            try {
-              if (updated.avatar_url) localStorage.setItem(`readroom_avatar_url_${updatedUserId}`, updated.avatar_url);
-              else localStorage.removeItem(`readroom_avatar_url_${updatedUserId}`);
-            } catch {}
           }
 
           // Update any presence entries for this user
@@ -152,14 +157,13 @@ export function usePresence(
     if (!socket.connected) socket.connect();
 
     const buildSelf = (): UserMeta => {
-      let avatarUrl: string | null = null;
-      try { avatarUrl = localStorage.getItem(`readroom_avatar_url_${userId}`); } catch {}
+      const existingSelf = usePresenceStore.getState().self;
       return {
         userId: tabId,
         userName: userNameRef.current,
         avatarColor: stringToColor(tabId),
         avatarInitials: makeInitials(userNameRef.current),
-        avatarUrl,
+        avatarUrl: existingSelf?.avatarUrl ?? null,
         joinedAt: Date.now(),
         isFollowing: false,
         page: usePDFStore.getState().page,

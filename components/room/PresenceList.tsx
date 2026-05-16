@@ -29,12 +29,7 @@ export function PresenceList({ roomId }: PresenceListProps) {
   const handleAvatarUploaded = (url: string) => {
     // Update local state immediately
     updateSelf({ avatarUrl: url });
-    // Persist so it survives page reloads
     const currentSelf = usePresenceStore.getState().self;
-    const baseUserId = currentSelf?.userId.split('_')[0];
-    try {
-      if (baseUserId) localStorage.setItem(`readroom_avatar_url_${baseUserId}`, url);
-    } catch {}
     // Broadcast to all connected clients in the room
     if (currentSelf && roomId) {
       getSocket().emit('profile:updated', {
@@ -71,6 +66,7 @@ export function PresenceList({ roomId }: PresenceListProps) {
         ...existing,
         isActive,
         lastSeen: Math.max(existing.lastSeen ?? 0, user.lastSeen ?? 0),
+        avatarUrl: user.avatarUrl ?? existing.avatarUrl,
         ...(useNewData ? {
           userId: user.userId, 
           page: user.page,
@@ -79,7 +75,6 @@ export function PresenceList({ roomId }: PresenceListProps) {
           activePdfId: user.activePdfId,
           activePdfName: user.activePdfName,
           userName: user.userName,
-          avatarUrl: user.avatarUrl,
         } : {}),
       });
     }
@@ -161,7 +156,7 @@ export function PresenceList({ roomId }: PresenceListProps) {
             }`}
           >
             <div className="relative">
-              {user.userId === self?.userId ? (
+              {user.userId.split('_')[0] === self?.userId.split('_')[0] ? (
                 <button
                   onClick={() => setShowAvatarUpload(true)}
                   className="relative group/av focus:outline-none"
@@ -183,7 +178,7 @@ export function PresenceList({ roomId }: PresenceListProps) {
             <div className="flex-1 min-w-0">
               <p className="text-sm text-room-text truncate font-medium">
                 {user.userName}
-                {user.userId === self?.userId && (
+                {user.userId.split('_')[0] === self?.userId.split('_')[0] && (
                   <span className="ml-1 text-[10px] text-room-muted">(you)</span>
                 )}
               </p>
@@ -204,7 +199,7 @@ export function PresenceList({ roomId }: PresenceListProps) {
               </p>
             </div>
 
-            {user.isActive && user.userId !== self?.userId && (
+            {user.isActive && user.userId.split('_')[0] !== self?.userId.split('_')[0] && (
               <div className="flex items-center gap-1">
                 {user.activePdfId && (
                   <button

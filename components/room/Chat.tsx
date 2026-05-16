@@ -31,9 +31,20 @@ interface ChatProps {
   onClose?: () => void;
 }
 
+interface FloatingMenu {
+  messageId: string;
+  top: number;
+  left: number;
+  placement: 'above' | 'below';
+  align: 'left' | 'right';
+}
+
 const messageCache = new Map<string, ChatMessage[]>();
 const loadedRooms = new Set<string>();
 const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const MENU_WIDTH = 176;
+const MENU_HEIGHT = 190;
+const MENU_MARGIN = 8;
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -72,6 +83,26 @@ function attachmentIcon(kind?: string | null) {
   return File;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function positionMenu(anchor: DOMRect | { left: number; right: number; top: number; bottom: number }): Omit<FloatingMenu, 'messageId'> {
+  const viewportWidth = typeof window === 'undefined' ? 390 : window.innerWidth;
+  const viewportHeight = typeof window === 'undefined' ? 720 : window.innerHeight;
+  const openAbove = anchor.bottom + MENU_HEIGHT + MENU_MARGIN > viewportHeight && anchor.top > MENU_HEIGHT;
+  const alignRight = anchor.left + MENU_WIDTH > viewportWidth - MENU_MARGIN;
+  const maxLeft = Math.max(MENU_MARGIN, viewportWidth - MENU_WIDTH - MENU_MARGIN);
+  const maxTop = Math.max(MENU_MARGIN, viewportHeight - MENU_HEIGHT - MENU_MARGIN);
+  const left = alignRight
+    ? clamp(anchor.right - MENU_WIDTH, MENU_MARGIN, maxLeft)
+    : clamp(anchor.left, MENU_MARGIN, maxLeft);
+  const top = openAbove
+    ? clamp(anchor.top - MENU_HEIGHT - 4, MENU_MARGIN, maxTop)
+    : clamp(anchor.bottom + 4, MENU_MARGIN, maxTop);
+  return { top, left, placement: openAbove ? 'above' : 'below', align: alignRight ? 'right' : 'left' };
+}
+
 export function Chat({ roomId, onClose }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
   const users = usePresenceStore((s) => s.users);
@@ -98,7 +129,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
   const [hasOlder, setHasOlder] = useState(true);
-  const [activeActionsId, setActiveActionsId] = useState<string | null>(null);
+  const [activeMenu, setActiveMenu] = useState<FloatingMenu | null>(null);
   const [infoMessage, setInfoMessage] = useState<ChatMessage | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
@@ -209,22 +240,24 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
     const handleRead = (payload: { roomId: string; messageIds: string[]; userId: string; readAt: string }) => {
       if (payload.roomId !== roomId) return;
+      const receiptUserId = payload.userId.split('_')[0];
       const ids = new Set(payload.messageIds);
       updateMessages((prev) => prev.map((m) => {
         if (!ids.has(m.id)) return m;
-        const receipts = (m.receipts ?? []).filter((r) => r.userId !== payload.userId);
-        return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: payload.userId, deliveredAt: payload.readAt, readAt: payload.readAt }] };
+        const receipts = (m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== receiptUserId);
+        return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: receiptUserId, deliveredAt: payload.readAt, readAt: payload.readAt }] };
       }));
     };
 
     const handleDelivered = (payload: { roomId: string; messageIds: string[]; userId: string; deliveredAt: string }) => {
       if (payload.roomId !== roomId) return;
+      const receiptUserId = payload.userId.split('_')[0];
       const ids = new Set(payload.messageIds);
       updateMessages((prev) => prev.map((m) => {
         if (!ids.has(m.id)) return m;
-        const existing = (m.receipts ?? []).find((r) => r.userId === payload.userId);
-        const receipts = (m.receipts ?? []).filter((r) => r.userId !== payload.userId);
-        return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: payload.userId, deliveredAt: existing?.deliveredAt ?? payload.deliveredAt, readAt: existing?.readAt ?? null }] };
+        const existing = (m.receipts ?? []).find((r) => r.userId.split('_')[0] === receiptUserId);
+        const receipts = (m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== receiptUserId);
+        return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: receiptUserId, deliveredAt: existing?.deliveredAt ?? payload.deliveredAt, readAt: existing?.readAt ?? null }] };
       }));
     };
 
@@ -369,7 +402,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
   useEffect(() => {
     if (!self || !isAtBottom || !canUseAdvancedApi) return;
     const selfBaseId = self.userId.split('_')[0];
-    const readable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId === selfBaseId && r.readAt));
+    const readable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId.split('_')[0] === selfBaseId && r.readAt));
     if (readable.length === 0) return;
     const messageIds = readable.map((m) => m.id);
     const readAt = new Date().toISOString();
@@ -380,7 +413,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }).then((res) => {
       if (res.ok) {
         updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
-          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt: readAt, readAt }] }
+          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt: readAt, readAt }] }
           : m));
         getSocket().emit('chat:read', { roomId, messageIds, userId: selfBaseId, readAt });
       }
@@ -390,7 +423,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
   useEffect(() => {
     if (!self || !canUseAdvancedApi) return;
     const selfBaseId = self.userId.split('_')[0];
-    const deliverable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId === selfBaseId && (r.deliveredAt || r.readAt)));
+    const deliverable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId.split('_')[0] === selfBaseId && (r.deliveredAt || r.readAt)));
     if (deliverable.length === 0) return;
     const messageIds = deliverable.map((m) => m.id);
     const deliveredAt = new Date().toISOString();
@@ -401,7 +434,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }).then((res) => {
       if (res.ok) {
         updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
-          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt, readAt: null }] }
+          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt, readAt: null }] }
           : m));
         getSocket().emit('chat:delivered', { roomId, messageIds, userId: selfBaseId, deliveredAt });
       }
@@ -432,12 +465,24 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (activeMenu) setActiveMenu(null);
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     setIsAtBottom(atBottom);
     if (el.scrollTop < 120 && hasOlder && !loadingOlder && !search) {
       loadOlder();
     }
-  }, [hasOlder, loadingOlder, loadOlder, search]);
+  }, [activeMenu, hasOlder, loadingOlder, loadOlder, search]);
+
+  useEffect(() => {
+    if (!activeMenu) return;
+    const close = () => setActiveMenu(null);
+    window.addEventListener('resize', close);
+    window.addEventListener('orientationchange', close);
+    return () => {
+      window.removeEventListener('resize', close);
+      window.removeEventListener('orientationchange', close);
+    };
+  }, [activeMenu]);
 
   const emitTyping = useCallback((value: string) => {
     if (!self) return;
@@ -562,10 +607,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const toggleReaction = useCallback(async (msg: ChatMessage, emoji: string) => {
     if (!self || !canUseAdvancedApi) return;
     const selfBaseId = self.userId.split('_')[0];
-    const active = !(msg.reactions ?? []).some((r) => r.userId === selfBaseId && r.emoji === emoji);
+    const active = !(msg.reactions ?? []).some((r) => r.userId.split('_')[0] === selfBaseId && r.emoji === emoji);
     updateMessages((prev) => prev.map((m) => {
       if (m.id !== msg.id) return m;
-      const reactions = (m.reactions ?? []).filter((r) => !(r.userId === selfBaseId && r.emoji === emoji));
+      const reactions = (m.reactions ?? []).filter((r) => !(r.userId.split('_')[0] === selfBaseId && r.emoji === emoji));
       return { ...m, reactions: active ? [...reactions, { messageId: msg.id, userId: selfBaseId, emoji }] : reactions };
     }));
     await fetch(messagesEndpoint, {
@@ -624,10 +669,24 @@ export function Chat({ roomId, onClose }: ChatProps) {
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
-  const startLongPress = useCallback((messageId: string) => {
-    if (longPressRef.current) clearTimeout(longPressRef.current);
-    longPressRef.current = setTimeout(() => setActiveActionsId(messageId), 450);
+  const openMessageMenu = useCallback((messageId: string, anchor: DOMRect | { left: number; right: number; top: number; bottom: number }) => {
+    setActiveMenu((current) => (
+      current?.messageId === messageId
+        ? null
+        : { messageId, ...positionMenu(anchor) }
+    ));
   }, []);
+
+  const startLongPress = useCallback((messageId: string, touch: React.Touch) => {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+    const anchor = {
+      left: touch.clientX,
+      right: touch.clientX,
+      top: touch.clientY,
+      bottom: touch.clientY,
+    };
+    longPressRef.current = setTimeout(() => openMessageMenu(messageId, anchor), 450);
+  }, [openMessageMenu]);
 
   const cancelLongPress = useCallback(() => {
     if (longPressRef.current) {
@@ -656,6 +715,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
   ), [mediaByKind]);
   const activeInfoMessage = infoMessage
     ? messages.find((m) => m.id === infoMessage.id) ?? infoMessage
+    : null;
+  const activeMenuMessage = activeMenu
+    ? messages.find((m) => m.id === activeMenu.messageId) ?? null
     : null;
 
   const renderAttachment = (msg: ChatMessage) => {
@@ -719,9 +781,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId.startsWith(msg.userId.split('_')[0]));
           const receipts = msg.receipts ?? [];
           const selfBaseId = self?.userId.split('_')[0];
-          const read = isSelf && receipts.some((r) => r.userId !== selfBaseId && r.readAt);
-          const delivered = isSelf && receipts.some((r) => r.userId !== selfBaseId && (r.deliveredAt || r.readAt));
-          const actionsOpen = activeActionsId === msg.id;
+          const read = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && r.readAt);
+          const delivered = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && (r.deliveredAt || r.readAt));
 
           return (
             <React.Fragment key={msg.id}>
@@ -732,14 +793,14 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 tabIndex={0}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  setActiveActionsId((id) => (id === msg.id ? null : msg.id));
+                  openMessageMenu(msg.id, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
                 }}
-                onTouchStart={() => startLongPress(msg.id)}
+                onTouchStart={(e) => {
+                  const touch = e.touches[0];
+                  if (touch) startLongPress(msg.id, touch);
+                }}
                 onTouchMove={cancelLongPress}
                 onTouchEnd={cancelLongPress}
-                onBlur={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActiveActionsId(null);
-                }}
                 className={`group flex gap-2.5 rounded-lg px-1.5 py-1 outline-none transition ${grouped ? 'mt-0.5' : 'mt-3'} ${isSelf ? 'flex-row-reverse' : ''}`}
               >
                 {!grouped ? (
@@ -778,24 +839,12 @@ export function Chat({ roomId, onClose }: ChatProps) {
                           <Reply size={13} />
                         </button>
                         <button
-                          onClick={() => setActiveActionsId((id) => (id === msg.id ? null : msg.id))}
+                          onClick={(e) => openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect())}
                           className="rounded-full bg-room-bg p-1 text-room-muted hover:text-room-text"
                           aria-label="Message actions"
                         >
                           <MoreVertical size={13} />
                         </button>
-                        {actionsOpen && (
-                          <div className={`absolute top-7 z-20 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-xl ${isSelf ? 'right-0' : 'left-0'}`}>
-                            <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">
-                              {EMOJIS.map((emoji) => (
-                                <button key={emoji} onClick={() => { setActiveActionsId(null); toggleReaction(msg, emoji); }} className="rounded-md px-1.5 py-1 text-sm hover:bg-room-bg" aria-label={`React ${emoji}`}>{emoji}</button>
-                              ))}
-                            </div>
-                            {isSelf && <button onClick={() => { setEditing(msg); setInput(msg.content); setActiveActionsId(null); inputRef.current?.focus(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg"><Edit3 size={13} /> Edit</button>}
-                            {isSelf && <button onClick={() => { setInfoMessage(msg); setActiveActionsId(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg"><Info size={13} /> Message info</button>}
-                            {isSelf && <button onClick={() => { setActiveActionsId(null); removeMessage(msg); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-300 hover:bg-room-bg"><Trash2 size={13} /> Delete</button>}
-                          </div>
-                        )}
                       </div>
                     )}
                     </div>
@@ -819,6 +868,53 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
       {resolvedTyping && <div className="flex-none px-3 py-1 text-xs italic text-room-muted">{resolvedTyping} {Object.keys(typing).length === 1 ? 'is' : 'are'} typing…</div>}
       {error && <div className="flex-none border-t border-red-900/50 bg-red-900/20 px-3 py-2 text-xs text-red-200">{error}</div>}
+
+      {activeMenu && activeMenuMessage && (
+        <>
+          <button
+            type="button"
+            aria-label="Close message actions"
+            className="fixed inset-0 z-40 cursor-default bg-transparent"
+            onClick={() => setActiveMenu(null)}
+            tabIndex={-1}
+          />
+          <div
+            className="fixed z-50 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-2xl"
+            style={{ top: activeMenu.top, left: activeMenu.left }}
+          >
+            <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">
+              {EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => { setActiveMenu(null); toggleReaction(activeMenuMessage, emoji); }}
+                  className="rounded-md px-1.5 py-1 text-sm hover:bg-room-bg"
+                  aria-label={`React ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { setReplyTo(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+              <Reply size={13} /> Reply
+            </button>
+            {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+              <button onClick={() => { setEditing(activeMenuMessage); setInput(activeMenuMessage.content); setActiveMenu(null); inputRef.current?.focus(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+                <Edit3 size={13} /> Edit
+              </button>
+            )}
+            {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+              <button onClick={() => { setInfoMessage(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+                <Info size={13} /> Message info
+              </button>
+            )}
+            {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+              <button onClick={() => { setActiveMenu(null); removeMessage(activeMenuMessage); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-300 hover:bg-room-bg">
+                <Trash2 size={13} /> Delete
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {(replyTo || editing || attachment) && (
         <div className="flex flex-none items-center gap-2 border-t border-room-border bg-room-bg/60 px-3 py-2">
@@ -881,7 +977,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
               </div>
               {(() => {
                 const selfBaseId = self?.userId.split('_')[0];
-                const receipts = (activeInfoMessage.receipts ?? []).filter((r) => r.userId !== selfBaseId);
+                const receipts = (activeInfoMessage.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId);
                 const readReceipts = receipts.filter((r) => r.readAt);
                 const deliveredReceipts = receipts.filter((r) => r.deliveredAt || r.readAt);
                 const renderRows = (items: typeof receipts, field: 'deliveredAt' | 'readAt') => (

@@ -31,10 +31,6 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-function avatarKey(userId: string) {
-  return `readroom_avatar_url_${userId}`;
-}
-
 // ── AuthProvider ──────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -68,8 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfileComplete(Boolean(data.profileComplete));
         try {
           localStorage.setItem(`readroom_user_name_${u.id}`, name);
-          if (url) localStorage.setItem(avatarKey(u.id), url);
-          else localStorage.removeItem(avatarKey(u.id));
         } catch {}
         return { name, url, complete: Boolean(data.profileComplete) };
       }
@@ -92,12 +86,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u);
     userRef.current = u;
 
-    // Fast path: cached values while DB fetch is in-flight
+    // Fast path: cached display name only while DB fetch is in-flight.
+    // Avatar URL remains DB-canonical to avoid stale image propagation.
     try {
       const cached = localStorage.getItem(`readroom_user_name_${u.id}`);
-      const cachedAvatar = localStorage.getItem(avatarKey(u.id));
       if (cached && cached !== 'Reader') setUserName(cached);
-      if (cachedAvatar) setAvatarUrl(cachedAvatar);
     } catch {}
 
     const profile = await withTimeout(syncProfileFromDB(u), 5_000, 'profile sync')
@@ -230,10 +223,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           if (updated.avatar_url !== undefined) {
             setAvatarUrl(updated.avatar_url ?? null);
-            try {
-              if (updated.avatar_url) localStorage.setItem(avatarKey(user.id), updated.avatar_url);
-              else localStorage.removeItem(avatarKey(user.id));
-            } catch {}
           }
         }
       )
@@ -332,9 +321,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (!res.ok) return false;
 
-      const uid = userRef.current.id;
       setAvatarUrl(url);
-      try { localStorage.setItem(avatarKey(uid), url); } catch {}
 
       const { getSocket } = await import('@/lib/socket/client');
       const { usePresenceStore } = await import('@/store/presenceStore');
