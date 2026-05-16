@@ -1,5 +1,6 @@
 import '../styles/globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
+import { AuthProvider } from '@/lib/hooks/useAuth';
 
 export const metadata = {
   title: 'ReadRoom',
@@ -26,7 +27,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className="bg-room-bg text-room-text antialiased">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        <ThemeProvider>{children}</ThemeProvider>
+        <AuthProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );

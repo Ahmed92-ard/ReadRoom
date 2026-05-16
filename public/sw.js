@@ -55,8 +55,8 @@ self.addEventListener('fetch', (event) => {
     event.request.mode === 'navigate' ||
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/auth/') ||
-    url.pathname.startsWith('/libraries/') ||
-    url.pathname.startsWith('/room/') ||
+    url.pathname.startsWith('/libraries') ||
+    url.pathname.startsWith('/room') ||
     url.pathname.includes('/_next/data/') ||
     url.pathname.includes('/api/socket');
 
@@ -73,13 +73,16 @@ self.addEventListener('fetch', (event) => {
   // Cache-first with network update for static assets (_next/static, icons, etc.)
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      const networkFetch = fetch(event.request).then((response) => {
-        if (response.ok && response.type === 'basic') {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      });
+      const networkFetch = fetch(event.request)
+        .then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => (cached ? null : Response.error()));
+
       // Return cached immediately if available, update in background
       return cached ?? networkFetch;
     })

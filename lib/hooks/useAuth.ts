@@ -6,7 +6,7 @@
 //   2. Broadcast via socket `profile:updated` event (real-time propagation)
 //   3. Cached in localStorage for fast initial load (no stale state)
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import type { User, Session } from '@supabase/supabase-js';
 
@@ -25,6 +25,8 @@ interface AuthState {
   /** Update avatar URL — persists to DB + broadcasts to room */
   updateAvatarUrl: (url: string) => Promise<boolean>;
 }
+
+const AuthContext = createContext<AuthState | null>(null);
 
 // ── Module-level Drive token (separate from Supabase session) ─────────────────
 let _driveToken: string | null = null;
@@ -71,7 +73,7 @@ function avatarStorageKey(userId: string) {
   return `readroom_avatar_url_${userId}`;
 }
 
-export function useAuth(): AuthState {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = useMemo(() => createClient(), []);
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -101,7 +103,7 @@ export function useAuth(): AuthState {
         return { name, url };
       }
     } catch (err) {
-      console.warn('[useAuth] syncProfileFromDB failed:', err);
+      console.warn('[AuthProvider] syncProfileFromDB failed:', err);
     }
     return null;
   }, [supabase]);
@@ -146,7 +148,7 @@ export function useAuth(): AuthState {
   // ── Initialize session ────────────────────────────────────────────────────
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
-      if (error) console.warn('[useAuth] getSession error:', error.message);
+      if (error) console.warn('[AuthProvider] getSession error:', error.message);
       const expiresAt = session?.expires_at ? session.expires_at * 1000 : 0;
       if (session && expiresAt && expiresAt - Date.now() < 60_000) {
         const refreshed = await supabase.auth.refreshSession();
@@ -170,6 +172,7 @@ export function useAuth(): AuthState {
   useEffect(() => {
     if (!user?.id) return;
 
+    // Use a stable channel name to avoid multiple subscriptions
     const channel = supabase
       .channel(`profile:${user.id}`)
       .on('postgres_changes', {
@@ -238,7 +241,7 @@ export function useAuth(): AuthState {
             storeDriveToken(currentUser.id, response.access_token, Number(response.expires_in ?? 3600));
           }
         },
-        error_callback: (err: any) => { console.warn('[useAuth] Drive token error:', err); },
+        error_callback: (err: any) => { console.warn('[AuthProvider] Drive token error:', err); },
       });
     };
 
@@ -303,7 +306,7 @@ export function useAuth(): AuthState {
       }
       return true;
     } catch (err) {
-      console.error('[useAuth] updateDisplayName failed:', err);
+      console.error('[AuthProvider] updateDisplayName failed:', err);
       return false;
     }
   }, [user]);
@@ -350,7 +353,7 @@ export function useAuth(): AuthState {
       }
       return true;
     } catch (err) {
-      console.error('[useAuth] updateAvatarUrl failed:', err);
+      console.error('[AuthProvider] updateAvatarUrl failed:', err);
       return false;
     }
   }, [user]);
@@ -366,7 +369,7 @@ export function useAuth(): AuthState {
         queryParams: { access_type: 'offline', prompt: 'select_account' },
       },
     });
-    if (error) { console.error('[useAuth] signInWithOAuth error:', error.message); return; }
+    if (error) { console.error('[AuthProvider] signInWithOAuth error:', error.message); return; }
     if (data?.url) window.location.assign(data.url);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -375,7 +378,7 @@ export function useAuth(): AuthState {
     _driveTokenClient = null;
     clearDriveToken(userRef.current?.id);
     const { error } = await supabase.auth.signOut();
-    if (error) console.error('[useAuth] signOut error:', error.message);
+    if (error) console.error('[AuthProvider] signOut error:', error.message);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -395,7 +398,7 @@ export function useAuth(): AuthState {
     return () => window.clearTimeout(timer);
   }, [_driveToken, _driveTokenExpiresAt]);
 
-  return {
+  const value = useMemo(() => ({
     user,
     session,
     userName,
@@ -407,5 +410,15 @@ export function useAuth(): AuthState {
     requestDriveAccess,
     updateDisplayName,
     updateAvatarUrl,
-  };
+  }), [user, session, userName, avatarUrl, loading, signInWithGoogle, signOut, requestDriveAccess, updateDisplayName, updateAvatarUrl]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthState {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
 }
