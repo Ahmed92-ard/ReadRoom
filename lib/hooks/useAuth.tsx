@@ -172,26 +172,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user?.id) return;
 
-    // Use a stable channel name to avoid multiple subscriptions
+    // CORRECT ORDER: .on() first, then .subscribe()
+    // Using a stable channel name keyed to the user ID prevents duplicate subscriptions.
     const channel = supabase
-      .channel(`profile:${user.id}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'users',
-        filter: `id=eq.${user.id}`,
-      }, (payload) => {
-        const updated = payload.new as any;
-        if (updated.display_name) {
-          setUserName(updated.display_name);
-          localStorage.setItem(`readroom_user_name_${user.id}`, updated.display_name);
+      .channel(`auth-profile:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'users',
+          filter: `id=eq.${user.id}`,
+        },
+        (payload) => {
+          const updated = payload.new as any;
+          if (updated.display_name) {
+            setUserName(updated.display_name);
+            try { localStorage.setItem(`readroom_user_name_${user.id}`, updated.display_name); } catch {}
+          }
+          if (updated.avatar_url !== undefined) {
+            setAvatarUrl(updated.avatar_url);
+            try {
+              if (updated.avatar_url) localStorage.setItem(avatarStorageKey(user.id), updated.avatar_url);
+              else localStorage.removeItem(avatarStorageKey(user.id));
+            } catch {}
+          }
         }
-        if (updated.avatar_url !== undefined) {
-          setAvatarUrl(updated.avatar_url);
-          if (updated.avatar_url) localStorage.setItem(avatarStorageKey(user.id), updated.avatar_url);
-          else localStorage.removeItem(avatarStorageKey(user.id));
-        }
-      })
+      )
+      // ← .subscribe() AFTER all .on() handlers
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };

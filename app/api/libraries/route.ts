@@ -29,32 +29,61 @@ export async function POST(req: Request) {
 
   const inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
 
-  // Use admin client for creation sequence to bypass RLS restrictions
-  // during bootstrap (user isn't a member yet, so regular SELECT fails)
-  const adminSupabase = createAdminClient();
-  if (!adminSupabase) {
-    return NextResponse.json({ error: 'System configuration error' }, { status: 500 });
-  }
+  // Prefer admin client (bypasses RLS during bootstrap).
+  // Fall back to user client if service role key is not configured —
+  // this works because the user is authenticated and the RLS INSERT policy
+  // allows authenticated users to create libraries with owner_id = auth.uid().
+  const db = createAdminClient() ?? supabase;
 
-  const { data: library, error: libError } = await adminSupabase
+  // Ensure the user row exists in public.users before creating a library.
+  // The auth trigger should have created it, but if the schema was just applied
+  // the trigger may not have fired for existing auth users.
+  try {
+    await db
+      .from('users')
+      .upsert(
+        {
+          id: user.id,
+          email: user.email ?? null,
+          display_name:
+            user.user_metadata?.full_name ||
+            user.user_metadata?.name ||
+            user.email?.split('@')[0] ||
+            'Reader',
+          avatar_url: user.user_metadata?.avatar_url ?? null,
+        },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+  } catch { /* non-fatal — row may already exist */ }
+
+  const { data: library, error: libError } = await db
     .from('libraries')
     .insert({ name: name.slice(0, 64), owner_id: user.id, invite_code: inviteCode })
     .select()
     .single();
 
-  if (libError) return NextResponse.json({ error: libError.message }, { status: 500 });
+  if (libError) {
+    console.error('[api/libraries] POST: library insert failed:', libError);
+    return NextResponse.json({ error: libError.message }, { status: 500 });
+  }
 
-  const { error: memberError } = await adminSupabase
+  const { error: memberError } = await db
     .from('library_members')
     .insert({ library_id: library.id, user_id: user.id, role: 'owner' });
 
-  if (memberError) return NextResponse.json({ error: memberError.message }, { status: 500 });
+  if (memberError) {
+    console.error('[api/libraries] POST: member insert failed:', memberError);
+    return NextResponse.json({ error: memberError.message }, { status: 500 });
+  }
 
-  const { error: roomError } = await adminSupabase
+  const { error: roomError } = await db
     .from('rooms')
     .insert({ library_id: library.id, name: 'general', type: 'pdf', position: 0 });
 
-  if (roomError) return NextResponse.json({ error: roomError.message }, { status: 500 });
+  if (roomError) {
+    console.error('[api/libraries] POST: room insert failed:', roomError);
+    return NextResponse.json({ error: roomError.message }, { status: 500 });
+  }
 
   return NextResponse.json({ library });
 }
