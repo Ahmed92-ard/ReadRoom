@@ -1,6 +1,6 @@
 'use client';
 
-// useAuth.ts — Centralized auth + profile management.
+// useAuth.tsx — Centralized auth + profile management.
 // Profile changes (display name, avatar) are:
 //   1. Persisted to Supabase `users` table (permanent)
 //   2. Broadcast via socket `profile:updated` event (real-time propagation)
@@ -35,7 +35,7 @@ let _driveTokenClient: any = null;
 const _driveSubscribers = new Set<() => void>();
 function notifyDriveSubscribers() { _driveSubscribers.forEach((fn) => fn()); }
 
-function readStoredDriveToken(userId: string) {
+function readStored DriveToken(userId: string) {
   try {
     const raw = localStorage.getItem(`readroom_drive_token_${userId}`);
     if (!raw) return null;
