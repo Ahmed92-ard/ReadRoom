@@ -249,10 +249,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const resolveName = useCallback((msgUserId: string, fallback: string) => {
     const baseId = msgUserId.split('_')[0];
     if (self?.userId.startsWith(baseId)) return self.userName;
-    for (const u of users.values()) {
-      if (u.userId.startsWith(baseId) && u.userName !== 'Reader') return u.userName;
-    }
-    return fallback;
+    return (
+      Array.from(users.values()).find((u) => u.userId.startsWith(baseId) && u.userName !== 'Reader')?.userName ??
+      fallback
+    );
   }, [self, users]);
 
   const resolveAvatar = useCallback((msgUserId: string, fallbackColor: string, fallbackUrl?: string | null) => {
@@ -260,11 +260,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
     if (self?.userId.startsWith(baseId)) {
       return { color: self.avatarColor, initials: self.avatarInitials, url: self.avatarUrl };
     }
-    for (const u of users.values()) {
-      if (u.userId.startsWith(baseId)) {
-        return { color: u.avatarColor, initials: u.avatarInitials, url: u.avatarUrl };
-      }
-    }
+    const user = Array.from(users.values()).find((u) => u.userId.startsWith(baseId));
+    if (user) return { color: user.avatarColor, initials: user.avatarInitials, url: user.avatarUrl };
     return { color: fallbackColor, initials: '?', url: fallbackUrl };
   }, [self, users]);
 
