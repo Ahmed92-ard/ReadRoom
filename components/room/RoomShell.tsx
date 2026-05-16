@@ -1002,12 +1002,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const followed = usersMap.get(followTarget);
     if (!followed?.activePdfId) return;
 
-    // Try to find the PDF in the channel list
-    let pdf = channelPDFs.find((item) => item.id === followed.activePdfId);
-
     const openAndSync = (targetPdf: ChannelPDF) => {
       openPdfViewer(targetPdf, { followUserId: followTarget, title: `Following ${followed.userName}` });
-      // Seed the viewer with the followed user's current position immediately
       updateOpenViewerState(`follow:${followTarget}`, {
         page: Math.max(1, followed.page ?? 1),
         scroll: Math.max(0, Math.min(1, followed.scroll ?? 0)),
@@ -1015,19 +1011,38 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       });
     };
 
-    if (pdf) {
-      openAndSync(pdf);
-    } else if (libraryId && channelId) {
-      // PDF not yet in local list — fetch the channel library to find it
-      fetchChannelPDFs()
-        .then((pdfs) => {
-          setChannelPDFs(pdfs);
-          const found = pdfs.find((item) => item.id === followed.activePdfId);
-          if (found) openAndSync(found);
-        })
-        .catch(() => {});
+    // Try local channel list first
+    const localPdf = channelPDFs.find((item) => item.id === followed.activePdfId);
+    if (localPdf) {
+      openAndSync(localPdf);
+      return;
     }
-  }, [channelPDFs, channelId, fetchChannelPDFs, followTarget, openPdfViewer, libraryId, updateOpenViewerState, usersMap]);
+
+    // PDF is in a different room — build a synthetic ChannelPDF from presence data.
+    // The followed user's presence carries activePdfId and activePdfName.
+    // We don't know their exact libraryId/channelId, but we can use the file endpoint
+    // with the current libraryId and their activePdfId embedded in the URL.
+    // The server will find the PDF by id regardless of which channel it's in.
+    if (followed.activePdfId && libraryId) {
+      // Try to find the room from presence data (roomId is the socket room they joined)
+      // Fall back to current channelId as best-effort
+      const sourceRoomId = channelId ?? roomId;
+      const syntheticPdf: ChannelPDF = {
+        id: followed.activePdfId,
+        channelId: sourceRoomId,
+        roomId: sourceRoomId,
+        driveId: `local:${followed.activePdfId}`,
+        filename: followed.activePdfName ?? 'Document',
+        thumbnailUrl: null,
+        storagePath: null,
+        url: `/api/libraries/${libraryId}/channels/${sourceRoomId}/pdfs/${followed.activePdfId}/file`,
+        position: 0,
+        folderId: null,
+        createdAt: new Date().toISOString(),
+      };
+      openAndSync(syntheticPdf);
+    }
+  }, [channelPDFs, channelId, followTarget, openPdfViewer, libraryId, roomId, updateOpenViewerState, usersMap]);
 
   // ── Follow mode: sync viewer as followed user navigates ─────────────────────
   useEffect(() => {
@@ -1040,39 +1055,62 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       scroll: number;
       zoom: number;
     }) => {
-      if ((payload as any).roomId && (payload as any).roomId !== roomId) return;
+      // CROSS-ROOM FOLLOW: do NOT filter by roomId when in follow mode.
+      // The followed user may be in a different room — we still want their sync events.
+      // Only filter if this event is from a room we don't care about AND we're not following.
       const key = `follow:${payload.userId}`;
       const isOpenFollow = openViewers.some((viewer) => viewer.key === key);
       const isActiveFollow = followTarget === payload.userId;
 
-      if (!isOpenFollow && !isActiveFollow) return;
+      // If not following this user at all, apply the room filter to avoid noise
+      if (!isOpenFollow && !isActiveFollow) {
+        if ((payload as any).roomId && (payload as any).roomId !== roomId) return;
+        return;
+      }
 
       // If PDF changed while following, try to open the new PDF
       if (payload.activePdfId) {
         const alreadyOpen = openViewers.find((v) => v.key === key);
         if (!alreadyOpen || alreadyOpen.pdfId !== payload.activePdfId) {
-          const pdf = channelPDFs.find((item) => item.id === payload.activePdfId);
-          if (pdf) {
-            const followedUser = usersMap.get(payload.userId);
-            openPdfViewer(pdf, {
+          const followedUser = usersMap.get(payload.userId);
+          const followedUserName = followedUser?.userName ?? 'User';
+
+          // Look for the PDF in the local channel list first
+          const localPdf = channelPDFs.find((item) => item.id === payload.activePdfId);
+
+          if (localPdf) {
+            openPdfViewer(localPdf, {
               followUserId: payload.userId,
-              title: `Following ${followedUser?.userName ?? 'User'}`,
+              title: `Following ${followedUserName}`,
             });
-          } else if (libraryId && channelId) {
-            // Fetch updated library in case this PDF is new
-            fetchChannelPDFs()
-              .then((pdfs) => {
-                setChannelPDFs(pdfs);
-                const found = pdfs.find((item) => item.id === payload.activePdfId);
-                if (found) {
-                  const followedUser = usersMap.get(payload.userId);
-                  openPdfViewer(found, {
-                    followUserId: payload.userId,
-                    title: `Following ${followedUser?.userName ?? 'User'}`,
-                  });
-                }
-              })
-              .catch(() => {});
+          } else {
+            // PDF is in a different room — construct a synthetic ChannelPDF using
+            // the file endpoint. We know the pdfId; we need to find which room it
+            // belongs to. The followed user's presence carries activePdfId but not
+            // the libraryId/channelId. Use the payload roomId if available, otherwise
+            // fall back to fetching the current channel (best-effort).
+            const sourceRoomId = (payload as any).roomId ?? channelId;
+            const sourceLibraryId = libraryId; // same library assumed for cross-room follow
+
+            if (sourceRoomId && sourceLibraryId) {
+              const syntheticPdf: ChannelPDF = {
+                id: payload.activePdfId,
+                channelId: sourceRoomId,
+                roomId: sourceRoomId,
+                driveId: `local:${payload.activePdfId}`,
+                filename: followedUser?.activePdfName ?? 'Document',
+                thumbnailUrl: null,
+                storagePath: null,
+                url: `/api/libraries/${sourceLibraryId}/channels/${sourceRoomId}/pdfs/${payload.activePdfId}/file`,
+                position: 0,
+                folderId: null,
+                createdAt: new Date().toISOString(),
+              };
+              openPdfViewer(syntheticPdf, {
+                followUserId: payload.userId,
+                title: `Following ${followedUserName}`,
+              });
+            }
           }
         }
       }
@@ -1089,7 +1127,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => {
       socket.off('sync:state', handler as any);
     };
-  }, [channelId, channelPDFs, fetchChannelPDFs, followTarget, openPdfViewer, openViewers, roomId, libraryId, updateOpenViewerState, usersMap]);
+  }, [channelId, channelPDFs, followTarget, openPdfViewer, openViewers, roomId, libraryId, updateOpenViewerState, usersMap]);
 
   useEffect(() => {
     if (!activeLibraryId) return;
