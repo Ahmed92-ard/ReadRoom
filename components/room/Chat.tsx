@@ -18,6 +18,7 @@ import {
   Send,
   SmilePlus,
   Trash2,
+  Phone,
   X,
 } from 'lucide-react';
 import { useParams } from 'next/navigation';
@@ -526,6 +527,27 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
   }, [activeMenu]);
 
+  // Click-away listener for the message context menu (prevents backdrop mouseup bug)
+  useEffect(() => {
+    if (!activeMenu) return;
+
+    const handleWindowClick = (e: MouseEvent) => {
+      const menuEl = document.getElementById('chat-message-context-menu');
+      if (menuEl && !menuEl.contains(e.target as Node)) {
+        setActiveMenu(null);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      window.addEventListener('click', handleWindowClick);
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('click', handleWindowClick);
+    };
+  }, [activeMenu]);
+
   const emitThrottleRef = useRef(0);
   const isTypingRef = useRef(false);
 
@@ -849,6 +871,14 @@ export function Chat({ roomId, onClose }: ChatProps) {
         <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={18} /></button>
         {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={18} /></button>}
         {canUseAdvancedApi && <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={18} /></button>}
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('readroom-join-call'))}
+          className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text transition-colors"
+          aria-label="Join voice/video call"
+          title="Join Call"
+        >
+          <Phone size={18} className="text-indigo-400 hover:text-indigo-300" />
+        </button>
         <div className="min-w-0 flex-1 text-center text-xs font-semibold uppercase tracking-wide text-room-muted">Chat</div>
         {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={18} /></button>}
       </div>
@@ -963,12 +993,16 @@ export function Chat({ roomId, onClose }: ChatProps) {
                       </div>
                     </div>
 
-                    <div className="invisible relative flex shrink-0 items-center gap-0.5 pt-0.5 group-hover:visible">
+                    <div className={`invisible relative flex shrink-0 items-center gap-0.5 pt-0.5 group-hover:visible ${activeMenu?.messageId === msg.id ? '!visible' : ''}`}>
                       <button onClick={() => beginReply(msg)} className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text" aria-label="Reply">
                         <Reply size={12} />
                       </button>
                       <button
-                        onClick={(e) => openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect())}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect());
+                        }}
                         className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text"
                         aria-label="Message actions"
                       >
@@ -1022,18 +1056,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
       {error && <div className="flex-none border-t border-red-900/50 bg-red-900/20 px-3 py-2 text-xs text-red-200">{error}</div>}
 
       {activeMenu && activeMenuMessage && (
-        <>
-          <button
-            type="button"
-            aria-label="Close message actions"
-            className="fixed inset-0 z-40 cursor-default bg-transparent"
-            onClick={() => setActiveMenu(null)}
-            tabIndex={-1}
-          />
-          <div
-            className="fixed z-50 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-2xl"
-            style={{ top: activeMenu.top, left: activeMenu.left }}
-          >
+        <div
+          id="chat-message-context-menu"
+          className="fixed z-50 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-2xl"
+          style={{ top: activeMenu.top, left: activeMenu.left }}
+        >
             <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">
               {EMOJIS.map((emoji) => (
                 <button
@@ -1065,7 +1092,6 @@ export function Chat({ roomId, onClose }: ChatProps) {
               </button>
             )}
           </div>
-        </>
       )}
 
       {(replyTo || editing || attachment) && (

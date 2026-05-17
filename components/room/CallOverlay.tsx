@@ -42,6 +42,11 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
   const [error, setError] = useState<string | null>(null);
   const [isConfigError, setIsConfigError] = useState(false);
 
+  // Resize State & Ref
+  const [dimensions, setDimensions] = useState({ width: 280, height: 360 });
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartRef = useRef({ x: 0, y: 0, w: 280, h: 360 });
+
   // Dragging state
   const [position, setPosition] = useState({ x: 20, y: 80 }); // Default bottom-left / top-right spacing
   const [isDragging, setIsDragging] = useState(false);
@@ -52,7 +57,7 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       // Place default floating position: bottom-right above standard mobile bottom sheets
-      const defaultX = window.innerWidth - 300;
+      const defaultX = window.innerWidth - dimensions.width - 16;
       const defaultY = window.innerHeight - (window.innerWidth < 768 ? 200 : 150);
       setPosition({ x: Math.max(16, defaultX), y: Math.max(80, defaultY) });
     }
@@ -64,8 +69,8 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
 
     const handleResize = () => {
       setPosition((prev) => {
-        const widgetWidth = isMinimized ? 180 : 280;
-        const widgetHeight = isMinimized ? 52 : 360;
+        const widgetWidth = isMinimized ? 180 : dimensions.width;
+        const widgetHeight = isMinimized ? 52 : dimensions.height;
         const maxX = window.innerWidth - widgetWidth - 16;
         const maxY = window.innerHeight - widgetHeight - 16;
 
@@ -78,7 +83,26 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [isMinimized]);
+  }, [isMinimized, dimensions]);
+
+  // Listen to the chat-header "Join Call" trigger event
+  useEffect(() => {
+    const handleJoinEvent = () => {
+      if (!isConnected && !isConnecting) {
+        handleJoinCall();
+      } else {
+        // Focus and maximize if already connected
+        setIsMinimized(false);
+        if (typeof window !== 'undefined') {
+          const defaultX = window.innerWidth - dimensions.width - 16;
+          const defaultY = window.innerHeight - (isMinimized ? 52 : dimensions.height) - 16;
+          setPosition({ x: Math.max(16, defaultX), y: Math.max(80, defaultY) });
+        }
+      }
+    };
+    window.addEventListener('readroom-join-call', handleJoinEvent);
+    return () => window.removeEventListener('readroom-join-call', handleJoinEvent);
+  }, [isConnected, isConnecting, dimensions, isMinimized]);
 
   // Fetch token and join
   const handleJoinCall = async () => {
@@ -134,8 +158,8 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
     let newY = clientY - dragStartRef.current.y;
 
     if (typeof window !== 'undefined') {
-      const widgetWidth = isMinimized ? 180 : 280;
-      const widgetHeight = isMinimized ? 52 : 360;
+      const widgetWidth = isMinimized ? 180 : dimensions.width;
+      const widgetHeight = isMinimized ? 52 : dimensions.height;
       const maxX = window.innerWidth - widgetWidth - 16;
       const maxY = window.innerHeight - widgetHeight - 16;
 
@@ -144,29 +168,89 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
     }
 
     setPosition({ x: newX, y: newY });
-  }, [isMinimized]);
+  }, [isMinimized, dimensions]);
 
   const handleDragEnd = useCallback(() => {
     isDraggingRef.current = false;
     setIsDragging(false);
   }, []);
 
-  // Window event listeners for seamless drag support
+  // Custom Resize handlers
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setIsResizing(true);
+    resizeStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      w: dimensions.width,
+      h: dimensions.height
+    };
+  };
+
+  const handleResizeTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    e.stopPropagation();
+    setIsResizing(true);
+    resizeStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      w: dimensions.width,
+      h: dimensions.height
+    };
+  };
+
+  const handleResizeMove = useCallback((clientX: number, clientY: number) => {
+    if (!isResizing) return;
+
+    const deltaX = clientX - resizeStartRef.current.x;
+    const deltaY = clientY - resizeStartRef.current.y;
+
+    let newWidth = resizeStartRef.current.w + deltaX;
+    let newHeight = resizeStartRef.current.h + deltaY;
+
+    // Enforce min and max dimensions
+    newWidth = Math.max(260, Math.min(600, newWidth));
+    newHeight = Math.max(280, Math.min(600, newHeight));
+
+    // Ensure it doesn't expand off-screen
+    if (typeof window !== 'undefined') {
+      const maxX = window.innerWidth - position.x - 16;
+      const maxY = window.innerHeight - position.y - 16;
+      newWidth = Math.min(newWidth, Math.max(260, maxX));
+      newHeight = Math.min(newHeight, Math.max(280, maxY));
+    }
+
+    setDimensions({ width: newWidth, height: newHeight });
+  }, [isResizing, position]);
+
+  // Window event listeners for seamless drag and resize support
   useEffect(() => {
-    if (!isDragging) return;
+    if (!isDragging && !isResizing) return;
 
     const onMouseMove = (e: MouseEvent) => {
-      handleDragMove(e.clientX, e.clientY);
+      if (isDragging) handleDragMove(e.clientX, e.clientY);
+      else if (isResizing) handleResizeMove(e.clientX, e.clientY);
     };
 
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches[0]) {
-        handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
+        if (isDragging) handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
+        else if (isResizing) handleResizeMove(e.touches[0].clientX, e.touches[0].clientY);
       }
     };
 
-    const onMouseUp = () => handleDragEnd();
-    const onTouchEnd = () => handleDragEnd();
+    const onMouseUp = () => {
+      setIsDragging(false);
+      setIsResizing(false);
+      isDraggingRef.current = false;
+    };
+    const onTouchEnd = () => {
+      setIsDragging(false);
+      setIsResizing(false);
+      isDraggingRef.current = false;
+    };
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
@@ -179,7 +263,7 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
     };
-  }, [isDragging, handleDragMove, handleDragEnd]);
+  }, [isDragging, isResizing, handleDragMove, handleResizeMove, handleDragEnd]);
 
   // Render Setup Configuration Helper
   if (isConfigError) {
@@ -209,7 +293,7 @@ LIVEKIT_API_KEY=your-api-key
 LIVEKIT_API_SECRET=your-api-secret`}
         </pre>
         <p className="text-[10px] text-slate-400 mt-3 text-center">
-          Get a free Cloud sandbox keys from <a href="https://livekit.io" target="_blank" rel="noreferrer" className="text-indigo-400 underline">livekit.io</a>.
+          Get free Cloud sandbox keys from <a href="https://livekit.io" target="_blank" rel="noreferrer" className="text-indigo-400 underline">livekit.io</a>.
         </p>
       </div>
     );
@@ -238,6 +322,9 @@ LIVEKIT_API_SECRET=your-api-secret`}
             handleDisconnect={handleDisconnected}
             userId={userId}
             userName={userName}
+            dimensions={dimensions}
+            handleResizeStart={handleResizeStart}
+            handleResizeTouchStart={handleResizeTouchStart}
           />
         </div>
         <RoomAudioRenderer />
@@ -245,34 +332,8 @@ LIVEKIT_API_SECRET=your-api-secret`}
     );
   }
 
-  // Otherwise, render floating "Join Voice Call" pill (Trigger state)
-  return (
-    <button
-      onClick={handleJoinCall}
-      disabled={isConnecting}
-      style={{ left: position.x, top: position.y }}
-      className="absolute z-[999] pointer-events-auto flex h-12 items-center gap-3 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-white font-medium pl-3 pr-4 shadow-[0_4px_24px_rgba(79,70,229,0.4)] backdrop-blur transition-all duration-300 hover:scale-105 active:scale-95 border border-indigo-400/30"
-    >
-      {isConnecting ? (
-        <>
-          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs uppercase tracking-wider font-semibold">Joining Call…</span>
-        </>
-      ) : (
-        <>
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white animate-pulse">
-            <Phone size={14} fill="white" />
-          </div>
-          <span className="text-xs uppercase tracking-wider font-semibold">Join Call</span>
-        </>
-      )}
-      {error && (
-        <span className="absolute -top-10 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] px-2.5 py-1 rounded shadow-lg whitespace-nowrap">
-          {error}
-        </span>
-      )}
-    </button>
-  );
+  // Otherwise, render nothing (the button is now inside the Chat Header!)
+  return null;
 }
 
 // Inner Widget rendering the media state and layout within the LiveKit context
@@ -283,6 +344,9 @@ interface InnerCallWidgetProps {
   handleDisconnect: () => void;
   userId: string;
   userName: string;
+  dimensions?: { width: number; height: number };
+  handleResizeStart?: (e: React.MouseEvent) => void;
+  handleResizeTouchStart?: (e: React.TouchEvent) => void;
 }
 
 function InnerCallWidget({
@@ -291,7 +355,10 @@ function InnerCallWidget({
   handleDragStart,
   handleDisconnect,
   userId,
-  userName
+  userName,
+  dimensions,
+  handleResizeStart,
+  handleResizeTouchStart
 }: InnerCallWidgetProps) {
   const { localParticipant } = useLocalParticipant();
   const participants = useParticipants();
@@ -299,6 +366,7 @@ function InnerCallWidget({
 
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCamOn, setIsCamOn] = useState(false);
+  const [focusedParticipantSid, setFocusedParticipantSid] = useState<string | null>(null);
 
   // Sync mic track
   useEffect(() => {
@@ -315,6 +383,9 @@ function InnerCallWidget({
   }, [isCamOn, localParticipant]);
 
   const activeSpeakers = participants.filter((p) => p.isSpeaking);
+
+  const focusedTrack = videoTracks.find((t) => t.participant.sid === focusedParticipantSid);
+  const thumbnailTracks = videoTracks.filter((t) => t.participant.sid !== focusedParticipantSid);
 
   // MINIMIZED MODE: Sleek Capsule/Pill Layout
   if (isMinimized) {
@@ -385,13 +456,16 @@ function InnerCallWidget({
 
   // EXPANDED MODE: Rich Glassmorphic Dock UI
   return (
-    <div className="w-[280px] rounded-2xl border border-slate-700/60 bg-slate-900/90 p-4 shadow-2xl backdrop-blur-xl text-slate-100 flex flex-col gap-3.5">
+    <div 
+      style={!isMinimized && dimensions ? { width: dimensions.width, height: dimensions.height } : undefined}
+      className="w-[280px] rounded-2xl border border-slate-700/60 bg-slate-900/90 p-4 shadow-2xl backdrop-blur-xl text-slate-100 flex flex-col gap-3.5 relative overflow-hidden h-full"
+    >
       
       {/* Draggable grip and header */}
       <div 
         onMouseDown={(e) => handleDragStart(e.clientX, e.clientY)}
         onTouchStart={(e) => e.touches[0] && handleDragStart(e.touches[0].clientX, e.touches[0].clientY)}
-        className="cursor-grab active:cursor-grabbing flex flex-col gap-1 border-b border-slate-800 pb-2 relative"
+        className="cursor-grab active:cursor-grabbing flex flex-col gap-1 border-b border-slate-800 pb-2 relative flex-shrink-0"
       >
         <GripHorizontal size={16} className="text-slate-500 hover:text-slate-300 mx-auto transition-colors" />
         <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400 select-none">
@@ -411,22 +485,70 @@ function InnerCallWidget({
         </div>
       </div>
 
-      {/* Media elements: Active Video Grid */}
+      {/* Media elements: Active Video Grid / Enlarged Focus view */}
       {videoTracks.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto pr-1">
-          {videoTracks.map((track) => (
-            <div key={track.participant.sid} className="relative aspect-video bg-slate-950 rounded-lg overflow-hidden border border-slate-800 group shadow-md shadow-black/20">
-              <VideoTrack trackRef={track} className="w-full h-full object-cover" />
-              <div className="absolute bottom-1 left-1.5 bg-slate-900/70 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800">
-                {track.participant.name || 'Reader'}
+        <div className="flex flex-col flex-1 min-h-0">
+          {focusedTrack ? (
+            <div className="flex flex-col flex-1 min-h-0">
+              {/* Enlarged video */}
+              <div className="relative w-full flex-1 min-h-[120px] bg-slate-950 rounded-xl overflow-hidden border border-slate-700/60 shadow-lg group">
+                <VideoTrack trackRef={focusedTrack} className="w-full h-full object-cover" />
+                <div className="absolute bottom-2 left-2 bg-slate-900/80 px-2 py-0.5 rounded-md text-[10px] text-slate-100 border border-slate-800 font-medium">
+                  {focusedTrack.participant.name || 'Reader'}
+                </div>
+                {/* Exit Focus Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFocusedParticipantSid(null);
+                  }}
+                  className="absolute top-2 right-2 rounded-full p-1 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-slate-100 border border-slate-700 transition-colors pointer-events-auto shadow-md"
+                  title="Exit focused view"
+                >
+                  <Minimize2 size={13} />
+                </button>
               </div>
+
+              {/* Thumbnails strip */}
+              {thumbnailTracks.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 mt-2 max-h-[56px] shrink-0 scrollbar-thin scrollbar-thumb-slate-800 pr-1">
+                  {thumbnailTracks.map((track) => (
+                    <div
+                      key={track.participant.sid}
+                      onClick={() => setFocusedParticipantSid(track.participant.sid)}
+                      className="relative w-[76px] aspect-video shrink-0 bg-slate-950 rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer shadow group"
+                    >
+                      <VideoTrack trackRef={track} className="w-full h-full object-cover pointer-events-none" />
+                      <div className="absolute bottom-0.5 left-1 bg-slate-900/70 px-1 py-0.2 rounded text-[7px] text-slate-300 truncate max-w-[90%]">
+                        {track.participant.name || 'Reader'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+          ) : (
+            <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1 flex-1 min-h-[80px]">
+              {videoTracks.map((track) => (
+                <div
+                  key={track.participant.sid}
+                  onClick={() => setFocusedParticipantSid(track.participant.sid)}
+                  className="relative aspect-video bg-slate-950 rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer group shadow-md shadow-black/20"
+                  title="Click to focus video"
+                >
+                  <VideoTrack trackRef={track} className="w-full h-full object-cover pointer-events-none" />
+                  <div className="absolute bottom-1 left-1.5 bg-slate-900/70 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800">
+                    {track.participant.name || 'Reader'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* Participants presence strip */}
-      <div className="flex flex-col gap-2 max-h-[150px] overflow-y-auto pr-1">
+      <div className="flex flex-col gap-2 overflow-y-auto pr-1 max-h-[110px] flex-shrink-0">
         <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">
           <Users size={12} />
           <span>Call Members ({participants.length})</span>
@@ -487,7 +609,7 @@ function InnerCallWidget({
       </div>
 
       {/* Control row with premium circle action buttons */}
-      <div className="flex justify-around items-center border-t border-slate-800 pt-3">
+      <div className="flex justify-around items-center border-t border-slate-800 pt-3 flex-shrink-0">
         {/* Microphone mute toggle */}
         <button
           onClick={() => setIsMicMuted(!isMicMuted)}
@@ -523,6 +645,21 @@ function InnerCallWidget({
           <PhoneOff size={16} />
         </button>
       </div>
+
+      {/* Resize handle (desktop/mobile custom zone) */}
+      {!isMinimized && handleResizeStart && handleResizeTouchStart && (
+        <div 
+          onMouseDown={handleResizeStart}
+          onTouchStart={handleResizeTouchStart}
+          className="absolute bottom-1 right-1 w-4 h-4 cursor-se-resize z-50 flex items-end justify-end p-0.5 group pointer-events-auto"
+          title="Drag to resize call panel"
+        >
+          <svg width="8" height="8" viewBox="0 0 8 8" className="text-slate-500 group-hover:text-indigo-400 transition-colors">
+            <line x1="6" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="1.2" />
+            <line x1="8" y1="3" x2="3" y2="8" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+        </div>
+      )}
 
     </div>
   );
