@@ -2402,15 +2402,13 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         <div ref={rightSidebarContainerRef} className="absolute top-0 right-0 bottom-0 z-[55] flex flex-row-reverse pointer-events-none">
           
           {/* Chat Sidebar Overlay */}
-          {!chatSidebarCollapsed && (
-             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50">
-                <div 
-                  className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
-                  onMouseDown={handleChatResizeMouseDown}
-                />
-                <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} width={chatWidth} onResizeMouseDown={handleChatResizeMouseDown} />
-             </div>
-          )}
+          <div className={`flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50 ${chatSidebarCollapsed ? 'hidden' : ''}`}>
+             <div 
+               className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
+               onMouseDown={handleChatResizeMouseDown}
+             />
+             <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} width={chatWidth} onResizeMouseDown={handleChatResizeMouseDown} />
+          </div>
 
           {/* Aux Sidebar (People/Notes) Overlay */}
           {sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') && (
