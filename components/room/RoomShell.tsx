@@ -20,6 +20,7 @@ import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { ChatSidebar } from '@/components/layout/ChatSidebar';
 import { SettingsOverlay } from '@/components/room/SettingsOverlay';
+import { CallOverlay } from '@/components/room/CallOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
 import { usePresence } from '@/lib/hooks/usePresence';
 import { getSocket } from '@/lib/socket/client';
@@ -2128,6 +2129,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       onTouchStart={handleTouchStartGlobal}
       onTouchEnd={handleTouchEndGlobal}
     >
+      {/* Glassmorphic voice/video calling overlay (completely isolated) */}
+      <CallOverlay roomId={roomId} userId={initialUserId} userName={initialUserName} />
+
       {/* Settings overlay — rendered in-place, keeps RoomShell mounted */}
       {settingsOpen && <SettingsOverlay />}
 

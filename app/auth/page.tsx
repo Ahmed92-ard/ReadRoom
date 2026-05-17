@@ -152,6 +152,8 @@ export default function AuthPage() {
             )}
           </button>
 
+
+
           <p className="text-center text-xs text-room-muted mt-6">
             By signing in you agree to our{' '}
             <span className="text-blue-400 cursor-pointer hover:underline">Terms of Service</span>
