@@ -234,48 +234,7 @@ interface ToastActivity extends RoomActivity {
   toastId: string;
 }
 
-function ResizablePane({ children, isLast, initialWidthPct }: { children: React.ReactNode, isLast: boolean, initialWidthPct: number }) {
-  const [width, setWidth] = useState<number | undefined>(undefined);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const startDragRef = useRef<{ x: number, startWidth: number } | null>(null);
-  const [isDesktop, setIsDesktop] = useState(true);
 
-  useEffect(() => {
-    const check = () => setIsDesktop(window.innerWidth >= 768);
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!startDragRef.current) return;
-      const dx = e.clientX - startDragRef.current.x;
-      setWidth(Math.max(200, startDragRef.current.startWidth + dx));
-    };
-    const onMouseUp = () => { startDragRef.current = null; document.body.style.cursor = ''; };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
-  }, []);
-
-  if (!isDesktop || isLast) {
-    return <div className="flex-1 min-h-0 h-full w-full">{children}</div>;
-  }
-
-  return (
-    <div ref={containerRef} className="relative flex-none min-h-0 h-full" style={{ width: width ? `${width}px` : `${initialWidthPct}%` }}>
-      <div className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 z-50 transition-colors"
-        onMouseDown={(e) => {
-          startDragRef.current = { x: e.clientX, startWidth: containerRef.current?.clientWidth || 0 };
-          document.body.style.cursor = 'col-resize';
-          e.preventDefault();
-        }}
-      />
-      <div className="pr-3 h-full">{children}</div>
-    </div>
-  );
-}
 
 export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom }: RoomShellProps) {
   const router = useRouter();
@@ -316,6 +275,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const [folderTree, setFolderTree] = useState<import('@/types').PDFFolder[]>([]);
   const [currentChannelPdfId, setCurrentChannelPdfId] = useState<string | null>(null);
   const [openViewers, setOpenViewers] = useState<OpenViewer[]>([]);
+  const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null);
+  const [dragOverPaneKey, setDragOverPaneKey] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
   const [pdfLibraryError, setPdfLibraryError] = useState<string | null>(null);
@@ -1514,6 +1475,60 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     }
   }, [libraryId, channelId, movingPdf, moveTargetFolderId, fetchFolderTree, roomId, initialUserName, initialUserId]);
 
+  const handleReorderItem = useCallback(async (
+    type: 'pdf' | 'folder',
+    id: string,
+    newParentId: string | null,
+    newPosition: number
+  ) => {
+    try {
+      if (type === 'folder') {
+        const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId: id, parentId: newParentId, position: newPosition }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to move folder');
+      } else {
+        const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/pdfs/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId: newParentId, position: newPosition }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to move PDF');
+      }
+      
+      await fetchFolderTree();
+      
+      getSocket().emit('library:updated', {
+        id: `library:reorder:${id}:${Date.now()}`,
+        roomId,
+        type: 'library:updated',
+        title: `${initialUserName || 'Someone'} rearranged the shelf`,
+        body: type === 'folder' ? 'Moved a folder' : 'Moved a PDF',
+        userId: initialUserId,
+        userName: initialUserName,
+        ts: Date.now(),
+        metadata: { action: 'reorder', type, itemId: id, parentId: newParentId, position: newPosition }
+      });
+
+    } catch (err) {
+      console.error('[FolderTree] reorder error:', err);
+      pushToast({
+        id: `reorder-err-${Date.now()}`,
+        roomId,
+        type: 'presence:join',
+        title: 'Error moving item',
+        body: err instanceof Error ? err.message : String(err),
+        userId: initialUserId,
+        userName: initialUserName,
+        ts: Date.now(),
+      });
+    }
+  }, [libraryId, channelId, fetchFolderTree, roomId, initialUserId, initialUserName, pushToast]);
+
   const folderOptions = flattenFolders(folderTree);
   const pendingDeleteFolderName = folderOptions.find((folder) => folder.id === pendingDeleteFolderId)?.name ?? 'this folder';
 
@@ -1625,6 +1640,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 onCreateFolder={handleCreateFolder}
                 libraryId={libraryId}
                 channelId={channelId}
+                onReorderItem={handleReorderItem}
               />
             </div>
           </div>
@@ -1826,19 +1842,85 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             });
 
             return (
-              <div className={`h-full flex flex-col gap-2 p-2 ${totalViewers > 1 ? 'md:flex-row md:gap-0 md:p-0 md:pt-2 md:pl-2 md:pb-2' : ''}`}>
-                {allPanes.map((pane, idx) => {
-                  const isLast = idx === allPanes.length - 1;
-                  return totalViewers > 1 ? (
-                    <ResizablePane key={pane.key} isLast={isLast} initialWidthPct={100 / totalViewers}>
-                      {pane.element}
-                    </ResizablePane>
-                  ) : (
-                    <div key={pane.key} className="flex-1 min-h-0 h-full w-full">
-                      {pane.element}
-                    </div>
-                  );
-                })}
+              <div className={`h-full overflow-y-auto overflow-x-hidden p-2 grid gap-2 ${totalViewers > 1 ? 'md:grid-cols-2 auto-rows-[minmax(50vh,1fr)]' : 'grid-cols-1'}`}>
+                {allPanes.map((pane) => (
+                  <div
+                    key={pane.key}
+                    draggable
+                    onDragStart={() => setDraggedPaneKey(pane.key)}
+                    onDragEnd={() => {
+                      setDraggedPaneKey(null);
+                      setDragOverPaneKey(null);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (draggedPaneKey && draggedPaneKey !== pane.key) {
+                        setDragOverPaneKey(pane.key);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverPaneKey === pane.key) {
+                        setDragOverPaneKey(null);
+                      }
+                    }}
+                    onDrop={() => {
+                      if (!draggedPaneKey || draggedPaneKey === pane.key) return;
+
+                      if (draggedPaneKey === 'main-workspace') {
+                        const targetViewer = openViewers.find(v => v.key === pane.key);
+                        if (targetViewer && room?.pdf) {
+                          const oldMain = room.pdf;
+                          setRoom({ ...room, pdf: targetViewer.pdf });
+                          setOpenViewers(prev => prev.map(v => v.key === pane.key ? {
+                            ...v,
+                            key: `pdf:${oldMain.fileId}`,
+                            pdfId: oldMain.fileId,
+                            pdf: oldMain,
+                            title: oldMain.filename
+                          } : v));
+                        }
+                      }
+                      else if (pane.key === 'main-workspace') {
+                        const sourceViewer = openViewers.find(v => v.key === draggedPaneKey);
+                        if (sourceViewer && room?.pdf) {
+                          const oldMain = room.pdf;
+                          setRoom({ ...room, pdf: sourceViewer.pdf });
+                          setOpenViewers(prev => prev.map(v => v.key === draggedPaneKey ? {
+                            ...v,
+                            key: `pdf:${oldMain.fileId}`,
+                            pdfId: oldMain.fileId,
+                            pdf: oldMain,
+                            title: oldMain.filename
+                          } : v));
+                        }
+                      }
+                      else {
+                        setOpenViewers(prev => {
+                          const next = [...prev];
+                          const fromIdx = prev.findIndex(v => v.key === draggedPaneKey);
+                          const toIdx = prev.findIndex(v => v.key === pane.key);
+                          if (fromIdx !== -1 && toIdx !== -1) {
+                            const temp = next[fromIdx];
+                            next[fromIdx] = next[toIdx];
+                            next[toIdx] = temp;
+                          }
+                          return next;
+                        });
+                      }
+
+                      setDraggedPaneKey(null);
+                      setDragOverPaneKey(null);
+                    }}
+                    className={`min-w-0 min-h-0 relative bg-room-bg rounded-lg transition-all ${
+                      draggedPaneKey === pane.key ? 'opacity-50 scale-95 border-2 border-dashed border-blue-500/50' : ''
+                    } ${
+                      dragOverPaneKey === pane.key ? 'ring-4 ring-blue-500 bg-blue-500/10 scale-[0.99] opacity-90' : ''
+                    }`}
+                    style={{ resize: 'both', overflow: 'hidden' }}
+                  >
+                    {pane.element}
+                  </div>
+                ))}
               </div>
             );
           })() : (

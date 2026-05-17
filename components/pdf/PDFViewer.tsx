@@ -82,8 +82,6 @@ export function PDFViewer({
   const zoomDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [touchStartDist, setTouchStartDist] = useState<number | null>(null);
   const [baseZoom, setBaseZoom] = useState(1.0);
-  const [swipeStartX, setSwipeStartX] = useState<number | null>(null);
-  const [swipeStartY, setSwipeStartY] = useState<number | null>(null);
   const [inputPage, setInputPage] = useState(String(viewerState?.page ?? store.page));
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -261,9 +259,6 @@ export function PDFViewer({
     if (e.touches.length === 2) {
       setTouchStartDist(getTouchDistance(e));
       setBaseZoom(zoom);
-    } else if (e.touches.length === 1) {
-      setSwipeStartX(e.touches[0].clientX);
-      setSwipeStartY(e.touches[0].clientY);
     }
   }, [zoom]);
 
@@ -278,21 +273,8 @@ export function PDFViewer({
   }, [touchStartDist, baseZoom, setZoom]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (e.changedTouches.length === 1 && swipeStartX !== null && swipeStartY !== null) {
-      const dx = e.changedTouches[0].clientX - swipeStartX;
-      const dy = e.changedTouches[0].clientY - swipeStartY;
-      const container = containerRef.current;
-      const isScrollableX = container ? container.scrollWidth > container.clientWidth + 10 : false;
-
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && !isScrollableX) {
-        if (dx < 0 && page < totalPages) setPage(page + 1);
-        else if (dx > 0 && page > 1) setPage(page - 1);
-      }
-      setSwipeStartX(null);
-      setSwipeStartY(null);
-    }
     setTouchStartDist(null);
-  }, [swipeStartX, swipeStartY, page, totalPages, setPage]);
+  }, []);
 
   // Keyboard navigation
   useEffect(() => {

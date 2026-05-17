@@ -114,6 +114,8 @@ export async function PATCH(
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const updates: any = {};
+
   if (Object.prototype.hasOwnProperty.call(body ?? {}, 'folderId')) {
     const folderId = body.folderId ? String(body.folderId) : null;
 
@@ -129,22 +131,32 @@ export async function PATCH(
       if (!folder) return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
     }
 
-    const posQuery = db
-      .from(PDF_TABLE)
-      .select('position')
-      .eq('room_id', channelId)
-      .order('position', { ascending: false })
-      .limit(1);
+    updates.folder_id = folderId;
 
-    const { data: existingPositions } = folderId
-      ? await posQuery.eq('folder_id', folderId)
-      : await posQuery.is('folder_id', null);
+    if (typeof body?.position !== 'number') {
+      const posQuery = db
+        .from(PDF_TABLE)
+        .select('position')
+        .eq('room_id', channelId)
+        .order('position', { ascending: false })
+        .limit(1);
 
-    const position = (existingPositions?.[0]?.position ?? -1) + 1;
+      const { data: existingPositions } = folderId
+        ? await posQuery.eq('folder_id', folderId)
+        : await posQuery.is('folder_id', null);
 
+      updates.position = (existingPositions?.[0]?.position ?? -1) + 1;
+    }
+  }
+
+  if (typeof body?.position === 'number') {
+    updates.position = body.position;
+  }
+
+  if (Object.keys(updates).length > 0) {
     const { error } = await db
       .from(PDF_TABLE)
-      .update({ folder_id: folderId, position })
+      .update(updates)
       .eq('id', pdfId)
       .eq('room_id', channelId);
 

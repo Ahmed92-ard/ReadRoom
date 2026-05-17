@@ -50,3 +50,43 @@ export async function GET(
 
   return NextResponse.json({ pdfs: (pdfs ?? []).map((pdf) => serializeRoomPdf(pdf, libraryId)) });
 }
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<Params> | Params }
+) {
+  const { libraryId, channelId } = await params;
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { membership } = await requireLibraryMember(supabase, libraryId, user.id);
+  if (!membership) return NextResponse.json({ error: 'Not a member' }, { status: 403 });
+
+  const body = await req.json().catch(() => null);
+  const pdfId = body?.pdfId;
+  const folderId = body?.folderId !== undefined ? body.folderId : undefined;
+  const position = typeof body?.position === 'number' ? body.position : undefined;
+
+  if (!pdfId) return NextResponse.json({ error: 'pdfId required' }, { status: 400 });
+
+  const updates: any = {};
+  if (folderId !== undefined) updates.folder_id = folderId;
+  if (position !== undefined) updates.position = position;
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
+  }
+
+  const db = getDbClient(supabase);
+  const { data: pdf, error } = await db
+    .from(PDF_TABLE)
+    .update(updates)
+    .eq('id', pdfId)
+    .eq('room_id', channelId)
+    .select()
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ pdf: serializeRoomPdf(pdf, libraryId) });
+}

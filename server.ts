@@ -349,6 +349,18 @@ app.prepare().then(() => {
       ]).catch(() => {});
     });
 
+    socket.on('chat:typing', (payload: { roomId: string; userId: string; userName: string; typing: boolean; ts: number }) => {
+      if (!payload.roomId) return;
+      const cleanRoomId = sanitizeString(payload.roomId, 64);
+      socket.to(cleanRoomId).emit('chat:typing', {
+        roomId: cleanRoomId,
+        userId: sanitizeString(payload.userId, 64),
+        userName: sanitizeString(payload.userName, 64),
+        typing: Boolean(payload.typing),
+        ts: Number(payload.ts ?? Date.now()),
+      });
+    });
+
     // ── Profile updates: broadcast to all rooms the user is in ───────────────
     socket.on('profile:updated', async (payload: {
       userId: string;

@@ -33,6 +33,7 @@ interface FolderTreeProps {
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
   libraryId?: string;
   channelId?: string;
+  onReorderItem?: (type: 'pdf' | 'folder', id: string, newParentId: string | null, newPosition: number) => Promise<void>;
 }
 
 // ── PDF row ───────────────────────────────────────────────────────────────────
@@ -62,7 +63,11 @@ function PdfRow({
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } }}
-      className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all text-sm ${
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'pdf', id: pdf.id }));
+      }}
+      className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-grab active:cursor-grabbing transition-all text-sm ${
         active
           ? 'bg-blue-500/15 text-blue-400'
           : 'text-room-muted hover:bg-room-hover hover:text-room-text'
@@ -126,6 +131,7 @@ function FolderNode({
   onUploadToFolder,
   onRenameFolder,
   onCreateFolder,
+  onReorderItem,
 }: {
   folder: PDFFolder;
   depth: number;
@@ -139,6 +145,7 @@ function FolderNode({
   onUploadToFolder: (folderId: string | null) => void;
   onRenameFolder: (id: string, name: string) => Promise<void>;
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
+  onReorderItem?: (type: 'pdf' | 'folder', id: string, newParentId: string | null, newPosition: number) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [renaming, setRenaming] = useState(false);
@@ -146,6 +153,7 @@ function FolderNode({
   const [creatingChild, setCreatingChild] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [showMenu, setShowMenu] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const totalItems = folder.pdfs.length + folder.children.length;
   const hasActiveChild = folder.pdfs.some((p) => p.id === activePdfId) ||
@@ -171,7 +179,31 @@ function FolderNode({
     <div>
       {/* Folder header row */}
       <div
-        className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all hover:bg-room-hover ${
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'folder', id: folder.id }));
+          e.stopPropagation();
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragOver(true);
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragOver(false);
+          try {
+            const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+            if (data.type === 'folder' && data.id === folder.id) return;
+            if (onReorderItem) {
+              await onReorderItem(data.type, data.id, folder.id, 0);
+            }
+          } catch (err) {}
+        }}
+        className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing transition-all hover:bg-room-hover ${
+          isDragOver ? 'bg-blue-500/20 ring-2 ring-blue-500' : ''
+        } ${
           hasActiveChild && !expanded ? 'text-blue-400' : 'text-room-text'
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
@@ -295,6 +327,7 @@ function FolderNode({
               onUploadToFolder={onUploadToFolder}
               onRenameFolder={onRenameFolder}
               onCreateFolder={onCreateFolder}
+              onReorderItem={onReorderItem}
             />
           ))}
 
@@ -343,9 +376,11 @@ export function FolderTree({
   onUploadToFolder,
   onRenameFolder,
   onCreateFolder,
+  onReorderItem,
 }: FolderTreeProps) {
   const [creatingRoot, setCreatingRoot] = useState(false);
   const [rootFolderName, setRootFolderName] = useState('');
+  const [isDragOverRoot, setIsDragOverRoot] = useState(false);
 
   const handleCreateRoot = async () => {
     const trimmed = rootFolderName.trim();
@@ -358,7 +393,26 @@ export function FolderTree({
   const isEmpty = folders.length === 0 && rootPdfs.length === 0;
 
   return (
-    <div className="flex flex-col gap-0.5">
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragOverRoot(true);
+      }}
+      onDragLeave={() => setIsDragOverRoot(false)}
+      onDrop={async (e) => {
+        e.preventDefault();
+        setIsDragOverRoot(false);
+        try {
+          const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+          if (onReorderItem) {
+            await onReorderItem(data.type, data.id, null, 0);
+          }
+        } catch (err) {}
+      }}
+      className={`flex flex-col gap-0.5 rounded-lg transition-all ${
+        isDragOverRoot ? 'bg-blue-500/5 ring-1 ring-blue-500/20 p-1' : ''
+      }`}
+    >
       {/* Root folders */}
       {folders.map((folder) => (
         <FolderNode
@@ -375,6 +429,7 @@ export function FolderTree({
           onUploadToFolder={onUploadToFolder}
           onRenameFolder={onRenameFolder}
           onCreateFolder={onCreateFolder}
+          onReorderItem={onReorderItem}
         />
       ))}
 

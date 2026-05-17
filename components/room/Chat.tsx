@@ -372,7 +372,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
         const next = { ...prev };
         let changed = false;
         for (const [uid, ts] of Object.entries(next)) {
-          if (now - ts > 10000) {
+          if (now - ts > 2000) {
             delete next[uid];
             changed = true;
           }
@@ -497,19 +497,26 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
   }, [activeMenu]);
 
+  const emitThrottleRef = useRef(0);
   const isTypingRef = useRef(false);
 
   const handleTypingStart = useCallback(() => {
     if (!self) return;
-    if (!typingTimeoutRef.current) {
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: Date.now() });
-    } else {
+    
+    const now = Date.now();
+    if (now - emitThrottleRef.current > 1000) {
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now });
+      emitThrottleRef.current = now;
+    }
+
+    if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
     
     typingTimeoutRef.current = setTimeout(() => {
       getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
       typingTimeoutRef.current = null;
+      emitThrottleRef.current = 0;
     }, 1500);
   }, [roomId, self]);
 
@@ -517,6 +524,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     if (!self || !typingTimeoutRef.current) return;
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = null;
+    emitThrottleRef.current = 0;
     getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
   }, [roomId, self]);
 

@@ -161,13 +161,25 @@ export async function PATCH(
 
   const body = await req.json().catch(() => null);
   const folderId = body?.folderId;
-  const name = String(body?.name ?? '').trim().slice(0, 128);
-  if (!folderId || !name) return NextResponse.json({ error: 'folderId and name required' }, { status: 400 });
+  const name = body?.name ? String(body.name).trim().slice(0, 128) : undefined;
+  const parentId = body?.parentId !== undefined ? body.parentId : undefined;
+  const position = typeof body?.position === 'number' ? body.position : undefined;
+
+  if (!folderId) return NextResponse.json({ error: 'folderId required' }, { status: 400 });
+
+  const updates: any = {};
+  if (name) updates.name = name;
+  if (parentId !== undefined) updates.parent_id = parentId;
+  if (position !== undefined) updates.position = position;
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
+  }
 
   const db = getDbClient(supabase);
   const { data: folder, error } = await db
     .from('pdf_folders')
-    .update({ name })
+    .update(updates)
     .eq('id', folderId)
     .eq('room_id', channelId)
     .select()
