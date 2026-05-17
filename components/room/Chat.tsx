@@ -1065,7 +1065,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       {activeMenu && activeMenuMessage && typeof document !== 'undefined' && createPortal(
         <div
           id="chat-message-context-menu"
-          className="fixed z-50 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-2xl"
+          className="fixed z-[9999] w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-2xl"
           style={{ top: activeMenu.top, left: activeMenu.left }}
         >
           <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">

@@ -55,9 +55,12 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
   // Position initialized on mount/resize
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // Place default floating position: bottom-right above standard mobile bottom sheets
-      const defaultX = window.innerWidth - dimensions.width - 16;
-      const defaultY = window.innerHeight - (window.innerWidth < 768 ? 200 : 150);
+      const widgetWidth = isMinimized ? 190 : dimensions.width;
+      const widgetHeight = isMinimized ? 52 : dimensions.height;
+      const defaultX = window.innerWidth - widgetWidth - 16;
+      // Subtract safe bottom offset (80px in mobile for navigation sheets, 16px in desktop)
+      const bottomOffset = window.innerWidth < 768 ? 80 : 16;
+      const defaultY = window.innerHeight - widgetHeight - bottomOffset;
       setPosition({ x: Math.max(16, defaultX), y: Math.max(80, defaultY) });
     }
   }, []);
@@ -527,7 +530,7 @@ function InnerCallWidget({
         <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400 select-none">
           <div className="flex items-center gap-1.5">
             <Volume2 size={14} className="text-emerald-400" />
-            <span>Voice Call</span>
+            <span>Call</span>
           </div>
           <div className="flex items-center gap-2">
             <button 
@@ -586,6 +589,13 @@ function InnerCallWidget({
                 {/* Bottom Speaking Indicator */}
                 {focusedParticipant.isSpeaking && (
                   <div className="absolute bottom-0 left-0 w-full h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-1px_6px_rgba(16,185,129,0.6)]" />
+                )}
+
+                {/* Muted Mic Indicator Overlay */}
+                {!focusedParticipant.isMicrophoneEnabled && (
+                  <div className="absolute bottom-2 right-2 bg-rose-500/90 text-white p-1.5 rounded-md shadow-md backdrop-blur-sm border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
+                    <MicOff size={12} className="w-3 h-3" />
+                  </div>
                 )}
 
                 <div className="absolute bottom-2 left-2 bg-slate-900/80 px-2 py-0.5 rounded-md text-[10px] text-slate-100 border border-slate-800 font-medium">
@@ -658,6 +668,13 @@ function InnerCallWidget({
                           <div className="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-0.5px_4px_rgba(16,185,129,0.6)]" />
                         )}
 
+                        {/* Muted Mic Indicator Overlay */}
+                        {!p.isMicrophoneEnabled && (
+                          <div className="absolute bottom-1 right-1 bg-rose-500/90 text-white p-0.5 rounded shadow-sm border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
+                            <MicOff size={8} className="w-2 h-2" />
+                          </div>
+                        )}
+
                         <div className="absolute bottom-0.5 left-1 bg-slate-900/70 px-1 py-0.2 rounded text-[7px] text-slate-300 truncate max-w-[90%] pointer-events-none">
                           {p.identity === localParticipant?.identity ? 'You' : p.name || 'Reader'}
                         </div>
@@ -668,66 +685,89 @@ function InnerCallWidget({
               )}
             </div>
           ) : (
-            /* Standard Grid View of unified members */
-            <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1 flex-1 min-h-[80px] select-none">
-              {allParticipants.map((p) => {
-                const cameraTrack = getCameraTrack(p);
-                const isSpeaking = p.isSpeaking;
+            /* Standard Grid View of unified members: Responsive and Dynamic */
+            (() => {
+              const isSingle = allParticipants.length === 1;
+              const gridCols = isSingle ? 'grid-cols-1' : 'grid-cols-2';
 
-                return (
-                  <div
-                    key={p.identity}
-                    onClick={() => setFocusedParticipantIdentity(p.identity)}
-                    className="relative aspect-video rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer group shadow-md shadow-black/20 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950"
-                    title="Click to focus video"
-                  >
-                    {cameraTrack ? (
-                      <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover pointer-events-none" />
-                    ) : (
-                      (() => {
-                        const meta = getParticipantMeta(p.identity);
-                        const avatarUrl = meta?.avatarUrl;
-                        const avatarColor = meta?.avatarColor || stringToColor(p.identity);
-                        const initials = meta?.avatarInitials || makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''));
+              return (
+                <div className={`grid ${gridCols} gap-2 overflow-y-auto pr-1 flex-1 min-h-[80px] select-none h-full`}>
+                  {allParticipants.map((p) => {
+                    const cameraTrack = getCameraTrack(p);
+                    const isSpeaking = p.isSpeaking;
+                    const isMuted = !p.isMicrophoneEnabled;
 
-                        return (
-                          <div 
-                            style={{ backgroundColor: avatarColor }}
-                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs text-white shadow-md overflow-hidden relative transition-all duration-300 ${
-                              isSpeaking 
-                                ? 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
-                                : 'border border-slate-700'
-                            }`}
-                          >
-                            {avatarUrl ? (
-                              <img 
-                                src={avatarUrl} 
-                                alt={p.name || ''} 
-                                className="w-full h-full object-cover pointer-events-none"
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display = 'none';
-                                }}
-                              />
-                            ) : (
-                              initials
-                            )}
+                    return (
+                      <div
+                        key={p.identity}
+                        onClick={() => setFocusedParticipantIdentity(p.identity)}
+                        className={
+                          isSingle
+                            ? "relative flex-1 w-full h-full min-h-[140px] rounded-xl overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer group shadow-lg flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950"
+                            : "relative aspect-video rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer group shadow-md shadow-black/20 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950"
+                        }
+                        title="Click to focus video"
+                      >
+                        {cameraTrack ? (
+                          <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover pointer-events-none" />
+                        ) : (
+                          (() => {
+                            const meta = getParticipantMeta(p.identity);
+                            const avatarUrl = meta?.avatarUrl;
+                            const avatarColor = meta?.avatarColor || stringToColor(p.identity);
+                            const initials = meta?.avatarInitials || makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''));
+
+                            return (
+                              <div 
+                                style={{ backgroundColor: avatarColor }}
+                                className={`rounded-full flex items-center justify-center font-bold text-white shadow-md overflow-hidden relative transition-all duration-300 ${
+                                  isSingle ? 'w-16 h-16 text-lg' : 'w-10 h-10 text-xs'
+                                } ${
+                                  isSpeaking 
+                                    ? isSingle
+                                      ? 'ring-4 ring-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.8)] scale-105 animate-pulse'
+                                      : 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
+                                    : 'border border-slate-700'
+                                }`}
+                              >
+                                {avatarUrl ? (
+                                  <img 
+                                    src={avatarUrl} 
+                                    alt={p.name || ''} 
+                                    className="w-full h-full object-cover pointer-events-none"
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                    }}
+                                  />
+                                ) : (
+                                  initials
+                                )}
+                              </div>
+                            );
+                          })()
+                        )}
+
+                        {/* Bottom Speaking Indicator */}
+                        {isSpeaking && (
+                          <div className="absolute bottom-0 left-0 w-full h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-1px_6px_rgba(16,185,129,0.6)]" />
+                        )}
+
+                        {/* Muted Mic Indicator Overlay */}
+                        {isMuted && (
+                          <div className="absolute bottom-1.5 right-1.5 bg-rose-500/90 text-white p-1 rounded-md shadow-md backdrop-blur-sm border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
+                            <MicOff size={10} className="w-2.5 h-2.5" />
                           </div>
-                        );
-                      })()
-                    )}
+                        )}
 
-                    {/* Bottom Speaking Indicator */}
-                    {isSpeaking && (
-                      <div className="absolute bottom-0 left-0 w-full h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-1px_6px_rgba(16,185,129,0.6)]" />
-                    )}
-
-                    <div className="absolute bottom-1 left-1.5 bg-slate-900/80 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800/60 pointer-events-none">
-                      {p.identity === localParticipant?.identity ? `${p.name || userName} (You)` : p.name || 'Reader'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                        <div className="absolute bottom-1 left-1.5 bg-slate-900/80 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800/60 pointer-events-none">
+                          {p.identity === localParticipant?.identity ? `${p.name || userName} (You)` : p.name || 'Reader'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()
           )}
         </div>
       )}
