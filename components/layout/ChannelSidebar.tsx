@@ -3,7 +3,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { BookOpen, Plus, ChevronDown, ChevronRight, Link2, Check, Trash2, MoreVertical, Settings, Pencil } from 'lucide-react';
+import { BookOpen, Plus, ChevronDown, ChevronRight, Link2, Check, Trash2, MoreVertical, Settings, Pencil , X } from 'lucide-react';
 import { useWorkspaceStore, type ChannelData } from '@/store/workspaceStore';
 import { useUIStore } from '@/store/uiStore';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
