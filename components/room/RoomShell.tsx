@@ -2183,8 +2183,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         <div className="flex items-center gap-1">
           {isMobile ? (
             <>
-              <button onClick={() => setMobileChatOpen(!mobileChatOpen)} className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover" title="Chat">
+              <button 
+                onClick={() => setMobileChatOpen(!mobileChatOpen)} 
+                className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover relative" 
+                title="Chat"
+              >
                 <MessageSquare size={20} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-room-bg select-none animate-pulse">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </button>
               <button 
                 onClick={() => setSettingsOpen(true)}
@@ -2198,10 +2207,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             <>
               <button 
                 onClick={toggleChatSidebar} 
-                className={`p-2 rounded-xl transition-all ${!chatSidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
+                className={`p-2 rounded-xl transition-all relative ${!chatSidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
                 title="Chat"
               >
                 <MessageSquare size={20} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-room-bg select-none animate-pulse">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </button>
               <button 
                 onClick={() => {

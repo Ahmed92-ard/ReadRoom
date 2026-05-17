@@ -108,7 +108,26 @@ function positionMenu(anchor: DOMRect | { left: number; right: number; top: numb
 
 export function Chat({ roomId, onClose }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
-  const users = usePresenceStore((s) => s.users);
+  const presenceProfiles = usePresenceStore(
+    (s) => Array.from(s.users.values()).map(u => ({
+      userId: u.userId,
+      userName: u.userName,
+      avatarUrl: u.avatarUrl,
+      avatarColor: u.avatarColor,
+      avatarInitials: u.avatarInitials
+    })),
+    (a, b) => {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i].userId !== b[i].userId) return false;
+        if (a[i].userName !== b[i].userName) return false;
+        if (a[i].avatarUrl !== b[i].avatarUrl) return false;
+        if (a[i].avatarColor !== b[i].avatarColor) return false;
+        if (a[i].avatarInitials !== b[i].avatarInitials) return false;
+      }
+      return true;
+    }
+  );
   const params = useParams();
   const libraryId = params?.libraryId as string | undefined;
   const channelId = params?.channelId as string | undefined;
@@ -806,7 +825,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
   // Build typing user metadata for avatar display
   const typingUsersList = Object.keys(activeTypers).slice(0, 3).map((uid) => {
     const baseId = uid ? String(uid).split('_')[0] : '';
-    const found = baseId ? Array.from(users.values()).find((u) => u.userId && String(u.userId).split('_')[0] === baseId) : null;
+    const found = baseId ? presenceProfiles.find((u) => u.userId && String(u.userId).split('_')[0] === baseId) : null;
     const name = found?.userName ?? 'Unknown User';
     return {
       userId: uid,
@@ -821,9 +840,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
     const baseId = userId ? String(userId).split('_')[0] : '';
     if (!baseId) return 'Reader';
     if (self?.userId && self.userId.split('_')[0] === baseId) return 'You';
-    const found = Array.from(users.values()).find((u) => u.userId && String(u.userId).split('_')[0] === baseId);
+    const found = presenceProfiles.find((u) => u.userId && String(u.userId).split('_')[0] === baseId);
     return found?.userName ?? 'Reader';
-  }, [self, users]);
+  }, [self, presenceProfiles]);
 
   const mediaByKind = useMemo(() => ({
     images: mediaMessages.filter((m) => m.attachmentType === 'image'),
@@ -921,7 +940,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const msgUserId = msg.userId || '';
           const isSelf = Boolean(self?.userId && msgUserId && msgUserId.startsWith(self.userId.split('_')[0]));
           const displayName = (isSelf ? self?.userName ?? msg.userName : msg.userName) || 'Reader';
-          const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId && msgUserId && u.userId.startsWith(msgUserId.split('_')[0]));
+          const avatar = isSelf ? self : presenceProfiles.find((u) => u.userId && msgUserId && u.userId.startsWith(msgUserId.split('_')[0]));
           const avatarUser = {
             userId: avatar?.userId ?? msgUserId,
             userName: displayName,
