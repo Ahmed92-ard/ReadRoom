@@ -4,7 +4,7 @@ import React, {
   useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
-import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings , Folder as FolderTreeIcon } from 'lucide-react';
+import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings , Folder as FolderTreeIcon, PanelRight } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
@@ -499,7 +499,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const onMouseMove = (ev: MouseEvent) => {
       if (!isChatResizingRef.current) return;
       // Handle is on RIGHT edge of chat — dragging right increases width
-      const delta = ev.clientX - chatResizeStartXRef.current;
+      const delta = chatResizeStartXRef.current - ev.clientX;
       currentChatWidth = Math.min(CHAT_MAX, Math.max(CHAT_MIN, chatResizeStartWidthRef.current + delta));
       setChatWidth(currentChatWidth);
     };
@@ -1662,19 +1662,29 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const pendingDeleteFolderName = folderOptions.find((folder) => folder.id === pendingDeleteFolderId)?.name ?? 'this folder';
 
   const AuxRightSidebar = (
-    <div className="flex flex-col h-full bg-room-surface/90 backdrop-blur-xl shadow-2xl w-64 md:w-80 pointer-events-auto border-l border-room-border">
-      <div className="flex items-center p-2 border-b border-room-border gap-2">
+    <div className="flex flex-col h-full bg-room-surface/90 backdrop-blur-3xl shadow-2xl w-64 md:w-80 pointer-events-auto border-l border-room-border">
+      <div className="flex items-center p-2 border-b border-room-border gap-1">
         <button 
           onClick={() => setActivePanel('presence')}
-          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${activePanel === 'presence' ? 'bg-blue-500 text-white' : 'text-room-muted hover:bg-room-hover'}`}
+          className={`flex-1 flex justify-center py-2 rounded-lg transition-colors ${activePanel === 'presence' ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:bg-room-hover hover:text-room-text'}`}
+          title="People"
         >
-          PEOPLE
+          <Users size={16} />
         </button>
         <button 
           onClick={() => setActivePanel('notes')}
-          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${activePanel === 'notes' ? 'bg-blue-500 text-white' : 'text-room-muted hover:bg-room-hover'}`}
+          className={`flex-1 flex justify-center py-2 rounded-lg transition-colors ${activePanel === 'notes' ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:bg-room-hover hover:text-room-text'}`}
+          title="Notes"
         >
-          NOTES
+          <FileText size={16} />
+        </button>
+        <div className="w-[1px] h-6 bg-room-border mx-1" />
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className="p-2 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover transition-colors"
+          title="Close Sidebar"
+        >
+          <X size={16} />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -1872,7 +1882,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 clearUnread();
               }
             }}
-            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/95 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
+            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/90 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
           >
             <div className="flex items-start gap-3">
               <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${
@@ -1902,28 +1912,89 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   return (
     <div 
-      className="flex flex-1 h-[100dvh] bg-room-bg overflow-hidden relative"
+      className="flex flex-col flex-1 h-[100dvh] bg-room-bg overflow-hidden relative"
       style={{ overscrollBehaviorX: 'none' }}
       onTouchStart={handleTouchStartGlobal}
       onTouchEnd={handleTouchEndGlobal}
     >
       {/* Settings overlay — rendered in-place, keeps RoomShell mounted */}
       {settingsOpen && <SettingsOverlay />}
+
+      {/* Persistent Workspace Topbar */}
+      <header className="flex-none flex items-center justify-between h-12 px-4 border-b border-room-border bg-room-surface/90 backdrop-blur-3xl z-[60]">
+        
+        {/* Left Nav */}
+        <div className="flex items-center gap-1">
+          {isMobile && (
+            <button onClick={toggleNavigation} className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover">
+              <Menu size={20} />
+            </button>
+          )}
+          {!isMobile && (
+            <>
+              <button 
+                onClick={() => { setLeftView('nav'); if (librarySidebarCollapsed) toggleNavigation(); }} 
+                className={`p-2 rounded-xl transition-all ${leftView === 'nav' && !librarySidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
+                title="Rooms & Libraries"
+              >
+                <Layers size={18} />
+              </button>
+              <button 
+                onClick={() => { setLeftView('shelf'); if (librarySidebarCollapsed) toggleNavigation(); }} 
+                className={`p-2 rounded-xl transition-all ${leftView === 'shelf' && !librarySidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
+                title="Files & Folders"
+              >
+                <FolderTreeIcon size={18} />
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Center Title */}
+        <div className="flex-1 min-w-0 flex justify-center pointer-events-none">
+          <h1 className="text-xs font-bold text-room-text uppercase tracking-widest pointer-events-auto">
+            {room?.name ?? 'ReadRoom'}
+          </h1>
+        </div>
+
+        {/* Right Nav */}
+        <div className="flex items-center gap-1">
+          {isMobile ? (
+            <button onClick={() => setMobileChatOpen(!mobileChatOpen)} className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover">
+              <MessageSquare size={20} />
+            </button>
+          ) : (
+            <>
+              <button 
+                onClick={toggleChatSidebar} 
+                className={`p-2 rounded-xl transition-all ${!chatSidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
+                title="Chat"
+              >
+                <MessageSquare size={18} />
+              </button>
+              <button 
+                onClick={() => {
+                  if (sidebarOpen && (activePanel === 'presence' || activePanel === 'notes')) setSidebarOpen(false);
+                  else { setSidebarOpen(true); setActivePanel('presence'); }
+                }} 
+                className={`p-2 rounded-xl transition-all ${sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
+                title="People & Notes"
+              >
+                <PanelRight size={18} />
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+
+      {/* Main Workspace Area (Constrained below Topbar) */}
+      <div className="flex-1 relative min-h-0 w-full overflow-hidden">
+
       {/* Unified Left Sidebar Overlay */}
       {!isMobile && !librarySidebarCollapsed && (
         <div className="absolute top-0 left-0 bottom-0 z-[55] flex pointer-events-none transition-all duration-300">
-          <div className="flex h-full bg-room-surface/95 backdrop-blur-2xl shadow-2xl pointer-events-auto border-r border-room-border/50">
+          <div className="flex h-full bg-room-surface/90 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
             
-            {/* Left Edge Icon Rail */}
-            <div className="w-12 flex-none flex flex-col items-center py-4 gap-4 border-r border-room-border bg-room-bg/50">
-               <button onClick={() => setLeftView('nav')} className={`p-2 rounded-xl transition-all ${leftView === 'nav' ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} title="Rooms & Libraries">
-                 <LayoutGrid size={18} />
-               </button>
-               <button onClick={() => setLeftView('shelf')} className={`p-2 rounded-xl transition-all ${leftView === 'shelf' ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} title="Files & Folders">
-                 <FolderTreeIcon size={18} />
-               </button>
-            </div>
-
             {/* Sidebar Content */}
             <div className="flex flex-col bg-room-surface/40 border-l border-room-border/30" style={{ width: leftSidebarWidth }}>
                {leftView === 'nav' && (
@@ -1952,13 +2023,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       )}
 {/* Main area - Persistent Fullscreen Canvas */}
       <main className="absolute inset-0 flex flex-col min-w-0 h-full z-0">
-        <header className="flex-none flex items-center h-10 px-4 border-b border-room-border bg-room-surface/95 backdrop-blur-xl sticky top-0 z-40">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xs font-bold text-room-text truncate uppercase tracking-widest">
-              {room?.pdf?.filename ?? (room?.name ?? 'ReadRoom')}
-            </h1>
-          </div>
-        </header>
 
         <div className="flex-1 min-h-0 relative">
           {room?.pdf || openViewers.length > 0 ? (() => {
@@ -2070,7 +2134,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                   />
                 ))}
               </div>
-            );
+  );
           })() : (
             <EmptyState onOpen={() => {
               handleUploadToFolder(null);
@@ -2093,22 +2157,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {!isMobile && (
         <div className="absolute top-0 right-0 bottom-0 z-[55] flex flex-row-reverse pointer-events-none">
           
-          {/* Right Edge Icon Rail */}
-          <div className="w-12 flex-none flex flex-col items-center py-4 gap-4 border-l border-room-border bg-room-bg/50 pointer-events-auto bg-room-surface/95 backdrop-blur-2xl">
-             <button onClick={toggleChatSidebar} className={`p-2 rounded-xl transition-all ${!chatSidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} title="Chat">
-               <MessageSquare size={18} />
-             </button>
-             <button onClick={() => {
-               if (sidebarOpen && (activePanel === 'presence' || activePanel === 'notes')) setSidebarOpen(false);
-               else { setSidebarOpen(true); setActivePanel('presence'); }
-             }} className={`p-2 rounded-xl transition-all ${sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} title="People & Notes">
-               <Users size={18} />
-             </button>
-          </div>
-
           {/* Chat Sidebar Overlay */}
           {!chatSidebarCollapsed && (
-             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-2xl bg-room-surface/95 border-l border-room-border/50">
+             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/90 border-l border-room-border/50">
                 <div 
                   className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
                   onMouseDown={handleChatResizeMouseDown}
@@ -2119,7 +2170,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
           {/* Aux Sidebar (People/Notes) Overlay */}
           {sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') && (
-             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-2xl bg-room-surface/95 border-l border-room-border/50" style={{ width: sidebarWidth }}>
+             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/90 border-l border-room-border/50" style={{ width: sidebarWidth }}>
                 <div 
                   className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
                   onMouseDown={handleResizeMouseDown}
@@ -2129,6 +2180,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           )}
         </div>
       )}
+      </div>
 {/* Mobile Chat Drawer */}
       {isMobile && (
         <>
