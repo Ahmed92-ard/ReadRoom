@@ -15,7 +15,8 @@ import {
   CheckCircle2,
   FileText,
   Clock,
-  HardDrive
+  HardDrive,
+  X
 } from 'lucide-react';
 
 interface StorageStats {
@@ -66,6 +67,17 @@ export default function StorageReconciliationPage() {
 
   const handleBack = () => {
     router.push('/settings');
+  };
+
+  const handleExit = () => {
+    if (typeof window !== 'undefined') {
+      const lastActive = localStorage.getItem('readroom:last-active-room');
+      if (lastActive) {
+        router.push(lastActive);
+        return;
+      }
+    }
+    router.push('/libraries');
   };
 
   const executeReconciliation = async (forceDelete = false) => {
@@ -149,6 +161,13 @@ export default function StorageReconciliationPage() {
           <Shield size={20} className="text-blue-500" />
           <h1 className="text-xl font-bold tracking-tight">Storage Reconciliation Console</h1>
         </div>
+        <button
+          onClick={handleExit}
+          className="ml-auto p-2 hover:bg-room-hover rounded-full transition-colors text-room-muted hover:text-room-text"
+          title="Exit Settings"
+        >
+          <X size={20} />
+        </button>
       </header>
 
       <main className="flex-1 max-w-6xl mx-auto w-full p-6 md:p-10 space-y-8">

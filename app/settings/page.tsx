@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, LogOut, User, Shield, Bell, Palette, Globe } from 'lucide-react';
+import { ArrowLeft, LogOut, User, Shield, Bell, Palette, Globe, X } from 'lucide-react';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
@@ -76,7 +76,14 @@ export default function SettingsPage() {
   };
 
   const handleBack = () => {
-    router.back();
+    if (typeof window !== 'undefined') {
+      const lastActive = localStorage.getItem('readroom:last-active-room');
+      if (lastActive) {
+        router.push(lastActive);
+        return;
+      }
+    }
+    router.push('/libraries');
   };
 
   if (loading) {
@@ -97,11 +104,18 @@ export default function SettingsPage() {
         <button 
           onClick={handleBack}
           className="p-2 hover:bg-room-hover rounded-full transition-colors text-room-muted hover:text-room-text"
-          title="Back"
+          title="Return to Workspace"
         >
           <ArrowLeft size={20} />
         </button>
         <h1 className="text-xl font-bold tracking-tight">Settings</h1>
+        <button 
+          onClick={handleBack}
+          className="ml-auto p-2 hover:bg-room-hover rounded-full transition-colors text-room-muted hover:text-room-text"
+          title="Exit Settings"
+        >
+          <X size={20} />
+        </button>
       </header>
 
       <main className="flex-1 max-w-3xl mx-auto w-full p-6 md:p-10">

@@ -360,6 +360,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const self = usePresenceStore((s) => s.self);
   const usersMap = usePresenceStore((s) => s.users);
   const selfRef = useRef(self);
+
+  useEffect(() => {
+    if (libraryId && channelId) {
+      try {
+        localStorage.setItem('readroom:last-active-room', `/libraries/${libraryId}/channels/${channelId}`);
+      } catch {}
+    }
+  }, [libraryId, channelId]);
+
   const lastNotificationTimeRef = useRef<number>(0);
   const { page, scroll, zoom, setSyncState } = usePDFStore(useShallow((s) => ({
     page: s.page, scroll: s.scroll, zoom: s.zoom, setSyncState: s.setSyncState
