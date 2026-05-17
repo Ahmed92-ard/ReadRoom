@@ -1164,7 +1164,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       )}
 
       {mediaOpen && (
-        <div className="absolute inset-0 z-20 flex flex-col bg-room-surface/90 backdrop-blur-3xl">
+        <div className="absolute inset-0 z-20 flex flex-col bg-room-surface/96 backdrop-blur-3xl">
           <div className="flex items-center gap-2 border-b border-room-border px-3 py-2">
             <h3 className="flex-1 text-sm font-semibold text-room-text">Media and Files</h3>
             <button onClick={() => setMediaOpen(false)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={18} /></button>

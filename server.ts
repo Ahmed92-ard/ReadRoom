@@ -199,7 +199,7 @@ app.prepare().then(() => {
         userName: cleanUserName,
         ts: Date.now(),
       };
-      socket.to(cleanRoomId).to(socket.data.libraryId ? `library:${socket.data.libraryId}` : cleanRoomId).emit('notification:activity', joinActivity);
+      socket.to(cleanRoomId).emit('notification:activity', joinActivity);
     });
 
     socket.on('presence:update', async ({ roomId, user }) => {

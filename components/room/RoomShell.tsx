@@ -150,7 +150,7 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
         ref={sheetRef}
         className={`
           absolute bottom-0 left-0 right-0 z-40
-          bg-room-surface/90 backdrop-blur-3xl border-t border-room-border/50
+          bg-room-surface/96 backdrop-blur-3xl border-t border-room-border/50
           rounded-t-2xl shadow-2xl
           transition-[height] duration-300 ease-out
           ${expanded ? (fullHeight ? 'h-[100dvh] rounded-none' : 'h-[75dvh]') : 'h-0 overflow-hidden'}
@@ -594,11 +594,22 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const showBrowserNotification = useCallback((activity: RoomActivity) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
-    if (document.visibilityState === 'visible') return;
+    if (!activity?.id) return;
 
+    // Deduplication check
+    if (processedNotificationIdsRef.current.has(activity.id)) return;
+
+    // Throttling check (15 seconds)
     const now = Date.now();
     if (now - lastNotificationTimeRef.current < 15000) return;
+
+    // Visibility / focus check
+    const isAppFocused = document.visibilityState === 'visible' && document.hasFocus();
+    if (isAppFocused) return;
+
+    // Apply the throttle and deduplication markers BEFORE invoking Notification()
     lastNotificationTimeRef.current = now;
+    processedNotificationIdsRef.current.add(activity.id);
 
     try {
       let icon = '/icons/app_icon_192.png';
@@ -1047,8 +1058,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         if (activityUserBaseId === initialUserId) return;
         if (processedNotificationIdsRef.current.has(activity.id)) return;
         processedNotificationIdsRef.current.add(activity.id);
-        const tabIsHidden = document.visibilityState !== 'visible';
-        if (tabIsHidden) {
+        const isFocused = document.visibilityState === 'visible' && document.hasFocus();
+        if (!isFocused) {
           showBrowserNotification(activity);
         } else {
           pushToast(activity);
@@ -1077,10 +1088,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         pushToast(nextActivity);
       }
 
-      // Show browser notification whenever the tab is not actively visible —
+      // Show browser notification whenever the app is unfocused/minimized —
       // regardless of whether chat was open before the window was minimized.
-      const tabIsHidden = document.visibilityState !== 'visible';
-      if (tabIsHidden || !isChatVisibleRef.current) {
+      const isFocused = document.visibilityState === 'visible' && document.hasFocus();
+      if (!isFocused) {
         showBrowserNotification(nextActivity);
       }
 
@@ -1145,7 +1156,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           };
 
           pushToast(activity);
-          if (document.visibilityState !== 'visible') showBrowserNotification(activity);
+          const isFocused = document.visibilityState === 'visible' && document.hasFocus();
+          if (!isFocused) showBrowserNotification(activity);
           setUnreadCount((prev) => {
             const next = Math.min(999, prev + 1);
             unreadCountRef.current = next;
@@ -1292,18 +1304,16 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         }
       }
 
-      // Always update position
+      // Always update position (zoom remains completely independent per user)
       updateOpenViewerState(key, {
         page: Math.max(1, payload.page ?? 1),
         scroll: Math.max(0, Math.min(1, payload.scroll ?? 0)),
-        zoom: Math.max(0.5, payload.zoom ?? 1),
       });
 
       if (isActiveFollow) {
         setSyncState({
           page: Math.max(1, payload.page ?? 1),
           scroll: Math.max(0, Math.min(1, payload.scroll ?? 0)),
-          zoom: Math.max(0.5, payload.zoom ?? 1),
         });
       }
     };
@@ -1914,7 +1924,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 clearUnread();
               }
             }}
-            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/90 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
+            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/96 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
           >
             <div className="flex items-start gap-3">
               <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${
@@ -1953,7 +1963,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {settingsOpen && <SettingsOverlay />}
 
       {/* Persistent Workspace Topbar */}
-      <header className="flex-none flex items-center justify-between h-14 px-4 border-b border-room-border bg-room-surface/90 backdrop-blur-3xl z-[60]">
+      <header className="flex-none flex items-center justify-between h-14 px-4 border-b border-room-border bg-room-surface/96 backdrop-blur-3xl z-[60]">
         
         {/* Left Nav */}
         <div className="flex items-center gap-1">
@@ -2032,7 +2042,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {/* Unified Left Sidebar Overlay */}
       {!isMobile && !librarySidebarCollapsed && (
         <div className="absolute top-0 left-0 bottom-0 z-[55] flex pointer-events-none transition-all duration-300">
-          <div className="flex h-full bg-room-surface/90 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
+          <div className="flex h-full bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
             
             {/* Sidebar Content */}
             <div className="flex flex-col bg-transparent border-l border-room-border/30" style={{ width: leftSidebarWidth }}>
@@ -2189,7 +2199,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           
           {/* Chat Sidebar Overlay */}
           {!chatSidebarCollapsed && (
-             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/90 border-l border-room-border/50">
+             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50">
                 <div 
                   className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
                   onMouseDown={handleChatResizeMouseDown}
@@ -2200,7 +2210,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
           {/* Aux Sidebar (People/Notes) Overlay */}
           {sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') && (
-             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/90 border-l border-room-border/50" style={{ width: sidebarWidth }}>
+             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50" style={{ width: sidebarWidth }}>
                 <div 
                   className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
                   onMouseDown={handleResizeMouseDown}
@@ -2220,7 +2230,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               onClick={() => setMobileChatOpen(false)}
             />
           )}
-          <div className={`fixed inset-y-0 right-0 w-full max-w-[90%] md:max-w-[400px] bg-room-surface/90 backdrop-blur-3xl border-l border-room-border/50 z-[70] shadow-2xl transition-transform duration-300 transform ${mobileChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className={`fixed inset-y-0 right-0 w-full max-w-[90%] md:max-w-[400px] bg-room-surface/96 backdrop-blur-3xl border-l border-room-border/50 z-[70] shadow-2xl transition-transform duration-300 transform ${mobileChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <ChatSidebar roomId={roomId} onClose={() => setMobileChatOpen(false)} />
           </div>
         </>

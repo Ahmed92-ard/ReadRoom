@@ -72,7 +72,6 @@ export function usePDFSync(
         activePdfName: activePdfName ?? null,
         page,
         scroll: pageOffset,
-        zoom,
         ts: Date.now(),
       } satisfies SyncPayload);
     }, 150);

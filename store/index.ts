@@ -38,7 +38,7 @@ interface PDFStore {
   setScroll: (scroll: number) => void;
   setZoom: (zoom: number) => void;
   setTotalPages: (n: number) => void;
-  setSyncState: (state: { page: number; scroll: number; zoom: number }) => void;
+  setSyncState: (state: Partial<{ page: number; scroll: number; zoom: number }>) => void;
   followMode: boolean;
   followTarget: string | null;
   setFollowMode: (follow: boolean, targetId?: string | null) => void;

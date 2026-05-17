@@ -121,7 +121,7 @@ export interface SyncPayload {
   activePdfName?: string | null;
   page: number;
   scroll: number;
-  zoom: number;
+  zoom?: number;
   ts: number;
 }
 
