@@ -212,6 +212,106 @@ function SidebarToggle({
   );
 }
 
+// ── ResizablePaneWrapper ────────────────────────────────────────────────────────
+
+const ResizablePaneWrapper = React.memo(({ 
+  paneKey,
+  element,
+  draggedPaneKey, 
+  dragOverPaneKey, 
+  onDragStart, 
+  onDragEnd, 
+  onDragOver, 
+  onDragLeave, 
+  onDrop 
+}: {
+  paneKey: string;
+  element: React.ReactNode;
+  draggedPaneKey: string | null;
+  dragOverPaneKey: string | null;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
+}) => {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  
+  const handleResizeStart = (e: React.MouseEvent, dir: 'r' | 'b' | 'br') => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!wrapperRef.current) return;
+    const startW = wrapperRef.current.offsetWidth;
+    const startH = wrapperRef.current.offsetHeight;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!wrapperRef.current) return;
+      if (dir === 'r' || dir === 'br') {
+        const newW = Math.max(300, startW + (moveEvent.clientX - startX));
+        wrapperRef.current.style.width = `${newW}px`;
+      }
+      if (dir === 'b' || dir === 'br') {
+        const newH = Math.max(300, startH + (moveEvent.clientY - startY));
+        wrapperRef.current.style.height = `${newH}px`;
+      }
+    };
+    
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+
+  return (
+    <div
+      ref={wrapperRef}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={`min-w-0 min-h-0 relative bg-room-bg rounded-lg transition-[transform,opacity,box-shadow] duration-200 focus-within:z-40 active:z-50 hover:z-10 ${
+        draggedPaneKey === paneKey ? 'opacity-50 scale-95 border-2 border-dashed border-blue-500/50' : ''
+      } ${
+        dragOverPaneKey === paneKey ? 'ring-4 ring-blue-500 bg-blue-500/10 scale-[0.99] opacity-90 z-40' : ''
+      }`}
+      style={{ 
+        width: '100%', 
+        height: '100%', 
+        maxWidth: '100%', 
+        maxHeight: '100%', 
+        overflow: 'hidden' 
+      }}
+    >
+      {element}
+      
+      {/* Right Resizer */}
+      <div 
+        className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
+        onMouseDown={(e) => handleResizeStart(e, 'r')}
+      />
+      {/* Bottom Resizer */}
+      <div 
+        className="absolute bottom-0 left-0 w-full h-2 cursor-row-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
+        onMouseDown={(e) => handleResizeStart(e, 'b')}
+      />
+      {/* Bottom-Right Corner Resizer */}
+      <div 
+        className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-blue-500/40 active:bg-blue-500/60 z-50 transition-colors rounded-tl"
+        onMouseDown={(e) => handleResizeStart(e, 'br')}
+      />
+    </div>
+  );
+});
+ResizablePaneWrapper.displayName = 'ResizablePaneWrapper';
+
 // ── RoomShell ─────────────────────────────────────────────────────────────────
 
 interface RoomShellProps {
@@ -257,6 +357,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const self = usePresenceStore((s) => s.self);
   const usersMap = usePresenceStore((s) => s.users);
   const selfRef = useRef(self);
+  const lastNotificationTimeRef = useRef<number>(0);
   const { page, scroll, zoom, setSyncState } = usePDFStore(useShallow((s) => ({
     page: s.page, scroll: s.scroll, zoom: s.zoom, setSyncState: s.setSyncState
   })));
@@ -275,6 +376,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const [folderTree, setFolderTree] = useState<import('@/types').PDFFolder[]>([]);
   const [currentChannelPdfId, setCurrentChannelPdfId] = useState<string | null>(null);
   const [openViewers, setOpenViewers] = useState<OpenViewer[]>([]);
+  const [paneOrder, setPaneOrder] = useState<string[]>([]);
   const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null);
   const [dragOverPaneKey, setDragOverPaneKey] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -469,8 +571,11 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const showBrowserNotification = useCallback((activity: RoomActivity) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
-    const tabIsVisible = document.visibilityState === 'visible';
-    if (tabIsVisible && isChatVisibleRef.current) return;
+    if (document.visibilityState === 'visible') return;
+
+    const now = Date.now();
+    if (now - lastNotificationTimeRef.current < 15000) return;
+    lastNotificationTimeRef.current = now;
 
     try {
       let icon = '/icons/app_icon_192.png';
@@ -896,8 +1001,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       const isSameRoom = activity.roomId === roomId;
       const activityUserBaseId = activity.userId?.split('_')[0];
 
-      // ── Cross-room messages: desktop notification only (no in-app toast) ──
-      // Only fire when the tab is not focused — avoids spam while user is active.
+      // ── Cross-room messages: desktop notification if hidden, in-app toast if focused ──
       if (!isSameRoom && activity.type === 'chat:message') {
         if (activityUserBaseId === initialUserId) return;
         if (processedNotificationIdsRef.current.has(activity.id)) return;
@@ -905,6 +1009,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         const tabIsHidden = document.visibilityState !== 'visible';
         if (tabIsHidden) {
           showBrowserNotification(activity);
+        } else {
+          pushToast(activity);
         }
         return;
       }
@@ -1532,6 +1638,71 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const folderOptions = flattenFolders(folderTree);
   const pendingDeleteFolderName = folderOptions.find((folder) => folder.id === pendingDeleteFolderId)?.name ?? 'this folder';
 
+  const AuxRightSidebar = (
+    <div className="flex flex-col h-full bg-room-surface/90 backdrop-blur-xl shadow-2xl w-64 md:w-80 pointer-events-auto border-l border-room-border">
+      <div className="flex items-center p-2 border-b border-room-border gap-2">
+        <button 
+          onClick={() => setActivePanel('presence')}
+          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${activePanel === 'presence' ? 'bg-blue-500 text-white' : 'text-room-muted hover:bg-room-hover'}`}
+        >
+          PEOPLE
+        </button>
+        <button 
+          onClick={() => setActivePanel('notes')}
+          className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${activePanel === 'notes' ? 'bg-blue-500 text-white' : 'text-room-muted hover:bg-room-hover'}`}
+        >
+          NOTES
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {activePanel === 'presence' && <PresenceList roomId={roomId} roomName={room?.name ?? 'ReadRoom'} />}
+        {activePanel === 'notes' && <Notes roomId={roomId} />}
+      </div>
+    </div>
+  );
+
+
+  const ShelfContent = (
+          <div className="flex flex-col h-full p-3">
+            {/* Header */}
+            <div className="flex items-center justify-end mb-3 flex-shrink-0">
+              <button
+                onClick={() => handleUploadToFolder(null)}
+                className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
+              >
+                + Upload
+              </button>
+            </div>
+
+            {/* Error */}
+            {pdfLibraryError && (
+              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 flex-shrink-0">
+                {pdfLibraryError}
+              </div>
+            )}
+
+            {/* Folder tree */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <FolderTree
+                folders={folderTree}
+                rootPdfs={rootPdfs}
+                activePdfId={currentChannelPdfId}
+                deletingPdfId={deletingPdfId}
+                onSelectPdf={selectChannelPDF}
+                onDeletePdf={requestDeleteChannelPDF}
+                onMovePdf={requestMovePdf}
+                onOpenSideViewer={openPdfViewer}
+                onDeleteFolder={handleDeleteFolder}
+                onUploadToFolder={handleUploadToFolder}
+                onRenameFolder={handleRenameFolder}
+                onCreateFolder={handleCreateFolder}
+                libraryId={libraryId}
+                channelId={channelId}
+                onReorderItem={handleReorderItem}
+              />
+            </div>
+          </div>
+  );
   const RightSidebarContent = (
     <div className="flex flex-col h-full">
       {!isMobile && (
@@ -1605,46 +1776,48 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
 
         <div className={activePanel === 'shelf' ? 'flex flex-col h-full overflow-y-auto' : 'hidden'}>
-          <div className="flex flex-col h-full p-3">
-            {/* Header */}
-            <div className="flex items-center justify-end mb-3 flex-shrink-0">
-              <button
-                onClick={() => handleUploadToFolder(null)}
-                className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
-              >
-                + Upload
-              </button>
-            </div>
-
-            {/* Error */}
-            {pdfLibraryError && (
-              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 flex-shrink-0">
-                {pdfLibraryError}
-              </div>
-            )}
-
-            {/* Folder tree */}
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <FolderTree
-                folders={folderTree}
-                rootPdfs={rootPdfs}
-                activePdfId={currentChannelPdfId}
-                deletingPdfId={deletingPdfId}
-                onSelectPdf={selectChannelPDF}
-                onDeletePdf={requestDeleteChannelPDF}
-                onMovePdf={requestMovePdf}
-                onOpenSideViewer={openPdfViewer}
-                onDeleteFolder={handleDeleteFolder}
-                onUploadToFolder={handleUploadToFolder}
-                onRenameFolder={handleRenameFolder}
-                onCreateFolder={handleCreateFolder}
-                libraryId={libraryId}
-                channelId={channelId}
-                onReorderItem={handleReorderItem}
-              />
-            </div>
-          </div>
+          {ShelfContent}
         </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       </div>
     </div>
   );
@@ -1701,6 +1874,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     </div>
   );
 
+
+
+
   return (
     <div 
       className="flex flex-1 h-[100dvh] bg-room-bg overflow-hidden relative"
@@ -1710,16 +1886,28 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     >
       {/* Settings overlay — rendered in-place, keeps RoomShell mounted */}
       {settingsOpen && <SettingsOverlay />}
-      {/* Desktop Sidebars (Libraries & Rooms) */}
-      {!isMobile && (
-        <>
-          <LibrarySidebar onClose={toggleNavigation} />
-          <ChannelSidebar onClose={toggleNavigation} />
-        </>
+      {/* Unified Left Sidebar Overlay */}
+      {!isMobile && !librarySidebarCollapsed && (
+        <div className="absolute top-0 left-0 bottom-0 z-[55] flex pointer-events-none transition-all duration-300">
+          <div className="flex h-full bg-room-surface/90 backdrop-blur-xl shadow-2xl pointer-events-auto border-r border-room-border">
+            <LibrarySidebar onClose={toggleNavigation} />
+            <div className="flex flex-col w-56 md:w-64 bg-room-surface/40 border-l border-room-border">
+               <div className="flex-1 overflow-y-auto min-h-0">
+                 <ChannelSidebar onClose={toggleNavigation} />
+               </div>
+               <div className="h-px bg-room-border flex-none" />
+               <div className="flex-1 overflow-y-auto min-h-0 relative">
+                 {ShelfContent}
+               </div>
+            </div>
+          </div>
+          {/* Left Sidebar Resize Handle (Optional) */}
+          <div className="w-2 cursor-col-resize pointer-events-auto hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors" />
+        </div>
       )}
 
-      {/* Main area */}
-      <main className="flex-1 flex flex-col min-w-0 h-full relative">
+      {/* Main area - Persistent Fullscreen Canvas */}
+      <main className="absolute inset-0 flex flex-col min-w-0 h-full z-0">
         <header className="flex-none flex items-center h-14 md:h-16 px-3 md:px-4 border-b border-room-border bg-room-surface/90 backdrop-blur-md sticky top-0 z-40 gap-4">
           {/* Left Side: Navigation & People */}
           <div className="flex items-center bg-room-bg/50 rounded-xl p-1 border border-room-border shadow-sm">
@@ -1841,12 +2029,24 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               });
             });
 
+            allPanes.sort((a, b) => {
+              const aIdx = paneOrder.indexOf(a.key);
+              const bIdx = paneOrder.indexOf(b.key);
+              if (aIdx === -1 && bIdx === -1) return 0;
+              if (aIdx === -1) return 1;
+              if (bIdx === -1) return -1;
+              return aIdx - bIdx;
+            });
+
             return (
               <div className={`h-full overflow-y-auto overflow-x-hidden p-2 grid gap-2 ${totalViewers > 1 ? 'md:grid-cols-2 auto-rows-[minmax(50vh,1fr)]' : 'grid-cols-1'}`}>
                 {allPanes.map((pane) => (
-                  <div
+                  <ResizablePaneWrapper
                     key={pane.key}
-                    draggable
+                    paneKey={pane.key}
+                    element={pane.element}
+                    draggedPaneKey={draggedPaneKey}
+                    dragOverPaneKey={dragOverPaneKey}
                     onDragStart={() => setDraggedPaneKey(pane.key)}
                     onDragEnd={() => {
                       setDraggedPaneKey(null);
@@ -1866,60 +2066,28 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                     onDrop={() => {
                       if (!draggedPaneKey || draggedPaneKey === pane.key) return;
 
-                      if (draggedPaneKey === 'main-workspace') {
-                        const targetViewer = openViewers.find(v => v.key === pane.key);
-                        if (targetViewer && room?.pdf) {
-                          const oldMain = room.pdf;
-                          setRoom({ ...room, pdf: targetViewer.pdf });
-                          setOpenViewers(prev => prev.map(v => v.key === pane.key ? {
-                            ...v,
-                            key: `pdf:${oldMain.fileId}`,
-                            pdfId: oldMain.fileId,
-                            pdf: oldMain,
-                            title: oldMain.filename
-                          } : v));
+                      setPaneOrder(prev => {
+                        const currentOrder = allPanes.map(p => p.key);
+                        let next = currentOrder;
+                        if (prev.length > 0) {
+                          const validPrev = prev.filter(k => currentOrder.includes(k));
+                          const newPanes = currentOrder.filter(k => !validPrev.includes(k));
+                          next = [...validPrev, ...newPanes];
                         }
-                      }
-                      else if (pane.key === 'main-workspace') {
-                        const sourceViewer = openViewers.find(v => v.key === draggedPaneKey);
-                        if (sourceViewer && room?.pdf) {
-                          const oldMain = room.pdf;
-                          setRoom({ ...room, pdf: sourceViewer.pdf });
-                          setOpenViewers(prev => prev.map(v => v.key === draggedPaneKey ? {
-                            ...v,
-                            key: `pdf:${oldMain.fileId}`,
-                            pdfId: oldMain.fileId,
-                            pdf: oldMain,
-                            title: oldMain.filename
-                          } : v));
+                        const fromIdx = next.indexOf(draggedPaneKey);
+                        const toIdx = next.indexOf(pane.key);
+                        if (fromIdx !== -1 && toIdx !== -1) {
+                          const temp = next[fromIdx];
+                          next[fromIdx] = next[toIdx];
+                          next[toIdx] = temp;
                         }
-                      }
-                      else {
-                        setOpenViewers(prev => {
-                          const next = [...prev];
-                          const fromIdx = prev.findIndex(v => v.key === draggedPaneKey);
-                          const toIdx = prev.findIndex(v => v.key === pane.key);
-                          if (fromIdx !== -1 && toIdx !== -1) {
-                            const temp = next[fromIdx];
-                            next[fromIdx] = next[toIdx];
-                            next[toIdx] = temp;
-                          }
-                          return next;
-                        });
-                      }
+                        return next;
+                      });
 
                       setDraggedPaneKey(null);
                       setDragOverPaneKey(null);
                     }}
-                    className={`min-w-0 min-h-0 relative bg-room-bg rounded-lg transition-all ${
-                      draggedPaneKey === pane.key ? 'opacity-50 scale-95 border-2 border-dashed border-blue-500/50' : ''
-                    } ${
-                      dragOverPaneKey === pane.key ? 'ring-4 ring-blue-500 bg-blue-500/10 scale-[0.99] opacity-90' : ''
-                    }`}
-                    style={{ resize: 'both', overflow: 'hidden' }}
-                  >
-                    {pane.element}
-                  </div>
+                  />
                 ))}
               </div>
             );
@@ -1941,30 +2109,33 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
       </main>
 
-      {/* Desktop Right Sidebars */}
+      {/* Desktop Right Sidebars (Overlays) */}
       {!isMobile && (
-        <>
-          <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} width={chatWidth} onResizeMouseDown={handleChatResizeMouseDown} />
-          {sidebarOpen && (
-            <aside
-              className="flex-none border-l border-room-border bg-room-surface flex flex-col relative"
-              style={{ width: sidebarWidth }}
-            >
-              {/* Drag-to-resize handle on left edge */}
-              <div
-                className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize z-10 group flex items-center justify-center hover:bg-blue-500/20 transition-colors"
-                onMouseDown={handleResizeMouseDown}
-                title="Drag to resize"
-              >
-                <GripVertical
-                  size={12}
-                  className="text-room-border group-hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+        <div className="absolute top-0 right-0 bottom-0 z-[55] flex flex-row-reverse pointer-events-none">
+          {/* Chat Sidebar Overlay */}
+          {!chatSidebarCollapsed && (
+             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-xl bg-room-surface/90 border-l border-room-border">
+                {/* Chat Left-Edge Resize Handle */}
+                <div 
+                  className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
+                  onMouseDown={handleChatResizeMouseDown}
                 />
-              </div>
-              {RightSidebarContent}
-            </aside>
+                <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} width={chatWidth} onResizeMouseDown={handleChatResizeMouseDown} />
+             </div>
           )}
-        </>
+
+          {/* Aux Sidebar (People/Notes) Overlay */}
+          {sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') && (
+             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-xl" style={{ width: sidebarWidth }}>
+                {/* Aux Left-Edge Resize Handle */}
+                <div 
+                  className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
+                  onMouseDown={handleResizeMouseDown}
+                />
+                {AuxRightSidebar}
+             </div>
+          )}
+        </div>
       )}
 
       {/* Mobile Chat Drawer */}

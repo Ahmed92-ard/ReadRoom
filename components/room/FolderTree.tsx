@@ -67,7 +67,7 @@ function PdfRow({
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'pdf', id: pdf.id }));
       }}
-      className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-grab active:cursor-grabbing transition-all text-sm ${
+      className={`group flex items-center gap-2 px-3 py-2 rounded-lg transition-all text-sm ${
         active
           ? 'bg-blue-500/15 text-blue-400'
           : 'text-room-muted hover:bg-room-hover hover:text-room-text'
@@ -186,6 +186,7 @@ function FolderNode({
         }}
         onDragOver={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           setIsDragOver(true);
         }}
         onDragLeave={() => setIsDragOver(false)}
@@ -201,7 +202,7 @@ function FolderNode({
             }
           } catch (err) {}
         }}
-        className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing transition-all hover:bg-room-hover ${
+        className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all hover:bg-room-hover ${
           isDragOver ? 'bg-blue-500/20 ring-2 ring-blue-500' : ''
         } ${
           hasActiveChild && !expanded ? 'text-blue-400' : 'text-room-text'

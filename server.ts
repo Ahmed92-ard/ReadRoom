@@ -199,7 +199,7 @@ app.prepare().then(() => {
         userName: cleanUserName,
         ts: Date.now(),
       };
-      socket.to(cleanRoomId).emit('notification:activity', joinActivity);
+      socket.to(cleanRoomId).to(socket.data.libraryId ? `library:${socket.data.libraryId}` : cleanRoomId).emit('notification:activity', joinActivity);
     });
 
     socket.on('presence:update', async ({ roomId, user }) => {
@@ -338,7 +338,7 @@ app.prepare().then(() => {
         ts: message.ts,
         metadata: { messageId: message.id },
       };
-      socket.to(cleanRoomId).emit('notification:activity', activity);
+      socket.to(cleanRoomId).to(socket.data.libraryId ? `library:${socket.data.libraryId}` : cleanRoomId).emit('notification:activity', activity);
 
       // Cache to Redis for fast recent-message lookup. Permanent storage happens
       // in the messages API before this socket event is emitted.
@@ -410,7 +410,7 @@ app.prepare().then(() => {
       // Forward to all other room members so their library updates instantly
       socket.to(cleanRoomId).emit('pdf:added', activity);
       // Also forward as notification for in-app toasts/badges
-      socket.to(cleanRoomId).emit('notification:activity', {
+      socket.to(cleanRoomId).to(socket.data.libraryId ? `library:${socket.data.libraryId}` : cleanRoomId).emit('notification:activity', {
         ...activity,
         id: activity.id || `pdf:added:${Date.now()}`,
         type: 'pdf:added',
@@ -428,7 +428,7 @@ app.prepare().then(() => {
     socket.on('notification:activity', async (activity: any) => {
       if (!activity?.roomId) return;
       const cleanRoomId = sanitizeString(activity.roomId, 64);
-      socket.to(cleanRoomId).emit('notification:activity', activity);
+      socket.to(cleanRoomId).to(socket.data.libraryId ? `library:${socket.data.libraryId}` : cleanRoomId).emit('notification:activity', activity);
     });
 
     socket.on('presence:ping', async ({ roomId, userId }: { roomId: string; userId: string }) => {
