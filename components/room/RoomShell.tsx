@@ -1699,6 +1699,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           <div className="flex flex-col h-full p-3">
             {/* Header */}
             <div className="flex items-center justify-end mb-3 flex-shrink-0">
+              <button onClick={() => toggleNavigation()} className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover mr-1">
+                <X size={16} />
+              </button>
               <button
                 onClick={() => handleUploadToFolder(null)}
                 className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
@@ -1921,7 +1924,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {settingsOpen && <SettingsOverlay />}
 
       {/* Persistent Workspace Topbar */}
-      <header className="flex-none flex items-center justify-between h-12 px-4 border-b border-room-border bg-room-surface/90 backdrop-blur-3xl z-[60]">
+      <header className="flex-none flex items-center justify-between h-14 px-4 border-b border-room-border bg-room-surface/90 backdrop-blur-3xl z-[60]">
         
         {/* Left Nav */}
         <div className="flex items-center gap-1">
@@ -1937,14 +1940,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 className={`p-2 rounded-xl transition-all ${leftView === 'nav' && !librarySidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
                 title="Rooms & Libraries"
               >
-                <Layers size={18} />
+                <Layers size={20} />
               </button>
               <button 
                 onClick={() => { setLeftView('shelf'); if (librarySidebarCollapsed) toggleNavigation(); }} 
                 className={`p-2 rounded-xl transition-all ${leftView === 'shelf' && !librarySidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
                 title="Files & Folders"
               >
-                <FolderTreeIcon size={18} />
+                <FolderTreeIcon size={20} />
               </button>
             </>
           )}
@@ -1952,8 +1955,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
         {/* Center Title */}
         <div className="flex-1 min-w-0 flex justify-center pointer-events-none">
-          <h1 className="text-xs font-bold text-room-text uppercase tracking-widest pointer-events-auto">
-            {room?.name ?? 'ReadRoom'}
+          <h1 className="text-sm font-bold text-room-text uppercase tracking-widest pointer-events-auto">
+            ReadRoom
           </h1>
         </div>
 
@@ -1970,7 +1973,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 className={`p-2 rounded-xl transition-all ${!chatSidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
                 title="Chat"
               >
-                <MessageSquare size={18} />
+                <MessageSquare size={20} />
               </button>
               <button 
                 onClick={() => {
@@ -1980,7 +1983,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 className={`p-2 rounded-xl transition-all ${sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
                 title="People & Notes"
               >
-                <PanelRight size={18} />
+                <PanelRight size={20} />
               </button>
             </>
           )}
@@ -1996,7 +1999,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           <div className="flex h-full bg-room-surface/90 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
             
             {/* Sidebar Content */}
-            <div className="flex flex-col bg-room-surface/40 border-l border-room-border/30" style={{ width: leftSidebarWidth }}>
+            <div className="flex flex-col bg-transparent border-l border-room-border/30" style={{ width: leftSidebarWidth }}>
                {leftView === 'nav' && (
                  <>
                    <div className="flex-1 overflow-y-auto min-h-0 flex">

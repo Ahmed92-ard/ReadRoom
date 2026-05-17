@@ -32,27 +32,12 @@ export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown }: ChatS
 
   return (
     <div
-      className={`flex flex-col bg-room-surface flex-shrink-0 border-r border-room-border h-full relative ${
+      className={`flex flex-col bg-transparent flex-shrink-0 border-r border-room-border h-full relative ${
         isMobile ? 'w-full' : ''
       } ${hidden ? 'hidden' : 'flex'}`}
       style={!isMobile && width ? { width } : undefined}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-room-border flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <MessageSquare size={16} className="text-blue-400" />
-          <h2 className="font-bold text-room-text text-sm tracking-wider">CHAT</h2>
-        </div>
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-room-hover text-room-muted transition-colors"
-            aria-label="Close chat"
-          >
-            <X size={18} />
-          </button>
-        )}
-      </div>
+      
 
       {/* Chat — always mounted, never unmounted */}
       <div className="flex-1 min-h-0">

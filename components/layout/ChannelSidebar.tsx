@@ -207,7 +207,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
   if (isMobile && !inBottomSheet) return null;
 
   return (
-    <div className={`flex flex-col bg-room-surface flex-shrink-0 transition-all duration-300 relative 
+    <div className={`flex flex-col bg-transparent flex-shrink-0 transition-all duration-300 relative 
       ${inBottomSheet ? 'w-full border-none' : (channelSidebarCollapsed ? 'w-0 overflow-hidden opacity-0 border-none' : 'w-52 border-r border-room-border')} h-full`}>
       {/* Floating collapse toggle for channel sidebar */}
 
@@ -238,6 +238,15 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
               title="Rename library"
             >
               <Pencil size={14} />
+            </button>
+          )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="ml-1 p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
+              title="Close"
+            >
+              <X size={16} />
             </button>
           )}
         </div>

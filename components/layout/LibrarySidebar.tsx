@@ -341,7 +341,7 @@ export function LibrarySidebar({
 
   if (inBottomSheet) {
     return (
-      <div className="flex flex-col bg-room-bg">
+      <div className="flex flex-col bg-transparent">
         <div className="flex items-center justify-between px-4 py-3 border-b border-room-border">
           <span className="text-[11px] font-bold text-room-muted tracking-widest">LIBRARIES</span>
           <button
@@ -423,7 +423,7 @@ export function LibrarySidebar({
   return (
     <>
       <div
-        className={`flex flex-col items-center bg-room-bg py-3 gap-2 flex-shrink-0 border-r border-room-border h-full transition-all duration-300 ${
+        className={`flex flex-col items-center bg-transparent py-3 gap-2 flex-shrink-0 border-r border-room-border h-full transition-all duration-300 ${
           librarySidebarCollapsed ? 'w-0 overflow-hidden opacity-0 border-none' : 'w-16'
         }`}
       >
