@@ -369,7 +369,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      const cutoff = Date.now() - 2000;
+      const cutoff = Date.now() - 15000;
       setTyping((prev) => {
         const next = Object.fromEntries(Object.entries(prev).filter(([, v]) => v.ts > cutoff));
         // Only trigger re-render if something actually changed
@@ -502,10 +502,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
     // Only emit typing:start when transitioning from not-typing → typing
     // This avoids spamming the socket on every keystroke
-    if (isTyping && !isTypingRef.current) {
-      isTypingRef.current = true;
-      typingThrottleRef.current = now;
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now });
+    if (isTyping) {
+      const timeSinceLastEmit = now - typingThrottleRef.current;
+      if (!isTypingRef.current || timeSinceLastEmit > 5000) {
+        isTypingRef.current = true;
+        typingThrottleRef.current = now;
+        getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now });
+      }
     }
 
     // Reset the stop timer on every keystroke
@@ -744,7 +747,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }
   }, []);
 
-  const resolvedTyping = Object.values(typing).map((t) => t.name).slice(0, 2).join(', ');
+
 
   // Build typing user metadata for avatar display
   const typingUsers = Object.entries(typing).slice(0, 3).map(([userId, { name }]) => {

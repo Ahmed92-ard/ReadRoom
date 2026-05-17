@@ -1052,7 +1052,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     if (followed.activePdfId && libraryId) {
       // Try to find the room from presence data (roomId is the socket room they joined)
       // Fall back to current channelId as best-effort
-      const sourceRoomId = channelId ?? roomId;
+      const sourceRoomId = followed.currentRoomId ?? channelId ?? roomId;
       const syntheticPdf: ChannelPDF = {
         id: followed.activePdfId,
         channelId: sourceRoomId,
@@ -1115,7 +1115,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             // belongs to. The followed user's presence carries activePdfId but not
             // the libraryId/channelId. Use the payload roomId if available, otherwise
             // fall back to fetching the current channel (best-effort).
-            const sourceRoomId = (payload as any).roomId ?? channelId;
+            const sourceRoomId = (payload as any).roomId ?? followedUser?.currentRoomId ?? channelId;
             const sourceLibraryId = libraryId; // same library assumed for cross-room follow
 
             if (sourceRoomId && sourceLibraryId) {
