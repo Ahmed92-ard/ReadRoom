@@ -86,17 +86,6 @@ export default function SettingsPage() {
     router.push('/libraries');
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-room-bg flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-2 border-room-border border-t-blue-500 animate-spin mx-auto" />
-          <p className="text-room-muted mt-4">Loading settings...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-room-bg text-room-text flex flex-col">
       {/* Header */}
@@ -119,7 +108,15 @@ export default function SettingsPage() {
       </header>
 
       <main className="flex-1 max-w-3xl mx-auto w-full p-6 md:p-10">
-        <div className="space-y-12">
+        {loading ? (
+          <div className="h-[400px] flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-full border-2 border-room-border border-t-blue-500 animate-spin mx-auto" />
+              <p className="text-room-muted mt-4">Loading settings...</p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-12">
           {/* Profile Section */}
           <section>
             <h2 className="text-sm font-semibold text-room-muted uppercase tracking-wider mb-6">Account Profile</h2>
@@ -275,6 +272,7 @@ export default function SettingsPage() {
             </div>
           </section>
         </div>
+        )}
       </main>
 
       <footer className="p-10 text-center text-xs text-room-muted">

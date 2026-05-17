@@ -15,6 +15,7 @@ import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { usePresenceStore } from '@/store/presenceStore';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
+import { StorageReconciliationConsole } from '@/components/admin/StorageReconciliationConsole';
 
 interface UserProfile {
   id: string;
@@ -30,6 +31,7 @@ export function SettingsOverlay() {
   const { self } = usePresenceStore();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [view, setView] = useState<'settings' | 'reconciliation'>('settings');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -85,8 +87,17 @@ export function SettingsOverlay() {
 
   const close = () => setSettingsOpen(false);
 
+  if (view === 'reconciliation') {
+    return (
+      <StorageReconciliationConsole
+        onBack={() => setView('settings')}
+        onExit={close}
+      />
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-room-bg overflow-y-auto">
+    <div className="fixed inset-0 z-[80] flex flex-col bg-room-bg overflow-y-auto">
       {/* Header */}
       <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg/90 backdrop-blur-md z-10 flex-shrink-0">
         <button
@@ -232,10 +243,7 @@ export function SettingsOverlay() {
               <h2 className="text-xs font-semibold text-room-muted uppercase tracking-wider mb-4">Admin Tools</h2>
               <div className="bg-room-surface border border-room-border rounded-2xl overflow-hidden">
                 <button
-                  onClick={() => {
-                    close();
-                    router.push('/settings/storage-reconciliation');
-                  }}
+                  onClick={() => setView('reconciliation')}
                   className="w-full flex items-center gap-4 px-6 py-4 hover:bg-room-hover transition-colors text-left"
                 >
                   <div className="w-10 h-10 rounded-xl bg-room-bg flex items-center justify-center text-room-muted">

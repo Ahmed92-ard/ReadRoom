@@ -2144,25 +2144,16 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         {/* Left Nav */}
         <div className="flex items-center gap-1">
           {isMobile && (
-            <>
-              <button 
-                onClick={() => {
-                  setActivePanel('libraries');
-                  setMobileSheetExpanded(!mobileSheetExpanded || activePanel !== 'libraries');
-                }} 
-                className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover"
-                title="Libraries"
-              >
-                <LayoutGrid size={20} />
-              </button>
-              <button 
-                onClick={() => setSettingsOpen(true)}
-                className={`p-2 rounded-xl transition-all ${settingsOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
-                title="Settings"
-              >
-                <Settings size={20} />
-              </button>
-            </>
+            <button 
+              onClick={() => {
+                setActivePanel('libraries');
+                setMobileSheetExpanded(!mobileSheetExpanded || activePanel !== 'libraries');
+              }} 
+              className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover"
+              title="Libraries"
+            >
+              <LayoutGrid size={20} />
+            </button>
           )}
           {!isMobile && (
             <>
@@ -2180,13 +2171,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               >
                 <FolderTreeIcon size={20} />
               </button>
-              <button 
-                onClick={() => setSettingsOpen(true)}
-                className={`p-2 rounded-xl transition-all ${settingsOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
-                title="Settings"
-              >
-                <Settings size={20} />
-              </button>
             </>
           )}
         </div>
@@ -2201,9 +2185,18 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         {/* Right Nav */}
         <div className="flex items-center gap-1">
           {isMobile ? (
-            <button onClick={() => setMobileChatOpen(!mobileChatOpen)} className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover">
-              <MessageSquare size={20} />
-            </button>
+            <>
+              <button onClick={() => setMobileChatOpen(!mobileChatOpen)} className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover" title="Chat">
+                <MessageSquare size={20} />
+              </button>
+              <button 
+                onClick={() => setSettingsOpen(true)}
+                className={`p-2 rounded-xl transition-all ${settingsOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
+                title="Settings"
+              >
+                <Settings size={20} />
+              </button>
+            </>
           ) : (
             <>
               <button 
@@ -2222,6 +2215,13 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 title="People & Notes"
               >
                 <PanelRight size={20} />
+              </button>
+              <button 
+                onClick={() => setSettingsOpen(true)}
+                className={`p-2 rounded-xl transition-all ${settingsOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
+                title="Settings"
+              >
+                <Settings size={20} />
               </button>
             </>
           )}
