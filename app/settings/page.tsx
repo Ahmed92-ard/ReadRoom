@@ -230,6 +230,15 @@ export default function SettingsPage() {
                 onChange={setPrivacyPublic}
               />
             </SettingsGroup>
+
+            <SettingsGroup title="Admin Tools">
+              <SettingsItem
+                icon={<Shield size={18} />}
+                title="Storage Reconciliation"
+                description="Scan and clean up orphaned PDF storage files"
+                onClick={() => router.push('/settings/storage-reconciliation')}
+              />
+            </SettingsGroup>
           </div>
 
           {/* Danger Zone */}
