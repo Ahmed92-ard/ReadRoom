@@ -85,7 +85,7 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
             className={`flex-shrink-0 p-1 transition-all rounded hover:bg-room-bg ${showMenu ? 'text-room-text bg-room-bg' : 'text-room-muted'}`}
             title="Channel settings"
           >
-            <MoreVertical size={14} />
+            <MoreVertical size={16} />
           </button>
 
           {showMenu && (
@@ -94,14 +94,14 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
                 onClick={() => { setIsRenaming(true); setShowMenu(false); }}
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-room-muted hover:text-room-text hover:bg-room-hover rounded-lg transition-colors"
               >
-                <Settings size={14} />
+                <Settings size={16} />
                 <span>Rename</span>
               </button>
               <button
                 onClick={handleCopyLink}
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-room-muted hover:text-room-text hover:bg-room-hover rounded-lg transition-colors"
               >
-                {copied ? <Check size={14} className="text-green-400" /> : <Link2 size={14} />}
+                {copied ? <Check size={16} className="text-green-400" /> : <Link2 size={16} />}
                 <span>{copied ? 'Copied!' : 'Copy Link'}</span>
               </button>
               <div className="h-px bg-room-border my-1" />
@@ -109,7 +109,7 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
                 onClick={() => { setShowDeleteConfirm(true); setShowMenu(false); }}
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
               >
-                <Trash2 size={14} />
+                <Trash2 size={16} />
                 <span>Delete Channel</span>
               </button>
             </div>
@@ -237,7 +237,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
               className="ml-2 p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
               title="Rename library"
             >
-              <Pencil size={14} />
+              <Pencil size={16} />
             </button>
           )}
           {onClose && (
@@ -246,7 +246,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
               className="ml-1 p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
               title="Close"
             >
-              <X size={16} />
+              <X size={18} />
             </button>
           )}
         </div>
@@ -264,7 +264,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
                 className="text-room-muted hover:text-room-text transition-colors"
                 title="Add room"
               >
-                <Plus size={14} />
+                <Plus size={16} />
               </button>
             </div>
             {pdfChannels.map((ch) => (
@@ -313,8 +313,8 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
               >
                 <span className="flex-1 text-sm font-mono text-room-text tracking-widest text-left">{library.invite_code}</span>
                 {copied
-                  ? <Check size={14} className="text-green-400 flex-shrink-0" />
-                  : <Link2 size={14} className="text-room-muted group-hover:text-room-text flex-shrink-0 transition-colors" />
+                  ? <Check size={16} className="text-green-400 flex-shrink-0" />
+                  : <Link2 size={16} className="text-room-muted group-hover:text-room-text flex-shrink-0 transition-colors" />
                 }
               </button>
             </div>

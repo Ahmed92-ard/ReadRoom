@@ -99,7 +99,7 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
   });
 
   return (
-    <div className="flex flex-col h-full bg-room-surface">
+    <div className="flex flex-col h-full bg-transparent">
       {showAvatarUpload && self && (
         <AvatarUpload
           currentUrl={self.avatarUrl}

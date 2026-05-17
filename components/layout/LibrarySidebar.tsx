@@ -85,13 +85,13 @@ function LibraryIcon({
             onClick={() => { setRenameDraft(library.name); setShowRenameModal(true); setShowContextMenu(false); }}
             className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-room-muted hover:text-room-text hover:bg-room-hover rounded-lg transition-colors"
           >
-            <Pencil size={14} /> Rename
+            <Pencil size={16} /> Rename
           </button>
           <button
             onClick={() => { setShowDeleteConfirm(true); setShowContextMenu(false); }}
             className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
           >
-            <Trash2 size={14} /> Delete Library
+            <Trash2 size={16} /> Delete Library
           </button>
         </div>
       )}
@@ -400,7 +400,7 @@ export function LibrarySidebar({
                   className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
                   title="Rename library"
                 >
-                  <Pencil size={14} />
+                  <Pencil size={16} />
                 </button>
               </div>
             );

@@ -800,7 +800,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
       <a href={url ?? '#'} target={url ? '_blank' : undefined} rel={url ? 'noopener noreferrer' : undefined} className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg/70 px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
         <Icon size={16} className="text-blue-300" />
         <span className="min-w-0 flex-1 truncate">{name}</span>
-        {url && <Download size={14} className="text-room-muted" />}
+        {url && <Download size={16} className="text-room-muted" />}
       </a>
     );
   };
@@ -813,13 +813,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
   }, [input]);
 
   return (
-    <div className="relative flex h-full flex-col bg-room-surface">
+    <div className="relative flex h-full flex-col bg-transparent">
       <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2">
-        <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={16} /></button>
-        {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={16} /></button>}
-        {canUseAdvancedApi && <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={16} /></button>}
+        <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={18} /></button>
+        {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={18} /></button>}
+        {canUseAdvancedApi && <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={18} /></button>}
         <div className="min-w-0 flex-1 text-center text-xs font-semibold uppercase tracking-wide text-room-muted">Chat</div>
-        {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={16} /></button>}
+        {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={18} /></button>}
       </div>
 
       {searchOpen && (
@@ -1038,7 +1038,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
             {editing ? <span>Editing message</span> : replyTo ? <span>Replying to <b className="text-room-text">{replyTo.userName}</b>: {summarize(replyTo)}</span> : null}
             {attachment && <span className="block truncate text-room-text"><Paperclip size={12} className="mr-1 inline" />{attachment.name}</span>}
           </div>
-          <button onClick={clearComposerContext} className="rounded-lg p-1 text-room-muted hover:text-room-text" aria-label="Cancel"><X size={16} /></button>
+          <button onClick={clearComposerContext} className="rounded-lg p-1 text-room-muted hover:text-room-text" aria-label="Cancel"><X size={18} /></button>
         </div>
       )}
 
@@ -1097,7 +1097,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
             <div className="flex items-center gap-2 border-b border-room-border px-4 py-3">
               <h3 className="flex-1 text-sm font-semibold text-room-text">Message info</h3>
               <button onClick={() => setInfoMessage(null)} className="rounded-lg p-1.5 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close message info">
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
             <div className="overflow-y-auto p-4">
@@ -1141,10 +1141,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
       )}
 
       {mediaOpen && (
-        <div className="absolute inset-0 z-20 flex flex-col bg-room-surface">
+        <div className="absolute inset-0 z-20 flex flex-col bg-room-surface/90 backdrop-blur-3xl">
           <div className="flex items-center gap-2 border-b border-room-border px-3 py-2">
             <h3 className="flex-1 text-sm font-semibold text-room-text">Media and Files</h3>
-            <button onClick={() => setMediaOpen(false)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={16} /></button>
+            <button onClick={() => setMediaOpen(false)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={18} /></button>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             {visibleMediaSections.length === 0 && (
@@ -1164,7 +1164,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                         <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
                           {React.createElement(attachmentIcon(m.attachmentType), { size: 16, className: 'text-blue-300' })}
                           <span className="min-w-0 flex-1 truncate">{name}</span>
-                          <Download size={14} className="text-room-muted" />
+                          <Download size={16} className="text-room-muted" />
                         </a>
                       );
                     })}

@@ -4,7 +4,7 @@ import React, {
   useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
-import { Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings , Folder as FolderTreeIcon, PanelRight } from 'lucide-react';
+import { Plus, Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings , Folder as FolderTreeIcon, PanelRight } from 'lucide-react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { useShallow } from 'zustand/react/shallow';
 import { useUIStore } from '@/store/uiStore';
@@ -150,7 +150,7 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
         ref={sheetRef}
         className={`
           absolute bottom-0 left-0 right-0 z-40
-          bg-room-surface border-t border-room-border
+          bg-room-surface/90 backdrop-blur-3xl border-t border-room-border/50
           rounded-t-2xl shadow-2xl
           transition-[height] duration-300 ease-out
           ${expanded ? (fullHeight ? 'h-[100dvh] rounded-none' : 'h-[75dvh]') : 'h-0 overflow-hidden'}
@@ -170,7 +170,7 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
               <div className="w-10 h-1.5 rounded-full bg-room-border" />
               <div className="w-10 flex justify-end">
                 <div className="p-1 rounded-full bg-room-hover text-room-muted">
-                  <X size={16} />
+                  <X size={18} />
                 </div>
               </div>
             </div>
@@ -1662,21 +1662,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const pendingDeleteFolderName = folderOptions.find((folder) => folder.id === pendingDeleteFolderId)?.name ?? 'this folder';
 
   const AuxRightSidebar = (
-    <div className="flex flex-col h-full bg-room-surface/90 backdrop-blur-3xl shadow-2xl w-64 md:w-80 pointer-events-auto border-l border-room-border">
+    <div className="flex flex-col h-full bg-transparent w-full pointer-events-auto">
       <div className="flex items-center p-2 border-b border-room-border gap-1">
         <button 
           onClick={() => setActivePanel('presence')}
           className={`flex-1 flex justify-center py-2 rounded-lg transition-colors ${activePanel === 'presence' ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:bg-room-hover hover:text-room-text'}`}
           title="People"
         >
-          <Users size={16} />
+          <Users size={18} />
         </button>
         <button 
           onClick={() => setActivePanel('notes')}
           className={`flex-1 flex justify-center py-2 rounded-lg transition-colors ${activePanel === 'notes' ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:bg-room-hover hover:text-room-text'}`}
           title="Notes"
         >
-          <FileText size={16} />
+          <FileText size={18} />
         </button>
         <div className="w-[1px] h-6 bg-room-border mx-1" />
         <button
@@ -1684,7 +1684,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           className="p-2 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover transition-colors"
           title="Close Sidebar"
         >
-          <X size={16} />
+          <X size={18} />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -1698,16 +1698,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const ShelfContent = (
           <div className="flex flex-col h-full p-3">
             {/* Header */}
-            <div className="flex items-center justify-end mb-3 flex-shrink-0">
-              <button onClick={() => toggleNavigation()} className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover mr-1">
-                <X size={16} />
-              </button>
-              <button
-                onClick={() => handleUploadToFolder(null)}
-                className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all"
-              >
-                + Upload
-              </button>
+            <div className="flex items-center justify-between mb-3 flex-shrink-0 border-b border-room-border/30 pb-2">
+              <h2 className="text-sm font-bold text-room-text tracking-wider uppercase">Shelf</h2>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleUploadToFolder(null)}
+                  className="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded-lg hover:bg-blue-400/10 transition-all flex items-center gap-1"
+                >
+                  <Plus size={16} /> Upload
+                </button>
+                <button onClick={() => toggleNavigation()} className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             {/* Error */}
@@ -1766,7 +1769,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
             title="Rename room"
           >
-            <Pencil size={14} />
+            <Pencil size={16} />
           </button>
         </div>
       )}
@@ -1929,8 +1932,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         {/* Left Nav */}
         <div className="flex items-center gap-1">
           {isMobile && (
-            <button onClick={toggleNavigation} className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover">
-              <Menu size={20} />
+            <button 
+              onClick={() => {
+                setActivePanel('libraries');
+                setMobileSheetExpanded(!mobileSheetExpanded || activePanel !== 'libraries');
+              }} 
+              className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover"
+              title="Libraries"
+            >
+              <LayoutGrid size={20} />
             </button>
           )}
           {!isMobile && (
@@ -2052,7 +2062,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                         className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
                         title="Close workspace"
                       >
-                        <X size={14} />
+                        <X size={18} />
                       </button>
                     </div>
                     <div className="flex-1 min-h-0">
@@ -2193,7 +2203,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               onClick={() => setMobileChatOpen(false)}
             />
           )}
-          <div className={`fixed inset-y-0 right-0 w-full max-w-[90%] md:max-w-[400px] bg-room-surface z-[70] shadow-2xl transition-transform duration-300 transform ${mobileChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className={`fixed inset-y-0 right-0 w-full max-w-[90%] md:max-w-[400px] bg-room-surface/90 backdrop-blur-3xl border-l border-room-border/50 z-[70] shadow-2xl transition-transform duration-300 transform ${mobileChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
             <ChatSidebar roomId={roomId} onClose={() => setMobileChatOpen(false)} />
           </div>
         </>
@@ -2337,7 +2347,7 @@ const SecondaryViewerSection = React.memo(({
           className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
           title="Close viewer"
         >
-          <X size={14} />
+          <X size={18} />
         </button>
       </div>
       <div className="flex-1 min-h-0">
