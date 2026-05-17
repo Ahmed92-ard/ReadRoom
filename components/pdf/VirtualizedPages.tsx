@@ -221,6 +221,16 @@ export function VirtualizedPages({
     return () => { active = false; };
   }, [pdfDocument, totalPages, zoom, rotation]);
 
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) {
+      el.scrollTop = 0;
+    }
+    isProgrammaticScrollRef.current = false;
+    lastScrolledPageRef.current = null;
+    pageSetFromScrollRef.current = null;
+  }, [pdfDocument, zoom, rotation, containerRef]);
+
   // ── Scroll handler — throttled at rAF rate ────────────────────────────────
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
@@ -228,6 +238,7 @@ export function VirtualizedPages({
     // Skip if this scroll event was triggered by our own programmatic scrollTo()
     // This is the key guard that prevents follow-mode feedback loops.
     if (isProgrammaticScrollRef.current) return;
+    if (!pdfDocument || totalPages === 0) return;
 
     cancelAnimationFrame(scrollThrottleRef.current);
     scrollThrottleRef.current = requestAnimationFrame(() => {

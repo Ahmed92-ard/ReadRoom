@@ -935,7 +935,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
                     </div>
                   )}
                   <div className={`relative flex items-start gap-1 w-full ${isSelf ? 'flex-row-reverse' : ''}`}>
-                    <div className={`min-w-0 border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
+                    <div className={`min-w-0 border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${
+                      isSelf 
+                        ? 'border-blue-500/40 bg-blue-600/20 dark:bg-blue-600/30 text-room-text hover:bg-blue-600/25 dark:hover:bg-blue-600/35 backdrop-blur-sm transition-all duration-200' 
+                        : 'border-room-border/60 bg-black/10 dark:bg-black/40 text-room-text/95 hover:bg-black/20 dark:hover:bg-black/50 backdrop-blur-sm transition-all duration-200'
+                    }`}>
                       {msg.replyTo && (
                         <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-0.5 text-left">
                           <span className="block truncate text-[10px] font-semibold text-blue-300">{msg.replyTo.userName}</span>

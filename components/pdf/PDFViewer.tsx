@@ -2,10 +2,11 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Maximize2, Minimize2, RotateCw } from 'lucide-react';
+import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Maximize2, Minimize2, RotateCw, MessageSquare, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { usePDFStore } from '@/store/pdfStore';
 import { VirtualizedPages } from './VirtualizedPages';
+import { Chat } from '@/components/room/Chat';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { PDFMeta } from '@/types';
 
@@ -18,6 +19,7 @@ interface PDFViewerProps {
   onVisibleRangeChange?: (range: { start: number; end: number }) => void;
   followModeOverride?: boolean;
   externalContainerRef?: React.RefObject<HTMLDivElement>;
+  roomId?: string;
 }
 
 export interface PDFViewerState {
@@ -50,8 +52,10 @@ export function PDFViewer({
   onViewerStateChange, 
   onVisibleRangeChange, 
   followModeOverride,
-  externalContainerRef
+  externalContainerRef,
+  roomId
 }: PDFViewerProps) {
+  const [fullscreenChatOpen, setFullscreenChatOpen] = useState(false);
   const store = usePDFStore(
     useShallow((s) => ({
       page: s.page,
@@ -102,9 +106,9 @@ export function PDFViewer({
   }, [controlled, onViewerStateChange, store.setPage, store.followMode, store.setFollowMode]);
 
   const setZoom = useCallback((nextZoom: number) => {
-    if (!controlled && store.followMode) store.setFollowMode(false);
+    // Zoom levels are strictly local and do not disable follow mode
     onViewerStateChange ? onViewerStateChange({ zoom: nextZoom }) : store.setZoom(nextZoom);
-  }, [controlled, onViewerStateChange, store.setZoom, store.followMode, store.setFollowMode]);
+  }, [onViewerStateChange, store.setZoom]);
 
   const setScroll = useCallback((nextScroll: number) => {
     if (!controlled && store.followMode) store.setFollowMode(false);
@@ -452,6 +456,37 @@ export function PDFViewer({
           />
         )}
       </div>
+
+      {isFullscreen && roomId && (
+        <div className="absolute bottom-4 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none">
+          {/* Floating Chat Overlay Drawer */}
+          {fullscreenChatOpen && (
+            <div className="w-[320px] h-[450px] rounded-2xl border border-room-border/60 bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto flex flex-col overflow-hidden transition-all duration-300 transform scale-100 origin-bottom-right">
+              <div className="flex-none flex items-center justify-between px-3 py-2 border-b border-room-border bg-black/10 dark:bg-black/25">
+                <span className="text-xs font-semibold text-room-text">Room Chat (Fullscreen)</span>
+                <button 
+                  onClick={() => setFullscreenChatOpen(false)}
+                  className="p-1 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0">
+                <Chat roomId={roomId} onClose={() => setFullscreenChatOpen(false)} />
+              </div>
+            </div>
+          )}
+
+          {/* Floating Chat Toggle Button */}
+          <button
+            onClick={() => setFullscreenChatOpen(!fullscreenChatOpen)}
+            className="pointer-events-auto flex items-center justify-center w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-transform hover:scale-105 active:scale-95 z-50 animate-in fade-in zoom-in duration-200"
+            title="Toggle Fullscreen Chat"
+          >
+            <MessageSquare size={18} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

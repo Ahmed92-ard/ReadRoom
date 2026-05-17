@@ -1,7 +1,7 @@
 'use client';
 
 import React, {
-  useCallback, useEffect, useRef, useState } from 'react';
+  useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useRouter } from 'next/navigation';
 import { Plus, Menu, X, MessageSquare, Layers, Users, FileText, FolderOpen, LayoutGrid, Pencil, GripVertical, Settings , Folder as FolderTreeIcon, PanelRight } from 'lucide-react';
@@ -273,6 +273,7 @@ const ResizablePaneWrapper = React.memo(({
   return (
     <div
       ref={wrapperRef}
+      data-pane-key={paneKey}
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -371,6 +372,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   pageRef.current = page;
   scrollRef.current = scroll;
   zoomRef.current = zoom;
+  const leftSidebarRef = useRef<HTMLDivElement>(null);
+  const rightSidebarContainerRef = useRef<HTMLDivElement>(null);
   const followTarget = usePDFStore((s) => s.followTarget);
 
   const [channelPDFs, setChannelPDFs] = useState<ChannelPDF[]>([]);
@@ -562,6 +565,46 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => document.removeEventListener('fullscreenchange', updateFullscreenHost);
   }, []);
 
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      // Avoid closing on mouse down during resize or drag operations
+      if (isResizingRef.current || isChatResizingRef.current) return;
+
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      
+      // If clicking inside active dialogs, modals, context menus, or overlay controls, do not close
+      if (target.closest('.fixed') || target.closest('[role="dialog"]') || target.closest('.cursor-col-resize') || target.closest('.cursor-row-resize') || target.closest('.cursor-nwse-resize')) {
+        return;
+      }
+      
+      // If clicking header or toggle buttons, let their click handlers handle it
+      if (target.closest('header') || target.closest('button')) {
+        return;
+      }
+
+      // Check Left Sidebar collapse
+      if (!librarySidebarCollapsed && leftSidebarRef.current && !leftSidebarRef.current.contains(target)) {
+        toggleNavigation();
+      }
+
+      // Check Right Sidebars collapse
+      if (rightSidebarContainerRef.current && !rightSidebarContainerRef.current.contains(target)) {
+        if (!chatSidebarCollapsed) {
+          toggleChatSidebar();
+        }
+        if (sidebarOpen) {
+          setSidebarOpen(false);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [librarySidebarCollapsed, chatSidebarCollapsed, sidebarOpen, toggleNavigation, toggleChatSidebar, setSidebarOpen]);
+
   const clearUnread = useCallback(() => {
     setUnreadCount(0);
     unreadCountRef.current = 0;
@@ -603,9 +646,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const now = Date.now();
     if (now - lastNotificationTimeRef.current < 15000) return;
 
-    // Visibility / focus check
-    const isAppFocused = document.visibilityState === 'visible' && document.hasFocus();
-    if (isAppFocused) return;
+    // Visibility / focus check (handles iframes like PDF viewer)
+    const hasActiveFocus = (() => {
+      if (document.visibilityState === 'hidden') return false;
+      if (document.hasFocus()) return true;
+      if (document.activeElement && document.activeElement.tagName === 'IFRAME') return true;
+      return false;
+    })();
+    if (hasActiveFocus) return;
 
     // Apply the throttle and deduplication markers BEFORE invoking Notification()
     lastNotificationTimeRef.current = now;
@@ -1006,8 +1054,79 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => { cancelled = true; };
   }, [libraryId, channelId, buildRoomState, channelPdfToMeta, normalizeChannelPDF, publishActivePdf, selectionStorageKey, setRoom]);
 
-  usePDFSync(roomId, mainContainerRef, currentChannelPdfId, room?.pdf?.filename);
-  usePresence(roomId, libraryId ?? null, initialUserId, initialUserName, currentChannelPdfId, room?.pdf?.filename ?? null, room?.name ?? initialRoom?.name ?? 'ReadRoom');
+  // Find which PDF pane is currently at index 0 after sorting according to paneOrder
+  const topPane = useMemo(() => {
+    const panes: { key: string; pdfId: string; filename: string; isMain: boolean }[] = [];
+    if (room?.pdf) {
+      panes.push({
+        key: 'main-workspace',
+        pdfId: currentChannelPdfId || '',
+        filename: room.pdf.filename,
+        isMain: true,
+      });
+    }
+    openViewers.forEach((viewer) => {
+      panes.push({
+        key: viewer.key,
+        pdfId: viewer.pdfId,
+        filename: viewer.pdf.filename,
+        isMain: false,
+      });
+    });
+
+    if (panes.length === 0) return null;
+
+    panes.sort((a, b) => {
+      const aIdx = paneOrder.indexOf(a.key);
+      const bIdx = paneOrder.indexOf(b.key);
+      if (aIdx === -1 && bIdx === -1) return 0;
+      if (aIdx === -1) return 1;
+      if (bIdx === -1) return -1;
+      return aIdx - bIdx;
+    });
+
+    return panes[0];
+  }, [room?.pdf, currentChannelPdfId, openViewers, paneOrder]);
+
+  const topPaneState = useMemo(() => {
+    if (!topPane) return null;
+    if (topPane.isMain) {
+      return {
+        pdfId: topPane.pdfId,
+        filename: topPane.filename,
+        page: page,
+        scroll: scroll,
+      };
+    } else {
+      const viewer = openViewers.find(v => v.key === topPane.key);
+      return {
+        pdfId: topPane.pdfId,
+        filename: topPane.filename,
+        page: viewer?.state?.page ?? 1,
+        scroll: viewer?.state?.scroll ?? 0,
+      };
+    }
+  }, [topPane, page, scroll, openViewers]);
+
+  usePDFSync(
+    roomId,
+    mainContainerRef,
+    topPaneState ? topPaneState.pdfId : currentChannelPdfId,
+    topPaneState ? topPaneState.filename : room?.pdf?.filename,
+    topPaneState?.page,
+    topPaneState?.scroll,
+    topPane?.key
+  );
+  
+  usePresence(
+    roomId,
+    libraryId ?? null,
+    initialUserId,
+    initialUserName,
+    topPaneState ? topPaneState.pdfId : currentChannelPdfId,
+    topPaneState ? topPaneState.filename : (room?.pdf?.filename ?? null),
+    room?.name ?? initialRoom?.name ?? 'ReadRoom'
+  );
 
   // Expose roomId globally so PresenceList can emit presence:update for avatar changes
   useEffect(() => {
@@ -1196,7 +1315,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       updateOpenViewerState(`follow:${followTarget}`, {
         page: Math.max(1, followed.page ?? 1),
         scroll: Math.max(0, Math.min(1, followed.scroll ?? 0)),
-        zoom: Math.max(0.5, followed.zoom ?? 1),
       });
     };
 
@@ -2042,7 +2160,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {/* Unified Left Sidebar Overlay */}
       {!isMobile && !librarySidebarCollapsed && (
         <div className="absolute top-0 left-0 bottom-0 z-[55] flex pointer-events-none transition-all duration-300">
-          <div className="flex h-full bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
+          <div ref={leftSidebarRef} className="flex h-full bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
             
             {/* Sidebar Content */}
             <div className="flex flex-col bg-transparent border-l border-room-border/30" style={{ width: leftSidebarWidth }}>
@@ -2102,7 +2220,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                       </button>
                     </div>
                     <div className="flex-1 min-h-0">
-                      <PDFViewer pdf={room.pdf} accessToken={null} onRetry={() => {}} externalContainerRef={mainContainerRef} />
+                      <PDFViewer pdf={room.pdf} accessToken={null} onRetry={() => {}} externalContainerRef={mainContainerRef} roomId={roomId} />
                     </div>
                   </section>
                 )
@@ -2117,6 +2235,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                     viewer={viewer}
                     onClose={() => setOpenViewers((prev) => prev.filter((item) => item.key !== viewer.key))}
                     onStateChange={updateOpenViewerState}
+                    roomId={roomId}
                   />
                 )
               });
@@ -2195,7 +2314,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       {/* Desktop Right Sidebars (Overlays) */}
       {!isMobile && (
-        <div className="absolute top-0 right-0 bottom-0 z-[55] flex flex-row-reverse pointer-events-none">
+        <div ref={rightSidebarContainerRef} className="absolute top-0 right-0 bottom-0 z-[55] flex flex-row-reverse pointer-events-none">
           
           {/* Chat Sidebar Overlay */}
           {!chatSidebarCollapsed && (
@@ -2345,11 +2464,13 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 const SecondaryViewerSection = React.memo(({ 
   viewer, 
   onClose, 
-  onStateChange 
+  onStateChange,
+  roomId
 }: { 
   viewer: OpenViewer; 
   onClose: () => void;
   onStateChange: (key: string, patch: Partial<PDFViewerState>) => void;
+  roomId?: string;
 }) => {
   const handleStateChange = useCallback((patch: Partial<PDFViewerState>) => {
     onStateChange(viewer.key, patch);
@@ -2394,6 +2515,7 @@ const SecondaryViewerSection = React.memo(({
           viewerState={viewer.state}
           onViewerStateChange={handleStateChange}
           followModeOverride={Boolean(viewer.followUserId)}
+          roomId={roomId}
         />
       </div>
     </section>

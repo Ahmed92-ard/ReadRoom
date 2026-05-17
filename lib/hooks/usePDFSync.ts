@@ -10,10 +10,17 @@ export function usePDFSync(
   roomId: string, 
   containerRef: React.RefObject<HTMLDivElement>,
   activePdfId?: string | null, 
-  activePdfName?: string | null
+  activePdfName?: string | null,
+  pageOverride?: number,
+  scrollOverride?: number,
+  topPaneKey?: string | null
 ) {
-  const page = usePDFStore((s) => s.page);
-  const scroll = usePDFStore((s) => s.scroll);
+  const pageFromStore = usePDFStore((s) => s.page);
+  const scrollFromStore = usePDFStore((s) => s.scroll);
+
+  const page = pageOverride !== undefined ? pageOverride : pageFromStore;
+  const scroll = scrollOverride !== undefined ? scrollOverride : scrollFromStore;
+
   const zoom = usePDFStore((s) => s.zoom);
   const setSyncState = usePDFStore((s) => s.setSyncState);
   const followMode = usePDFStore((s) => s.followMode);
@@ -54,7 +61,9 @@ export function usePDFSync(
     throttleRef.current = setTimeout(() => {
       // Page-relative scroll for cross-device stability
       let pageOffset = scroll;
-      const container = containerRef.current;
+      const container = topPaneKey 
+        ? (document.querySelector(`[data-pane-key="${topPaneKey}"] [data-pdf-container="true"]`) as HTMLDivElement)
+        : containerRef.current;
       const pageEl = container?.querySelector(`[data-page="${page}"]`);
       if (container && pageEl) {
         const cRect = container.getBoundingClientRect();
@@ -79,7 +88,7 @@ export function usePDFSync(
     return () => {
       if (throttleRef.current) clearTimeout(throttleRef.current);
     };
-  }, [roomId, activePdfId, activePdfName, page, scroll, zoom, self, followMode]);
+  }, [roomId, activePdfId, activePdfName, page, scroll, zoom, self, followMode, topPaneKey]);
 
   // ── Emit presence:update when PDF state changes ────────────────────────────
   useEffect(() => {
