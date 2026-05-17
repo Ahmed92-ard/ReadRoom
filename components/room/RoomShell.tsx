@@ -610,24 +610,42 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         if (target?.avatarUrl) icon = target.avatarUrl;
       }
 
-      // For cross-room messages, include the room name in the body
+      // For cross-room messages, include the room name in the title
       const isCrossRoom = activity.roomId !== roomId;
-      const notifBody = isCrossRoom && activity.body
-        ? `${activity.body}`
-        : activity.body;
-      const notifTitle = isCrossRoom && activity.userName
-        ? `${activity.userName}`
-        : activity.title;
+      const roomName = activity.metadata?.roomName;
+      let notifTitle = activity.title;
+      let notifBody = activity.body;
+
+      if (isCrossRoom) {
+        if (roomName && activity.userName) {
+          notifTitle = `${activity.userName} in #${roomName}`;
+        } else if (roomName) {
+          notifTitle = `${activity.title} in #${roomName}`;
+        }
+      }
+
       // Tag by roomId+id so cross-room notifications don't collapse same-room ones
       const tag = `${activity.roomId}:${activity.id}`;
 
-      new Notification(notifTitle ?? activity.title, {
+      const notif = new Notification(notifTitle ?? activity.title, {
         body: notifBody,
         tag,
         icon,
       });
+
+      notif.onclick = () => {
+        window.focus();
+        if (activity.roomId) {
+          const isOtherRoom = activity.roomId !== roomId;
+          if (isOtherRoom && libraryId) {
+            router.push(`/libraries/${libraryId}/channels/${activity.roomId}`);
+          } else if (isOtherRoom) {
+            router.push(`/rooms/${activity.roomId}`);
+          }
+        }
+      };
     } catch {}
-  }, [roomId]);
+  }, [roomId, libraryId, router]);
 
   const pushToast = useCallback((activity: RoomActivity) => {
     const toast: ToastActivity = { ...activity, toastId: `${activity.id}:${Date.now()}` };
@@ -1109,7 +1127,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           if (!messageRoomId || messageRoomId === roomId || !roomNames.has(messageRoomId)) return;
           if (String(row?.sender_id ?? '').split('_')[0] === initialUserId) return;
 
-          const activityId = `cross-room:message:${row.id}`;
+          const activityId = String(row.id);
           if (processedNotificationIdsRef.current.has(activityId)) return;
           processedNotificationIdsRef.current.add(activityId);
 
@@ -1280,6 +1298,14 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         scroll: Math.max(0, Math.min(1, payload.scroll ?? 0)),
         zoom: Math.max(0.5, payload.zoom ?? 1),
       });
+
+      if (isActiveFollow) {
+        setSyncState({
+          page: Math.max(1, payload.page ?? 1),
+          scroll: Math.max(0, Math.min(1, payload.scroll ?? 0)),
+          zoom: Math.max(0.5, payload.zoom ?? 1),
+        });
+      }
     };
 
     socket.on('sync:state', handler as any);
@@ -2154,15 +2180,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             }} />
           )}
 
-          {isMobile && (
-            <MobileBottomSheet
-              expanded={mobileSheetExpanded}
-              setExpanded={setMobileSheetExpanded}
-              fullHeight={activePanel === 'chat'}
-            >
-              {RightSidebarContent}
-            </MobileBottomSheet>
-          )}
         </div>
       </main>
 
@@ -2210,6 +2227,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       )}
 
       {/* Mobile Sheet Backdrop & Container handled via MobileBottomSheet component */}
+      {isMobile && (
+        <MobileBottomSheet
+          expanded={mobileSheetExpanded}
+          setExpanded={setMobileSheetExpanded}
+          fullHeight={activePanel === 'chat'}
+        >
+          {RightSidebarContent}
+        </MobileBottomSheet>
+      )}
 
       {fullscreenHost ? createPortal(toastStack, fullscreenHost) : toastStack}
 
@@ -2320,7 +2346,7 @@ const SecondaryViewerSection = React.memo(({
   }, [onStateChange, viewer.key]);
 
   return (
-    <section className="min-h-0 flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
+    <section className="min-h-0 h-full flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
       <div className="flex-none flex items-center justify-between gap-3 px-3 py-2 border-b border-room-border bg-room-surface">
         <div className="flex items-center gap-2 min-w-0">
           {viewer.followUserId && (

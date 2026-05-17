@@ -39,7 +39,7 @@ export function usePDFSync(
 
   // ── Emit sync:state on local navigation ────────────────────────────────────
   useEffect(() => {
-    if (!self) return;
+    if (!self || followMode) return;
 
     // Skip if a remote update just happened (prevent echo)
     if (Date.now() - lastRemoteUpdateTs.current < 200) {

@@ -383,10 +383,33 @@ export function Chat({ roomId, onClose }: ChatProps) {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => () => {
-    if (longPressRef.current) clearTimeout(longPressRef.current);
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-  }, []);
+  useEffect(() => {
+    // Reset typing state on room change
+    setActiveTypers({});
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    emitThrottleRef.current = 0;
+
+    // Clean up typing state on old room before leaving or on unmount
+    return () => {
+      if (self && typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = null;
+        try {
+          getSocket().emit('chat:typing', {
+            roomId,
+            userId: self.userId,
+            userName: self.userName,
+            typing: false,
+            ts: Date.now(),
+          });
+        } catch {}
+      }
+    };
+  }, [roomId, self]);
+
 
   useEffect(() => {
     const socket = getSocket();

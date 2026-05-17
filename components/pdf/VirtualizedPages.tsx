@@ -332,9 +332,9 @@ export function VirtualizedPages({
       // In follow mode, also apply the fractional scroll position within the page
       // so the follower mirrors the leader's exact viewport, not just the page top.
       let targetScrollTop = pageTopOffset;
-      if (followMode && controlledScroll !== undefined) {
+      if (followMode && scroll !== undefined) {
         const pageHeight = pageHeights[boundedPage - 1] ?? defaultPageHeight * zoom;
-        targetScrollTop = pageTopOffset + controlledScroll * pageHeight;
+        targetScrollTop = pageTopOffset + scroll * pageHeight;
       }
 
       // Guard: suppress handleScroll re-entrancy during navigation
