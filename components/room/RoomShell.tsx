@@ -1479,13 +1479,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         page: Math.max(1, payload.page ?? 1),
         scroll: Math.max(0, Math.min(1, payload.scroll ?? 0)),
       });
-
-      if (isActiveFollow) {
-        setSyncState({
-          page: Math.max(1, payload.page ?? 1),
-          scroll: Math.max(0, Math.min(1, payload.scroll ?? 0)),
-        });
-      }
     };
 
     socket.on('sync:state', handler as any);
