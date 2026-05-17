@@ -9,7 +9,8 @@
 //   3. Update localStorage cache
 
 import React, { useState, useEffect } from 'react';
-import { X, LogOut, User, Bell, Palette, ArrowLeft } from 'lucide-react';
+import { X, LogOut, User, Bell, Palette, ArrowLeft, Shield } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
 import { usePresenceStore } from '@/store/presenceStore';
@@ -23,6 +24,7 @@ interface UserProfile {
 }
 
 export function SettingsOverlay() {
+  const router = useRouter();
   const { setSettingsOpen, theme, setTheme } = useUIStore();
   const { user, signOut, updateDisplayName, updateAvatarUrl } = useAuth();
   const { self } = usePresenceStore();
@@ -220,6 +222,28 @@ export function SettingsOverlay() {
                   </div>
                   <div className={`w-11 h-6 rounded-full flex items-center px-1 transition-colors ${notifications ? 'bg-blue-500' : 'bg-room-border'}`}>
                     <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${notifications ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </div>
+                </button>
+              </div>
+            </section>
+
+            {/* Admin Tools */}
+            <section>
+              <h2 className="text-xs font-semibold text-room-muted uppercase tracking-wider mb-4">Admin Tools</h2>
+              <div className="bg-room-surface border border-room-border rounded-2xl overflow-hidden">
+                <button
+                  onClick={() => {
+                    close();
+                    router.push('/settings/storage-reconciliation');
+                  }}
+                  className="w-full flex items-center gap-4 px-6 py-4 hover:bg-room-hover transition-colors text-left"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-room-bg flex items-center justify-center text-room-muted">
+                    <Shield size={18} />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-medium text-room-text">Storage Reconciliation</h4>
+                    <p className="text-xs text-room-muted">Scan and clean up orphaned PDF storage files</p>
                   </div>
                 </button>
               </div>
