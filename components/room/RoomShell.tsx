@@ -1176,14 +1176,23 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const selectChannelPDF = useCallback(
     async (pdf: ChannelPDF) => {
       const selected = channelPdfToMeta(pdf);
-      setRoom(buildRoomState(selected));
-      setSyncState({ page: 1, scroll: 0, zoom: 1 });
-      setCurrentChannelPdfId(pdf.id);
-      if (selectionStorageKey) localStorage.setItem(selectionStorageKey, pdf.id);
-      publishActivePdf(pdf.id, pdf.filename);
+      if (!room?.pdf) {
+        setRoom(buildRoomState(selected));
+        setSyncState({ page: 1, scroll: 0, zoom: 1 });
+        setCurrentChannelPdfId(pdf.id);
+        if (selectionStorageKey) localStorage.setItem(selectionStorageKey, pdf.id);
+        publishActivePdf(pdf.id, pdf.filename);
+      } else {
+        // Open as a secondary tab if a PDF is already open in the workspace
+        setOpenViewers((prev) => {
+          const key = `pdf:${pdf.id}`;
+          if (prev.some((v) => v.key === key)) return prev;
+          return [...prev, { key, pdfId: pdf.id, pdf: selected, title: pdf.filename, followUserId: null, state: { page: 1, scroll: 0, zoom: 1, rotation: 0, totalPages: 0, loadState: 'idle' } }];
+        });
+      }
       setShowPicker(false);
     },
-    [channelPdfToMeta, setRoom, buildRoomState, setSyncState, selectionStorageKey, publishActivePdf]
+    [channelPdfToMeta, setRoom, buildRoomState, setSyncState, selectionStorageKey, publishActivePdf, room, setOpenViewers]
   );
 
   const performDeleteChannelPDF = useCallback(

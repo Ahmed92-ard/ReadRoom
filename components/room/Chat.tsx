@@ -264,7 +264,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
     const handleTyping = (payload: { roomId: string; userId: string; userName: string; typing: boolean; ts: number }) => {
       const currentSelf = selfRef.current;
-      if (payload.roomId !== roomId || payload.userId.split('_')[0] === currentSelf?.userId.split('_')[0]) return;
+      if (payload.roomId !== roomId || payload.userId === currentSelf?.userId) return;
       setTyping((prev) => {
         const next = { ...prev };
         if (payload.typing) {
@@ -1056,7 +1056,6 @@ export function Chat({ roomId, onClose }: ChatProps) {
               setInput(e.target.value);
               emitTyping(e.target.value);
             }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Message the room…"
             rows={1}
             maxLength={2000}
