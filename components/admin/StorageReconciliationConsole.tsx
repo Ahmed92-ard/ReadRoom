@@ -132,9 +132,9 @@ export function StorageReconciliationConsole({ onBack, onExit }: StorageReconcil
   };
 
   return (
-    <div className="min-h-screen bg-room-bg text-room-text flex flex-col font-sans">
+    <div className="fixed inset-0 z-[80] flex flex-col bg-room-bg overflow-y-auto text-room-text font-sans">
       {/* Header */}
-      <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg/80 backdrop-blur-md z-10">
+      <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg/90 backdrop-blur-md z-10 flex-shrink-0">
         <button
           onClick={onBack}
           className="p-2 hover:bg-room-hover rounded-full transition-colors text-room-muted hover:text-room-text"
