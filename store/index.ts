@@ -179,6 +179,8 @@ interface UIStore {
   setTheme: (theme: 'dark' | 'light') => void;
   toggleTheme: () => void;
   toggleNavigation: () => void;
+  leftSidebarWidth: number;
+  setLeftSidebarWidth: (width: number) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -206,4 +208,6 @@ export const useUIStore = create<UIStore>((set) => ({
     librarySidebarCollapsed: !s.librarySidebarCollapsed,
     channelSidebarCollapsed: !s.librarySidebarCollapsed,
   })),
+  leftSidebarWidth: 260,
+  setLeftSidebarWidth: (leftSidebarWidth) => set({ leftSidebarWidth }),
 }));
