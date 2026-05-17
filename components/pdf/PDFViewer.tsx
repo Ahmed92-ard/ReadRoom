@@ -146,27 +146,75 @@ export function PDFViewer({
   const toggleFullscreen = useCallback(() => {
     if (!viewerRef.current) return;
 
-    if (!document.fullscreenElement) {
-      viewerRef.current.requestFullscreen().catch((err) => {
-        console.error(`Error attempting to enable fullscreen: ${err.message}`);
-      });
-    } else {
-      document.exitFullscreen();
+    try {
+      const doc = document as any;
+      const el = viewerRef.current as any;
+      const fullscreenElement = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement;
+
+      if (!fullscreenElement) {
+        if (el.requestFullscreen) {
+          el.requestFullscreen().catch((err: any) => {
+            console.error(`Error attempting to enable fullscreen: ${err.message}`);
+          });
+        } else if (el.webkitRequestFullscreen) {
+          el.webkitRequestFullscreen();
+        } else if (el.mozRequestFullScreen) {
+          el.mozRequestFullScreen();
+        } else if (el.msRequestFullscreen) {
+          el.msRequestFullscreen();
+        } else {
+          console.warn('[Fullscreen API] Standard and prefixed fullscreen requests are not supported.');
+        }
+      } else {
+        if (doc.exitFullscreen) {
+          doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          doc.msExitFullscreen();
+        }
+      }
+    } catch (err: any) {
+      console.error(`[Fullscreen API] Failed to toggle fullscreen: ${err?.message || err}`);
     }
   }, []);
 
   useEffect(() => {
     const handler = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      try {
+        const doc = document as any;
+        const fullscreenElement = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement;
+        setIsFullscreen(!!fullscreenElement);
+      } catch (err) {
+        console.error('[Fullscreen API] Error in fullscreen change handler:', err);
+      }
     };
+
     document.addEventListener('fullscreenchange', handler);
-    return () => document.removeEventListener('fullscreenchange', handler);
+    document.addEventListener('webkitfullscreenchange', handler);
+    document.addEventListener('mozfullscreenchange', handler);
+    document.addEventListener('MSFullscreenChange', handler);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handler);
+      document.removeEventListener('webkitfullscreenchange', handler);
+      document.removeEventListener('mozfullscreenchange', handler);
+      document.removeEventListener('MSFullscreenChange', handler);
+    };
   }, []);
 
   useEffect(() => {
     const handleOpen = () => {
-      if (document.fullscreenElement) {
-        setFullscreenChatOpen(true);
+      try {
+        const doc = document as any;
+        const fullscreenElement = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement;
+        if (fullscreenElement) {
+          setFullscreenChatOpen(true);
+        }
+      } catch (err) {
+        console.error('[Fullscreen API] Error in open-fullscreen-chat event handler:', err);
       }
     };
     window.addEventListener('open-fullscreen-chat', handleOpen);

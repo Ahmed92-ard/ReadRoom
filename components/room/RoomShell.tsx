@@ -559,10 +559,22 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [isChatVisible]);
 
   useEffect(() => {
-    const updateFullscreenHost = () => setFullscreenHost(document.fullscreenElement);
+    const updateFullscreenHost = () => {
+      const doc = document as any;
+      const el = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement || null;
+      setFullscreenHost(el);
+    };
     updateFullscreenHost();
     document.addEventListener('fullscreenchange', updateFullscreenHost);
-    return () => document.removeEventListener('fullscreenchange', updateFullscreenHost);
+    document.addEventListener('webkitfullscreenchange', updateFullscreenHost);
+    document.addEventListener('mozfullscreenchange', updateFullscreenHost);
+    document.addEventListener('MSFullscreenChange', updateFullscreenHost);
+    return () => {
+      document.removeEventListener('fullscreenchange', updateFullscreenHost);
+      document.removeEventListener('webkitfullscreenchange', updateFullscreenHost);
+      document.removeEventListener('mozfullscreenchange', updateFullscreenHost);
+      document.removeEventListener('MSFullscreenChange', updateFullscreenHost);
+    };
   }, []);
 
   useEffect(() => {
@@ -641,7 +653,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const isDocFocused = document.hasFocus();
     const activeEl = document.activeElement?.tagName;
 
-    console.log(`[Notification Debug] showBrowserNotification triggered:`, {
+    console.log(`[DesktopNotificationDebug] showBrowserNotification triggered:`, {
       activityId: activity?.id,
       isVisible,
       isDocFocused,
@@ -650,32 +662,29 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     });
 
     if (Notification.permission !== 'granted') {
-      console.log(`[Notification Debug] Skipped: permission not granted`);
+      console.log(`[DesktopNotificationDebug] Skipped: permission not granted`);
       return;
     }
     if (!activity?.id) return;
 
     // Deduplication check
     if (processedNotificationIdsRef.current.has(activity.id)) {
-      console.log(`[Notification Debug] Skipped: duplicate detected (${activity.id})`);
+      console.log(`[DesktopNotificationDebug] Skipped: duplicate detected (${activity.id})`);
       return;
     }
 
     // Throttling check (15 seconds)
     const now = Date.now();
     if (now - lastNotificationTimeRef.current < 15000) {
-      console.log(`[Notification Debug] Skipped: throttle active (time elapsed: ${now - lastNotificationTimeRef.current}ms)`);
+      console.log(`[DesktopNotificationDebug] Skipped: throttle active (time elapsed: ${now - lastNotificationTimeRef.current}ms)`);
       return;
     }
 
     // Visibility / focus check
-    // If the document has focus, the user is actively engaged with the app.
-    // We do NOT check iframe active elements here, because document.activeElement
-    // can remain 'IFRAME' even when the entire browser window is minimized or blurred.
     const hasActiveFocus = isVisible && isDocFocused;
     
     if (hasActiveFocus) {
-      console.log(`[Notification Debug] Skipped: app has active focus (hasActiveFocus: true)`);
+      console.log(`[DesktopNotificationDebug] Skipped: app has active focus (hasActiveFocus: true)`);
       return;
     }
 
@@ -683,7 +692,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     lastNotificationTimeRef.current = now;
     processedNotificationIdsRef.current.add(activity.id);
 
-    console.log(`[Notification Debug] Triggering Notification constructor. Title: ${activity.title}`);
+    console.log(`[DesktopNotificationDebug] Triggering Notification constructor. Title: ${activity.title}`);
 
     try {
       let icon = '/icons/app_icon_192.png';
@@ -718,21 +727,24 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         icon,
       });
 
-      console.log(`[Notification Debug] Notification created successfully!`);
+      console.log(`[DesktopNotificationDebug] Notification created successfully! Tag: ${tag}`);
 
       notif.onclick = () => {
+        console.log(`[DesktopNotificationDebug] Notification click event received:`, { roomId: activity.roomId, currentRoomId: roomId });
         window.focus();
         if (activity.roomId) {
           const isOtherRoom = activity.roomId !== roomId;
           if (isOtherRoom && libraryId) {
+            console.log(`[DesktopNotificationDebug] Routing to cross-room channel: /libraries/${libraryId}/channels/${activity.roomId}`);
             router.push(`/libraries/${libraryId}/channels/${activity.roomId}`);
           } else if (isOtherRoom) {
+            console.log(`[DesktopNotificationDebug] Routing to cross-room space: /rooms/${activity.roomId}`);
             router.push(`/rooms/${activity.roomId}`);
           }
         }
       };
     } catch (err) {
-      console.error(`[Notification Debug] Constructor failed:`, err);
+      console.error(`[DesktopNotificationDebug] Constructor failed:`, err);
     }
   }, [roomId, libraryId, router]);
 
@@ -2402,7 +2414,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </MobileBottomSheet>
       )}
 
-      {fullscreenHost ? createPortal(toastStack, fullscreenHost) : toastStack}
+      {fullscreenHost && typeof document !== 'undefined' && document.body.contains(fullscreenHost)
+        ? createPortal(toastStack, fullscreenHost)
+        : toastStack}
 
       {(pendingDeletePdf || pendingDeleteFolderId) && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -2530,8 +2544,8 @@ const SecondaryViewerSection = React.memo(({
           )}
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold text-room-text">{viewer.title}</p>
-            <p className="text-[10px] text-room-muted">
-              {viewer.followUserId ? 'Follow viewer' : 'Secondary viewer'}
+            <p className="text-[10px] text-room-muted truncate max-w-[180px]">
+              {viewer.followUserId ? (viewer.pdf?.filename || 'Follow PDF') : 'Secondary viewer'}
             </p>
           </div>
         </div>
