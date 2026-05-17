@@ -547,6 +547,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     ? mobileChatOpen || (mobileSheetExpanded && activePanel === 'chat')
     : !chatSidebarCollapsed || (sidebarOpen && activePanel === 'chat');
   const processedNotificationIdsRef = useRef<Set<string>>(new Set());
+  const processedBrowserNotificationIdsRef = useRef<Set<string>>(new Set());
   const unreadCountRef = useRef(0);
   const isChatVisibleRef = useRef(false);
 
@@ -668,7 +669,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     if (!activity?.id) return;
 
     // Deduplication check
-    if (processedNotificationIdsRef.current.has(activity.id)) {
+    if (processedBrowserNotificationIdsRef.current.has(activity.id)) {
       console.log(`[DesktopNotificationDebug] Skipped: duplicate detected (${activity.id})`);
       return;
     }
@@ -690,7 +691,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
     // Apply the throttle and deduplication markers BEFORE invoking Notification()
     lastNotificationTimeRef.current = now;
-    processedNotificationIdsRef.current.add(activity.id);
+    processedBrowserNotificationIdsRef.current.add(activity.id);
 
     console.log(`[DesktopNotificationDebug] Triggering Notification constructor. Title: ${activity.title}`);
 
@@ -1299,7 +1300,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           if (!messageRoomId || messageRoomId === roomId || !roomNames.has(messageRoomId)) return;
           if (String(row?.sender_id ?? '').split('_')[0] === initialUserId) return;
 
-          const activityId = String(row.id);
+          const activityId = `chat:${row.id}`;
           if (processedNotificationIdsRef.current.has(activityId)) return;
           processedNotificationIdsRef.current.add(activityId);
 

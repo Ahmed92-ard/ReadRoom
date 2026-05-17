@@ -217,7 +217,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
           : [...prev, msg].sort((a, b) => a.ts - b.ts);
       });
       const currentSelf = selfRef.current;
-      const own = currentSelf?.userId && msg.userId.startsWith(currentSelf.userId.split('_')[0]);
+      const own = currentSelf?.userId && msg.userId && typeof msg.userId === 'string' && msg.userId.startsWith(currentSelf.userId.split('_')[0]);
       if (!own && !isAtBottomRef.current) {
         setUnreadCount((n) => n + 1);
         setFirstUnreadId((id) => id ?? msg.id);
@@ -240,23 +240,25 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
     const handleRead = (payload: { roomId: string; messageIds: string[]; userId: string; readAt: string }) => {
       if (payload.roomId !== roomId) return;
-      const receiptUserId = payload.userId.split('_')[0];
+      const receiptUserId = payload.userId ? String(payload.userId).split('_')[0] : '';
+      if (!receiptUserId) return;
       const ids = new Set(payload.messageIds);
       updateMessages((prev) => prev.map((m) => {
         if (!ids.has(m.id)) return m;
-        const receipts = (m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== receiptUserId);
+        const receipts = (m.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== receiptUserId);
         return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: receiptUserId, deliveredAt: payload.readAt, readAt: payload.readAt }] };
       }));
     };
 
     const handleDelivered = (payload: { roomId: string; messageIds: string[]; userId: string; deliveredAt: string }) => {
       if (payload.roomId !== roomId) return;
-      const receiptUserId = payload.userId.split('_')[0];
+      const receiptUserId = payload.userId ? String(payload.userId).split('_')[0] : '';
+      if (!receiptUserId) return;
       const ids = new Set(payload.messageIds);
       updateMessages((prev) => prev.map((m) => {
         if (!ids.has(m.id)) return m;
-        const existing = (m.receipts ?? []).find((r) => r.userId.split('_')[0] === receiptUserId);
-        const receipts = (m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== receiptUserId);
+        const existing = (m.receipts ?? []).find((r) => r.userId && String(r.userId).split('_')[0] === receiptUserId);
+        const receipts = (m.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== receiptUserId);
         return { ...m, receipts: [...receipts, { roomId, messageId: m.id, userId: receiptUserId, deliveredAt: existing?.deliveredAt ?? payload.deliveredAt, readAt: existing?.readAt ?? null }] };
       }));
     };
@@ -418,9 +420,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
     const socket = getSocket();
     const handleProfileUpdate = (payload: { userId: string; userName: string; avatarUrl: string | null }) => {
       updateMessages((prev) => {
-        const baseId = payload.userId.split('_')[0];
+        const baseId = payload.userId ? String(payload.userId).split('_')[0] : '';
+        if (!baseId) return prev;
         return prev.map((m) => (
-          m.userId.startsWith(baseId)
+          m.userId && String(m.userId).startsWith(baseId)
             ? { ...m, userName: payload.userName, avatarUrl: payload.avatarUrl }
             : m
         ));
@@ -439,9 +442,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
   }, [messages, isAtBottom]);
 
   useEffect(() => {
-    if (!self || !isAtBottom || !canUseAdvancedApi) return;
+    if (!self || !self.userId || !isAtBottom || !canUseAdvancedApi) return;
     const selfBaseId = self.userId.split('_')[0];
-    const readable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId.split('_')[0] === selfBaseId && r.readAt));
+    const readable = messages.filter((m) => m.userId && !String(m.userId).startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId && String(r.userId).split('_')[0] === selfBaseId && r.readAt));
     if (readable.length === 0) return;
     const messageIds = readable.map((m) => m.id);
     const readAt = new Date().toISOString();
@@ -452,7 +455,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }).then((res) => {
       if (res.ok) {
         updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
-          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt: readAt, readAt }] }
+          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt: readAt, readAt }] }
           : m));
         getSocket().emit('chat:read', { roomId, messageIds, userId: selfBaseId, readAt });
       }
@@ -460,9 +463,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
   }, [canUseAdvancedApi, isAtBottom, messages, messagesEndpoint, roomId, self, updateMessages]);
 
   useEffect(() => {
-    if (!self || !canUseAdvancedApi) return;
+    if (!self || !self.userId || !canUseAdvancedApi) return;
     const selfBaseId = self.userId.split('_')[0];
-    const deliverable = messages.filter((m) => !m.userId.startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId.split('_')[0] === selfBaseId && (r.deliveredAt || r.readAt)));
+    const deliverable = messages.filter((m) => m.userId && !String(m.userId).startsWith(selfBaseId) && !(m.receipts ?? []).some((r) => r.userId && String(r.userId).split('_')[0] === selfBaseId && (r.deliveredAt || r.readAt)));
     if (deliverable.length === 0) return;
     const messageIds = deliverable.map((m) => m.id);
     const deliveredAt = new Date().toISOString();
@@ -473,7 +476,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     }).then((res) => {
       if (res.ok) {
         updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
-          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt, readAt: null }] }
+          ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt, readAt: null }] }
           : m));
         getSocket().emit('chat:delivered', { roomId, messageIds, userId: selfBaseId, deliveredAt });
       }
@@ -664,12 +667,12 @@ export function Chat({ roomId, onClose }: ChatProps) {
   }, [messagesEndpoint, roomId, updateMessages]);
 
   const toggleReaction = useCallback(async (msg: ChatMessage, emoji: string) => {
-    if (!self || !canUseAdvancedApi) return;
+    if (!self || !self.userId || !canUseAdvancedApi) return;
     const selfBaseId = self.userId.split('_')[0];
-    const active = !(msg.reactions ?? []).some((r) => r.userId.split('_')[0] === selfBaseId && r.emoji === emoji);
+    const active = !(msg.reactions ?? []).some((r) => r.userId && String(r.userId).split('_')[0] === selfBaseId && r.emoji === emoji);
     updateMessages((prev) => prev.map((m) => {
       if (m.id !== msg.id) return m;
-      const reactions = (m.reactions ?? []).filter((r) => !(r.userId.split('_')[0] === selfBaseId && r.emoji === emoji));
+      const reactions = (m.reactions ?? []).filter((r) => !(r.userId && String(r.userId).split('_')[0] === selfBaseId && r.emoji === emoji));
       return { ...m, reactions: active ? [...reactions, { messageId: msg.id, userId: selfBaseId, emoji }] : reactions };
     }));
     await fetch(messagesEndpoint, {
@@ -772,9 +775,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
 
   // Build typing user metadata for avatar display
+  // Build typing user metadata for avatar display
   const typingUsersList = Object.keys(activeTypers).slice(0, 3).map((uid) => {
-    const baseId = uid.split('_')[0];
-    const found = Array.from(users.values()).find((u) => u.userId.split('_')[0] === baseId);
+    const baseId = uid ? String(uid).split('_')[0] : '';
+    const found = baseId ? Array.from(users.values()).find((u) => u.userId && String(u.userId).split('_')[0] === baseId) : null;
     const name = found?.userName ?? 'Unknown User';
     return {
       userId: uid,
@@ -786,9 +790,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
   });
 
   const resolveReceiptName = useCallback((userId: string) => {
-    const baseId = userId.split('_')[0];
-    if (self?.userId.split('_')[0] === baseId) return 'You';
-    const found = Array.from(users.values()).find((u) => u.userId.split('_')[0] === baseId);
+    const baseId = userId ? String(userId).split('_')[0] : '';
+    if (!baseId) return 'Reader';
+    if (self?.userId && self.userId.split('_')[0] === baseId) return 'You';
+    const found = Array.from(users.values()).find((u) => u.userId && String(u.userId).split('_')[0] === baseId);
     return found?.userName ?? 'Reader';
   }, [self, users]);
 
@@ -877,22 +882,23 @@ export function Chat({ roomId, onClose }: ChatProps) {
           const nextGrouped = sameUserNext && closeTimeNext && formatDay(next.ts) === formatDay(msg.ts);
 
           const showDay = !prev || formatDay(prev.ts) !== formatDay(msg.ts);
-          const isSelf = Boolean(self?.userId && msg.userId.startsWith(self.userId.split('_')[0]));
-          const displayName = isSelf ? self?.userName ?? msg.userName : msg.userName;
-          const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId.startsWith(msg.userId.split('_')[0]));
+          const msgUserId = msg.userId || '';
+          const isSelf = Boolean(self?.userId && msgUserId && msgUserId.startsWith(self.userId.split('_')[0]));
+          const displayName = (isSelf ? self?.userName ?? msg.userName : msg.userName) || 'Reader';
+          const avatar = isSelf ? self : Array.from(users.values()).find((u) => u.userId && msgUserId && u.userId.startsWith(msgUserId.split('_')[0]));
           const avatarUser = {
-            userId: avatar?.userId ?? msg.userId,
+            userId: avatar?.userId ?? msgUserId,
             userName: displayName,
-            avatarColor: avatar?.avatarColor ?? msg.avatarColor,
+            avatarColor: avatar?.avatarColor ?? msg.avatarColor ?? '#6366f1',
             avatarInitials: avatar?.avatarInitials ?? displayName.slice(0, 2).toUpperCase(),
             avatarUrl: avatar?.avatarUrl ?? msg.avatarUrl ?? null,
             joinedAt: 0,
             isFollowing: false,
           };
           const receipts = msg.receipts ?? [];
-          const selfBaseId = self?.userId?.split('_')[0];
-          const read = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && r.readAt);
-          const delivered = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && (r.deliveredAt || r.readAt));
+          const selfBaseId = self?.userId?.split('_')[0] || '';
+          const read = isSelf && receipts.some((r) => r?.userId && String(r.userId).split('_')[0] !== selfBaseId && r.readAt);
+          const delivered = isSelf && receipts.some((r) => r?.userId && String(r.userId).split('_')[0] !== selfBaseId && (r.deliveredAt || r.readAt));
 
           // Border radius logic for connected bubbles
           const bubbleRadius = isSelf
@@ -1043,17 +1049,17 @@ export function Chat({ roomId, onClose }: ChatProps) {
             <button onClick={() => { beginReply(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
               <Reply size={13} /> Reply
             </button>
-            {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+            {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
               <button onClick={() => { setEditing(activeMenuMessage); setInput(activeMenuMessage.content); setActiveMenu(null); inputRef.current?.focus(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
                 <Edit3 size={13} /> Edit
               </button>
             )}
-            {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+            {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
               <button onClick={() => { setInfoMessage(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
                 <Info size={13} /> Message info
               </button>
             )}
-            {self?.userId && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+            {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
               <button onClick={() => { setActiveMenu(null); removeMessage(activeMenuMessage); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-300 hover:bg-room-bg">
                 <Trash2 size={13} /> Delete
               </button>
@@ -1136,8 +1142,8 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 <p className="mt-1 text-[10px] text-room-muted">Sent {formatDateTime(activeInfoMessage.createdAt ?? new Date(activeInfoMessage.ts).toISOString())}</p>
               </div>
               {(() => {
-                const selfBaseId = self?.userId?.split('_')[0];
-                const receipts = (activeInfoMessage.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId);
+                const selfBaseId = self?.userId?.split('_')[0] || '';
+                const receipts = (activeInfoMessage.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== selfBaseId);
                 const readReceipts = receipts.filter((r) => r.readAt);
                 const deliveredReceipts = receipts.filter((r) => r.deliveredAt || r.readAt);
                 const renderRows = (items: typeof receipts, field: 'deliveredAt' | 'readAt') => (
