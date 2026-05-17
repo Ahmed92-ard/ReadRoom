@@ -1725,8 +1725,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </header>
 
         <div className="flex-1 min-h-0 relative">
-          {room?.pdf || openViewers.length > 0 ? (
-            <div className={`h-full grid gap-2 p-2 ${openViewers.length > 0 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
+          {room?.pdf || openViewers.length > 0 ? (() => {
+            const totalViewers = (room?.pdf ? 1 : 0) + openViewers.length;
+            return (
+            <div className={`h-full grid gap-2 p-2 ${totalViewers > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
               {room?.pdf && (
                 <section className="min-h-0 flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
                   <div className="flex-none flex items-center justify-between gap-3 px-3 py-2 border-b border-room-border bg-room-surface">
@@ -1768,7 +1770,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 />
               ))}
             </div>
-          ) : (
+            );
+          })() : (
             <EmptyState onOpen={() => {
               handleUploadToFolder(null);
             }} />

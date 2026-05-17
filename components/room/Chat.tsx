@@ -808,6 +808,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
     );
   };
 
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.style.height = inputRef.current.scrollHeight + 'px';
+    }
+  }, [input]);
+
   return (
     <div className="relative flex h-full flex-col bg-room-surface">
       <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2">
@@ -907,15 +914,15 @@ export function Chat({ roomId, onClose }: ChatProps) {
                       <span className="text-[10px] text-room-muted">{formatTime(msg.ts)}</span>
                     </div>
                   )}
-                  <div className={`relative flex items-start gap-1 ${isSelf ? 'flex-row-reverse' : ''}`}>
-                    <div className={`border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
+                  <div className={`relative flex items-start gap-1 w-full ${isSelf ? 'flex-row-reverse' : ''}`}>
+                    <div className={`min-w-0 border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${isSelf ? 'border-blue-500/30 bg-blue-500/15 text-room-text' : 'border-room-border bg-room-bg text-room-text/95'}`}>
                       {msg.replyTo && (
                         <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-0.5 text-left">
                           <span className="block truncate text-[10px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
                           <span className="line-clamp-2 text-[11px] text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
                         </button>
                       )}
-                      {msg.content && <p className="break-words whitespace-pre-wrap">{msg.content}</p>}
+                      {msg.content && <p className="whitespace-pre-wrap [word-break:break-word] sm:break-normal sm:[overflow-wrap:anywhere]">{msg.content}</p>}
                       {renderAttachment(msg)}
                       <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-room-muted">
                         {msg.editedAt && <span>edited</span>}
@@ -973,9 +980,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
           </div>
           {/* Animated 3-dot indicator */}
           <div className="flex items-center gap-[3px] px-2 py-1 rounded-full bg-room-bg border border-room-border">
-            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-bounce" style={{ animationDelay: '0ms', animationDuration: '900ms' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-bounce" style={{ animationDelay: '150ms', animationDuration: '900ms' }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-bounce" style={{ animationDelay: '300ms', animationDuration: '900ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-pulse" style={{ animationDelay: '0ms', animationDuration: '900ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-pulse" style={{ animationDelay: '150ms', animationDuration: '900ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-room-muted animate-pulse" style={{ animationDelay: '300ms', animationDuration: '900ms' }} />
           </div>
         </div>
       )}
@@ -1045,12 +1052,16 @@ export function Chat({ roomId, onClose }: ChatProps) {
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => { setInput(e.target.value); emitTyping(e.target.value); }}
+            onChange={(e) => {
+              setInput(e.target.value);
+              emitTyping(e.target.value);
+            }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Message the room…"
             rows={1}
             maxLength={2000}
             className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent py-2.5 text-sm text-room-text outline-none placeholder:text-room-muted"
+            style={{ overflowY: 'auto' }}
           />
           <button onClick={send} onMouseDown={(e) => e.preventDefault()} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
             {uploading ? <SmilePlus size={18} className="animate-pulse" /> : <Send size={18} />}

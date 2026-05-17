@@ -392,7 +392,7 @@ export function VirtualizedPages({
   return (
     <div
       id={`pdf-container-${controlled ? 'controlled' : 'main'}`}
-      className="relative flex flex-col items-center py-6"
+      className="relative flex flex-col items-center min-w-max py-6"
       style={{ transform: 'translate3d(0,0,0)' }}
     >
       {topSpacerHeight > 0 && (
