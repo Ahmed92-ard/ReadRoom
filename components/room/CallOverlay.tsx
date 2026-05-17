@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   LiveKitRoom, 
   useTracks, 
@@ -16,13 +16,11 @@ import {
   Video as VideoIcon, 
   VideoOff, 
   PhoneOff, 
-  Phone, 
   GripHorizontal, 
   Minimize2, 
   Maximize2, 
   AlertCircle, 
   X,
-  Users,
   Volume2
 } from 'lucide-react';
 import { stringToColor, makeInitials } from '@/lib/utils/avatar';
@@ -366,7 +364,7 @@ function InnerCallWidget({
 
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isCamOn, setIsCamOn] = useState(false);
-  const [focusedParticipantSid, setFocusedParticipantSid] = useState<string | null>(null);
+  const [focusedParticipantIdentity, setFocusedParticipantIdentity] = useState<string | null>(null);
 
   // Sync mic track
   useEffect(() => {
@@ -382,10 +380,21 @@ function InnerCallWidget({
     }
   }, [isCamOn, localParticipant]);
 
-  const activeSpeakers = participants.filter((p) => p.isSpeaking);
+  // Unified list containing BOTH the local and remote participants
+  const allParticipants = useMemo(() => {
+    if (!localParticipant) return participants;
+    return [localParticipant, ...participants];
+  }, [localParticipant, participants]);
 
-  const focusedTrack = videoTracks.find((t) => t.participant.sid === focusedParticipantSid);
-  const thumbnailTracks = videoTracks.filter((t) => t.participant.sid !== focusedParticipantSid);
+  const activeSpeakers = allParticipants.filter((p) => p.isSpeaking);
+
+  const focusedParticipant = allParticipants.find((p) => p.identity === focusedParticipantIdentity);
+  const thumbnailParticipants = allParticipants.filter((p) => p.identity !== focusedParticipantIdentity);
+
+  // Resolve camera video track by participant identity
+  const getCameraTrack = useCallback((p: any) => {
+    return videoTracks.find((t) => t.participant.identity === p.identity);
+  }, [videoTracks]);
 
   // MINIMIZED MODE: Sleek Capsule/Pill Layout
   if (isMinimized) {
@@ -419,7 +428,7 @@ function InnerCallWidget({
             </div>
           )}
           <span className="text-[10px] text-slate-400 font-semibold font-mono">
-            ({participants.length})
+            ({allParticipants.length})
           </span>
         </div>
 
@@ -486,21 +495,41 @@ function InnerCallWidget({
       </div>
 
       {/* Media elements: Active Video Grid / Enlarged Focus view */}
-      {videoTracks.length > 0 && (
+      {allParticipants.length > 0 && (
         <div className="flex flex-col flex-1 min-h-0">
-          {focusedTrack ? (
+          {focusedParticipant ? (
             <div className="flex flex-col flex-1 min-h-0">
-              {/* Enlarged video */}
-              <div className="relative w-full flex-1 min-h-[120px] bg-slate-950 rounded-xl overflow-hidden border border-slate-700/60 shadow-lg group">
-                <VideoTrack trackRef={focusedTrack} className="w-full h-full object-cover" />
+              {/* Enlarged tile (Focus View) */}
+              <div className="relative w-full flex-1 min-h-[120px] bg-slate-950 rounded-xl overflow-hidden border border-slate-700/60 shadow-lg group flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950">
+                {getCameraTrack(focusedParticipant) ? (
+                  <VideoTrack trackRef={getCameraTrack(focusedParticipant)!} className="w-full h-full object-cover" />
+                ) : (
+                  <div 
+                    style={{ backgroundColor: stringToColor(focusedParticipant.identity) }}
+                    className={`w-16 h-16 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-xl transition-all duration-300 ${
+                      focusedParticipant.isSpeaking 
+                        ? 'ring-4 ring-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.8)] scale-105 animate-pulse' 
+                        : 'border-2 border-slate-700'
+                    }`}
+                  >
+                    {makeInitials(focusedParticipant.name || (focusedParticipant.identity === localParticipant?.identity ? userName : ''))}
+                  </div>
+                )}
+
+                {/* Bottom Speaking Indicator */}
+                {focusedParticipant.isSpeaking && (
+                  <div className="absolute bottom-0 left-0 w-full h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-1px_6px_rgba(16,185,129,0.6)]" />
+                )}
+
                 <div className="absolute bottom-2 left-2 bg-slate-900/80 px-2 py-0.5 rounded-md text-[10px] text-slate-100 border border-slate-800 font-medium">
-                  {focusedTrack.participant.name || 'Reader'}
+                  {focusedParticipant.identity === localParticipant?.identity ? `${focusedParticipant.name || userName} (You)` : focusedParticipant.name || 'Reader'}
                 </div>
+
                 {/* Exit Focus Button */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setFocusedParticipantSid(null);
+                    setFocusedParticipantIdentity(null);
                   }}
                   className="absolute top-2 right-2 rounded-full p-1 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-slate-100 border border-slate-700 transition-colors pointer-events-auto shadow-md"
                   title="Exit focused view"
@@ -510,103 +539,91 @@ function InnerCallWidget({
               </div>
 
               {/* Thumbnails strip */}
-              {thumbnailTracks.length > 0 && (
-                <div className="flex gap-2 overflow-x-auto pb-1 mt-2 max-h-[56px] shrink-0 scrollbar-thin scrollbar-thumb-slate-800 pr-1">
-                  {thumbnailTracks.map((track) => (
-                    <div
-                      key={track.participant.sid}
-                      onClick={() => setFocusedParticipantSid(track.participant.sid)}
-                      className="relative w-[76px] aspect-video shrink-0 bg-slate-950 rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer shadow group"
-                    >
-                      <VideoTrack trackRef={track} className="w-full h-full object-cover pointer-events-none" />
-                      <div className="absolute bottom-0.5 left-1 bg-slate-900/70 px-1 py-0.2 rounded text-[7px] text-slate-300 truncate max-w-[90%]">
-                        {track.participant.name || 'Reader'}
+              {thumbnailParticipants.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 mt-2 max-h-[56px] shrink-0 scrollbar-thin scrollbar-thumb-slate-800 pr-1 select-none">
+                  {thumbnailParticipants.map((p) => {
+                    const cameraTrack = getCameraTrack(p);
+                    const isSpeaking = p.isSpeaking;
+
+                    return (
+                      <div
+                        key={p.identity}
+                        onClick={() => setFocusedParticipantIdentity(p.identity)}
+                        className="relative w-[76px] aspect-video shrink-0 bg-slate-950 rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer shadow group flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900"
+                      >
+                        {cameraTrack ? (
+                          <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover pointer-events-none" />
+                        ) : (
+                          <div 
+                            style={{ backgroundColor: stringToColor(p.identity) }}
+                            className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[8px] text-white shadow transition-all duration-300 ${
+                              isSpeaking 
+                                ? 'ring-2 ring-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
+                                : 'border border-slate-700'
+                            }`}
+                          >
+                            {makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''))}
+                          </div>
+                        )}
+                        
+                        {/* Bottom Speaking Indicator */}
+                        {isSpeaking && (
+                          <div className="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-0.5px_4px_rgba(16,185,129,0.6)]" />
+                        )}
+
+                        <div className="absolute bottom-0.5 left-1 bg-slate-900/70 px-1 py-0.2 rounded text-[7px] text-slate-300 truncate max-w-[90%] pointer-events-none">
+                          {p.identity === localParticipant?.identity ? 'You' : p.name || 'Reader'}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1 flex-1 min-h-[80px]">
-              {videoTracks.map((track) => (
-                <div
-                  key={track.participant.sid}
-                  onClick={() => setFocusedParticipantSid(track.participant.sid)}
-                  className="relative aspect-video bg-slate-950 rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer group shadow-md shadow-black/20"
-                  title="Click to focus video"
-                >
-                  <VideoTrack trackRef={track} className="w-full h-full object-cover pointer-events-none" />
-                  <div className="absolute bottom-1 left-1.5 bg-slate-900/70 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800">
-                    {track.participant.name || 'Reader'}
+            /* Standard Grid View of unified members */
+            <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1 flex-1 min-h-[80px] select-none">
+              {allParticipants.map((p) => {
+                const cameraTrack = getCameraTrack(p);
+                const isSpeaking = p.isSpeaking;
+
+                return (
+                  <div
+                    key={p.identity}
+                    onClick={() => setFocusedParticipantIdentity(p.identity)}
+                    className="relative aspect-video rounded-lg overflow-hidden border border-slate-800 hover:border-indigo-500 transition-all cursor-pointer group shadow-md shadow-black/20 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950"
+                    title="Click to focus video"
+                  >
+                    {cameraTrack ? (
+                      <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover pointer-events-none" />
+                    ) : (
+                      <div 
+                        style={{ backgroundColor: stringToColor(p.identity) }}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs text-white shadow-md transition-all duration-300 ${
+                          isSpeaking 
+                            ? 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
+                            : 'border border-slate-700'
+                        }`}
+                      >
+                        {makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''))}
+                      </div>
+                    )}
+
+                    {/* Bottom Speaking Indicator */}
+                    {isSpeaking && (
+                      <div className="absolute bottom-0 left-0 w-full h-[3px] bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 animate-pulse shadow-[0_-1px_6px_rgba(16,185,129,0.6)]" />
+                    )}
+
+                    <div className="absolute bottom-1 left-1.5 bg-slate-900/80 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800/60 pointer-events-none">
+                      {p.identity === localParticipant?.identity ? `${p.name || userName} (You)` : p.name || 'Reader'}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       )}
-
-      {/* Participants presence strip */}
-      <div className="flex flex-col gap-2 overflow-y-auto pr-1 max-h-[110px] flex-shrink-0">
-        <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">
-          <Users size={12} />
-          <span>Call Members ({participants.length})</span>
-        </div>
-
-        {/* Local Participant row */}
-        <div className="flex items-center justify-between py-1 px-2 rounded-lg bg-slate-950/20 border border-slate-800/40">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div 
-              style={{ backgroundColor: stringToColor(userId) }}
-              className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs text-white border transition-all ${
-                localParticipant?.isSpeaking 
-                  ? 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)] scale-105' 
-                  : 'border-slate-700'
-              }`}
-            >
-              {makeInitials(userName)}
-            </div>
-            <span className="text-xs font-semibold truncate text-slate-200">
-              {userName} <span className="text-[10px] text-slate-400 font-normal">(You)</span>
-            </span>
-          </div>
-          <div className="flex gap-1.5">
-            {isMicMuted && <MicOff size={11} className="text-rose-400" />}
-            {isCamOn && <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />}
-          </div>
-        </div>
-
-        {/* Other participants */}
-        {participants.filter(p => p.identity !== localParticipant?.identity).map((p) => {
-          const isMuted = !p.isMicrophoneEnabled;
-          const isCam = p.isCameraEnabled;
-          
-          return (
-            <div key={p.sid} className="flex items-center justify-between py-1 px-2 rounded-lg bg-slate-950/20 border border-slate-800/40">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div 
-                  style={{ backgroundColor: stringToColor(p.identity) }}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs text-white border transition-all ${
-                    p.isSpeaking 
-                      ? 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)] scale-105' 
-                      : 'border-slate-700'
-                  }`}
-                >
-                  {makeInitials(p.name || '')}
-                </div>
-                <span className="text-xs font-semibold truncate text-slate-200">
-                  {p.name || 'Reader'}
-                </span>
-              </div>
-              <div className="flex gap-1.5 items-center">
-                {isMuted && <MicOff size={11} className="text-rose-400" />}
-                {isCam && <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />}
-              </div>
-            </div>
-          );
-        })}
-      </div>
 
       {/* Control row with premium circle action buttons */}
       <div className="flex justify-around items-center border-t border-slate-800 pt-3 flex-shrink-0">

@@ -532,8 +532,13 @@ export function Chat({ roomId, onClose }: ChatProps) {
     if (!activeMenu) return;
 
     const handleWindowClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // If the click is on the trigger button itself or its icons, ignore it to prevent race conditions
+      if (target.closest('[data-chat-menu-trigger="true"]')) {
+        return;
+      }
       const menuEl = document.getElementById('chat-message-context-menu');
-      if (menuEl && !menuEl.contains(e.target as Node)) {
+      if (menuEl && !menuEl.contains(target)) {
         setActiveMenu(null);
       }
     };
@@ -1003,6 +1008,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                           e.preventDefault();
                           openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect());
                         }}
+                        data-chat-menu-trigger="true"
                         className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text"
                         aria-label="Message actions"
                       >
