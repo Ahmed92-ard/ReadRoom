@@ -234,6 +234,49 @@ interface ToastActivity extends RoomActivity {
   toastId: string;
 }
 
+function ResizablePane({ children, isLast, initialWidthPct }: { children: React.ReactNode, isLast: boolean, initialWidthPct: number }) {
+  const [width, setWidth] = useState<number | undefined>(undefined);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const startDragRef = useRef<{ x: number, startWidth: number } | null>(null);
+  const [isDesktop, setIsDesktop] = useState(true);
+
+  useEffect(() => {
+    const check = () => setIsDesktop(window.innerWidth >= 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!startDragRef.current) return;
+      const dx = e.clientX - startDragRef.current.x;
+      setWidth(Math.max(200, startDragRef.current.startWidth + dx));
+    };
+    const onMouseUp = () => { startDragRef.current = null; document.body.style.cursor = ''; };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+  }, []);
+
+  if (!isDesktop || isLast) {
+    return <div className="flex-1 min-h-0 h-full w-full">{children}</div>;
+  }
+
+  return (
+    <div ref={containerRef} className="relative flex-none min-h-0 h-full" style={{ width: width ? `${width}px` : `${initialWidthPct}%` }}>
+      <div className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-blue-500/30 active:bg-blue-500/50 z-50 transition-colors"
+        onMouseDown={(e) => {
+          startDragRef.current = { x: e.clientX, startWidth: containerRef.current?.clientWidth || 0 };
+          document.body.style.cursor = 'col-resize';
+          e.preventDefault();
+        }}
+      />
+      <div className="pr-3 h-full">{children}</div>
+    </div>
+  );
+}
+
 export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom }: RoomShellProps) {
   const router = useRouter();
   const { 
@@ -1736,49 +1779,67 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         <div className="flex-1 min-h-0 relative">
           {room?.pdf || openViewers.length > 0 ? (() => {
             const totalViewers = (room?.pdf ? 1 : 0) + openViewers.length;
-            return (
-            <div className={`h-full grid gap-2 p-2 ${totalViewers > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
-              {room?.pdf && (
-                <section className="min-h-0 flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
-                  <div className="flex-none flex items-center justify-between gap-3 px-3 py-2 border-b border-room-border bg-room-surface">
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-semibold text-room-text">{room.pdf.filename}</p>
-                      <p className="text-[10px] text-room-muted">Your workspace</p>
+            const allPanes: { key: string; element: React.ReactNode }[] = [];
+            
+            if (room?.pdf) {
+              allPanes.push({
+                key: 'main-workspace',
+                element: (
+                  <section className="min-h-0 h-full flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
+                    <div className="flex-none flex items-center justify-between gap-3 px-3 py-2 border-b border-room-border bg-room-surface">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-room-text">{room.pdf.filename}</p>
+                        <p className="text-[10px] text-room-muted">Your workspace</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setRoom({ ...room, pdf: null });
+                          setCurrentChannelPdfId(null);
+                          publishActivePdf(null, null);
+                          setSyncState({ page: 1, scroll: 0, zoom: 1 });
+                        }}
+                        className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
+                        title="Close workspace"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => {
-                        // Close own workspace: clear the main PDF
-                        setRoom({ ...room, pdf: null });
-                        setCurrentChannelPdfId(null);
-                        publishActivePdf(null, null);
-                        setSyncState({ page: 1, scroll: 0, zoom: 1 });
-                      }}
-                      className="p-1.5 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
-                      title="Close workspace"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <div className="flex-1 min-h-0">
-                    <PDFViewer
-                      pdf={room.pdf}
-                      accessToken={null}
-                      onRetry={() => {}}
-                      externalContainerRef={mainContainerRef}
-                    />
-                  </div>
-                </section>
-              )}
+                    <div className="flex-1 min-h-0">
+                      <PDFViewer pdf={room.pdf} accessToken={null} onRetry={() => {}} externalContainerRef={mainContainerRef} />
+                    </div>
+                  </section>
+                )
+              });
+            }
 
-              {openViewers.map((viewer) => (
-                <SecondaryViewerSection
-                  key={viewer.key}
-                  viewer={viewer}
-                  onClose={() => setOpenViewers((prev) => prev.filter((item) => item.key !== viewer.key))}
-                  onStateChange={updateOpenViewerState}
-                />
-              ))}
-            </div>
+            openViewers.forEach((viewer) => {
+              allPanes.push({
+                key: viewer.key,
+                element: (
+                  <SecondaryViewerSection
+                    viewer={viewer}
+                    onClose={() => setOpenViewers((prev) => prev.filter((item) => item.key !== viewer.key))}
+                    onStateChange={updateOpenViewerState}
+                  />
+                )
+              });
+            });
+
+            return (
+              <div className={`h-full flex flex-col gap-2 p-2 ${totalViewers > 1 ? 'md:flex-row md:gap-0 md:p-0 md:pt-2 md:pl-2 md:pb-2' : ''}`}>
+                {allPanes.map((pane, idx) => {
+                  const isLast = idx === allPanes.length - 1;
+                  return totalViewers > 1 ? (
+                    <ResizablePane key={pane.key} isLast={isLast} initialWidthPct={100 / totalViewers}>
+                      {pane.element}
+                    </ResizablePane>
+                  ) : (
+                    <div key={pane.key} className="flex-1 min-h-0 h-full w-full">
+                      {pane.element}
+                    </div>
+                  );
+                })}
+              </div>
             );
           })() : (
             <EmptyState onOpen={() => {

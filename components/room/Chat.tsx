@@ -122,7 +122,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [typing, setTyping] = useState<Record<string, { name: string; ts: number }>>({});
+  const [activeTypers, setActiveTypers] = useState<Record<string, number>>({});
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [mediaOpen, setMediaOpen] = useState(false);
@@ -138,8 +138,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const typingStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const typingThrottleRef = useRef(0);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAtBottomRef = useRef(isAtBottom);
   const selfRef = useRef(self);
@@ -265,11 +264,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
     const handleTyping = (payload: { roomId: string; userId: string; userName: string; typing: boolean; ts: number }) => {
       const currentSelf = selfRef.current;
       if (payload.roomId !== roomId || payload.userId === currentSelf?.userId) return;
-      setTyping((prev) => {
+      setActiveTypers((prev) => {
         const next = { ...prev };
         if (payload.typing) {
-          // Refresh ts so the cutoff timer resets correctly on each typing event
-          next[payload.userId] = { name: payload.userName, ts: Date.now() };
+          next[payload.userId] = Date.now();
         } else {
           delete next[payload.userId];
         }
@@ -369,19 +367,25 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      const cutoff = Date.now() - 15000;
-      setTyping((prev) => {
-        const next = Object.fromEntries(Object.entries(prev).filter(([, v]) => v.ts > cutoff));
-        // Only trigger re-render if something actually changed
-        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      const now = Date.now();
+      setActiveTypers((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const [uid, ts] of Object.entries(next)) {
+          if (now - ts > 10000) {
+            delete next[uid];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
       });
-    }, 500);
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 
   useEffect(() => () => {
     if (longPressRef.current) clearTimeout(longPressRef.current);
-    if (typingStopRef.current) clearTimeout(typingStopRef.current);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
   }, []);
 
   useEffect(() => {
@@ -495,36 +499,25 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
   const isTypingRef = useRef(false);
 
-  const emitTyping = useCallback((value: string) => {
+  const handleTypingStart = useCallback(() => {
     if (!self) return;
-    const now = Date.now();
-    const isTyping = Boolean(value);
-
-    // Only emit typing:start when transitioning from not-typing → typing
-    // This avoids spamming the socket on every keystroke
-    if (isTyping) {
-      const timeSinceLastEmit = now - typingThrottleRef.current;
-      if (!isTypingRef.current || timeSinceLastEmit > 5000) {
-        isTypingRef.current = true;
-        typingThrottleRef.current = now;
-        getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now });
-      }
-    }
-
-    // Reset the stop timer on every keystroke
-    if (typingStopRef.current) clearTimeout(typingStopRef.current);
-    if (isTyping) {
-      typingStopRef.current = setTimeout(() => {
-        isTypingRef.current = false;
-        getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
-      }, 1500);
+    if (!typingTimeoutRef.current) {
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: Date.now() });
     } else {
-      // Input cleared — stop immediately
-      if (isTypingRef.current) {
-        isTypingRef.current = false;
-        getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: now });
-      }
+      clearTimeout(typingTimeoutRef.current);
     }
+    
+    typingTimeoutRef.current = setTimeout(() => {
+      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
+      typingTimeoutRef.current = null;
+    }, 1500);
+  }, [roomId, self]);
+
+  const handleTypingStop = useCallback(() => {
+    if (!self || !typingTimeoutRef.current) return;
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = null;
+    getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
   }, [roomId, self]);
 
   const uploadAttachment = useCallback(async () => {
@@ -587,12 +580,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     setIsAtBottom(true);
     if (fileRef.current) fileRef.current.value = '';
 
-    // Stop typing indicator immediately on send
-    if (isTypingRef.current && self) {
-      isTypingRef.current = false;
-      if (typingStopRef.current) clearTimeout(typingStopRef.current);
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
-    }
+    handleTypingStop();
 
     try {
       const uploaded = await uploadAttachment();
@@ -750,11 +738,12 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
 
   // Build typing user metadata for avatar display
-  const typingUsers = Object.entries(typing).slice(0, 3).map(([userId, { name }]) => {
-    const baseId = userId.split('_')[0];
+  const typingUsersList = Object.keys(activeTypers).slice(0, 3).map((uid) => {
+    const baseId = uid.split('_')[0];
     const found = Array.from(users.values()).find((u) => u.userId.split('_')[0] === baseId);
+    const name = found?.userName ?? 'Unknown User';
     return {
-      userId,
+      userId: uid,
       name,
       avatarUrl: found?.avatarUrl ?? null,
       avatarColor: found?.avatarColor ?? '#6366f1',
@@ -961,11 +950,11 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
       {unreadCount > 0 && <button onClick={() => { setIsAtBottom(true); bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }} className="absolute bottom-24 right-4 rounded-full bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-lg">Jump to latest ({unreadCount})</button>}
 
-      {typingUsers.length > 0 && (
+      {typingUsersList.length > 0 && (
         <div className="flex-none flex items-center gap-1.5 px-3 py-1.5 min-h-[28px]">
           {/* Stacked avatars */}
           <div className="flex -space-x-1.5">
-            {typingUsers.map((u) => (
+            {typingUsersList.map((u) => (
               <div
                 key={u.userId}
                 className="w-5 h-5 rounded-full ring-2 ring-room-surface overflow-hidden flex items-center justify-center text-[8px] font-bold text-white flex-shrink-0"
@@ -1053,8 +1042,19 @@ export function Chat({ roomId, onClose }: ChatProps) {
             ref={inputRef}
             value={input}
             onChange={(e) => {
-              setInput(e.target.value);
-              emitTyping(e.target.value);
+              const val = e.target.value;
+              setInput(val);
+              if (val.trim()) handleTypingStart();
+              else handleTypingStop();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const isMobile = window.matchMedia('(max-width: 768px)').matches || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+                if (!isMobile && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }
             }}
             placeholder="Message the room…"
             rows={1}
