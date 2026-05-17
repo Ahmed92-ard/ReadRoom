@@ -636,28 +636,54 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   const showBrowserNotification = useCallback((activity: RoomActivity) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
-    if (Notification.permission !== 'granted') return;
+    
+    const isVisible = document.visibilityState === 'visible';
+    const isDocFocused = document.hasFocus();
+    const activeEl = document.activeElement?.tagName;
+
+    console.log(`[Notification Debug] showBrowserNotification triggered:`, {
+      activityId: activity?.id,
+      isVisible,
+      isDocFocused,
+      activeEl,
+      permission: Notification.permission
+    });
+
+    if (Notification.permission !== 'granted') {
+      console.log(`[Notification Debug] Skipped: permission not granted`);
+      return;
+    }
     if (!activity?.id) return;
 
     // Deduplication check
-    if (processedNotificationIdsRef.current.has(activity.id)) return;
+    if (processedNotificationIdsRef.current.has(activity.id)) {
+      console.log(`[Notification Debug] Skipped: duplicate detected (${activity.id})`);
+      return;
+    }
 
     // Throttling check (15 seconds)
     const now = Date.now();
-    if (now - lastNotificationTimeRef.current < 15000) return;
+    if (now - lastNotificationTimeRef.current < 15000) {
+      console.log(`[Notification Debug] Skipped: throttle active (time elapsed: ${now - lastNotificationTimeRef.current}ms)`);
+      return;
+    }
 
-    // Visibility / focus check (handles iframes like PDF viewer)
-    const hasActiveFocus = (() => {
-      if (document.visibilityState === 'hidden') return false;
-      if (document.hasFocus()) return true;
-      if (document.activeElement && document.activeElement.tagName === 'IFRAME') return true;
-      return false;
-    })();
-    if (hasActiveFocus) return;
+    // Visibility / focus check
+    // If the document has focus, the user is actively engaged with the app.
+    // We do NOT check iframe active elements here, because document.activeElement
+    // can remain 'IFRAME' even when the entire browser window is minimized or blurred.
+    const hasActiveFocus = isVisible && isDocFocused;
+    
+    if (hasActiveFocus) {
+      console.log(`[Notification Debug] Skipped: app has active focus (hasActiveFocus: true)`);
+      return;
+    }
 
     // Apply the throttle and deduplication markers BEFORE invoking Notification()
     lastNotificationTimeRef.current = now;
     processedNotificationIdsRef.current.add(activity.id);
+
+    console.log(`[Notification Debug] Triggering Notification constructor. Title: ${activity.title}`);
 
     try {
       let icon = '/icons/app_icon_192.png';
@@ -692,6 +718,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         icon,
       });
 
+      console.log(`[Notification Debug] Notification created successfully!`);
+
       notif.onclick = () => {
         window.focus();
         if (activity.roomId) {
@@ -703,7 +731,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           }
         }
       };
-    } catch {}
+    } catch (err) {
+      console.error(`[Notification Debug] Constructor failed:`, err);
+    }
   }, [roomId, libraryId, router]);
 
   const pushToast = useCallback((activity: RoomActivity) => {
@@ -2029,9 +2059,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             type="button"
             onClick={() => {
               setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
-              if (document.fullscreenElement) {
-                document.exitFullscreen().catch(() => {});
+              
+              if (document.fullscreenElement || fullscreenHost) {
+                window.dispatchEvent(new CustomEvent('open-fullscreen-chat'));
+                if (toast.type === 'chat:message' || toast.type === 'mention') {
+                  clearUnread();
+                }
+                return;
               }
+
               if (isOtherRoom && libraryId) {
                 router.push(`/libraries/${libraryId}/channels/${toast.roomId}`);
                 return;

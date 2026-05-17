@@ -369,17 +369,20 @@ export function Chat({ roomId, onClose }: ChatProps) {
     const timer = setInterval(() => {
       const now = Date.now();
       setActiveTypers((prev) => {
-        const next = { ...prev };
         let changed = false;
-        for (const [uid, ts] of Object.entries(next)) {
-          if (now - ts > 2000) {
+        let next = prev;
+        for (const uid in prev) {
+          if (now - prev[uid] > 2000) {
+            if (!changed) {
+              changed = true;
+              next = { ...prev };
+            }
             delete next[uid];
-            changed = true;
           }
         }
-        return changed ? next : prev;
+        return next;
       });
-    }, 1000);
+    }, 500);
     return () => clearInterval(timer);
   }, []);
 
@@ -887,7 +890,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
             isFollowing: false,
           };
           const receipts = msg.receipts ?? [];
-          const selfBaseId = self?.userId.split('_')[0];
+          const selfBaseId = self?.userId?.split('_')[0];
           const read = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && r.readAt);
           const delivered = isSelf && receipts.some((r) => r.userId.split('_')[0] !== selfBaseId && (r.deliveredAt || r.readAt));
 
@@ -937,16 +940,16 @@ export function Chat({ roomId, onClose }: ChatProps) {
                   <div className={`relative flex items-start gap-1 w-full ${isSelf ? 'flex-row-reverse' : ''}`}>
                     <div className={`min-w-0 border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${
                       isSelf 
-                        ? 'border-blue-500/40 bg-blue-600/20 dark:bg-blue-600/30 text-room-text hover:bg-blue-600/25 dark:hover:bg-blue-600/35 backdrop-blur-sm transition-all duration-200' 
-                        : 'border-room-border/60 bg-black/10 dark:bg-black/40 text-room-text/95 hover:bg-black/20 dark:hover:bg-black/50 backdrop-blur-sm transition-all duration-200'
+                        ? 'border-blue-500/50 bg-blue-600/30 dark:bg-blue-600/45 text-white hover:bg-blue-600/35 dark:hover:bg-blue-600/50 backdrop-blur-md transition-all duration-200' 
+                        : 'border-room-border/80 bg-black/20 dark:bg-black/50 text-white hover:bg-black/35 dark:hover:bg-black/65 backdrop-blur-md transition-all duration-200'
                     }`}>
                       {msg.replyTo && (
-                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-room-surface/60 px-2 py-0.5 text-left">
+                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-black/40 dark:bg-black/60 px-2 py-1 text-left backdrop-blur-sm">
                           <span className="block truncate text-[10px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
                           <span className="line-clamp-2 text-[11px] text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
                         </button>
                       )}
-                      {msg.content && <p className="whitespace-pre-wrap [word-break:break-word] sm:break-normal sm:[overflow-wrap:anywhere]">{msg.content}</p>}
+                      {msg.content && <p className="whitespace-pre-wrap [word-break:break-word] sm:break-normal sm:[overflow-wrap:anywhere] text-white">{msg.content}</p>}
                       {renderAttachment(msg)}
                       <div className="mt-0.5 flex items-center justify-end gap-1 text-[9px] text-room-muted">
                         {msg.editedAt && <span>edited</span>}
@@ -1133,7 +1136,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
                 <p className="mt-1 text-[10px] text-room-muted">Sent {formatDateTime(activeInfoMessage.createdAt ?? new Date(activeInfoMessage.ts).toISOString())}</p>
               </div>
               {(() => {
-                const selfBaseId = self?.userId.split('_')[0];
+                const selfBaseId = self?.userId?.split('_')[0];
                 const receipts = (activeInfoMessage.receipts ?? []).filter((r) => r.userId.split('_')[0] !== selfBaseId);
                 const readReceipts = receipts.filter((r) => r.readAt);
                 const deliveredReceipts = receipts.filter((r) => r.deliveredAt || r.readAt);

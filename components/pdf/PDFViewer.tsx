@@ -163,6 +163,18 @@ export function PDFViewer({
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
+  useEffect(() => {
+    const handleOpen = () => {
+      if (document.fullscreenElement) {
+        setFullscreenChatOpen(true);
+      }
+    };
+    window.addEventListener('open-fullscreen-chat', handleOpen);
+    return () => {
+      window.removeEventListener('open-fullscreen-chat', handleOpen);
+    };
+  }, []);
+
   // Load PDF document
   useEffect(() => {
     let cancelled = false;
@@ -458,10 +470,10 @@ export function PDFViewer({
       </div>
 
       {isFullscreen && roomId && (
-        <div className="absolute bottom-4 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none">
+        <div className="absolute bottom-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none">
           {/* Floating Chat Overlay Drawer */}
           {fullscreenChatOpen && (
-            <div className="w-[320px] h-[450px] rounded-2xl border border-room-border/60 bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto flex flex-col overflow-hidden transition-all duration-300 transform scale-100 origin-bottom-right">
+            <div className="w-[360px] h-[520px] max-w-[calc(100vw-32px)] max-h-[calc(100vh-100px)] rounded-2xl border border-room-border/60 bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto flex flex-col overflow-hidden transition-all duration-300 transform scale-100 origin-bottom-right">
               <div className="flex-none flex items-center justify-between px-3 py-2 border-b border-room-border bg-black/10 dark:bg-black/25">
                 <span className="text-xs font-semibold text-room-text">Room Chat (Fullscreen)</span>
                 <button 
@@ -472,7 +484,7 @@ export function PDFViewer({
                 </button>
               </div>
               <div className="flex-1 min-h-0">
-                <Chat roomId={roomId} onClose={() => setFullscreenChatOpen(false)} />
+                {typeof window !== 'undefined' && <Chat roomId={roomId} onClose={() => setFullscreenChatOpen(false)} />}
               </div>
             </div>
           )}
@@ -480,10 +492,10 @@ export function PDFViewer({
           {/* Floating Chat Toggle Button */}
           <button
             onClick={() => setFullscreenChatOpen(!fullscreenChatOpen)}
-            className="pointer-events-auto flex items-center justify-center w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-transform hover:scale-105 active:scale-95 z-50 animate-in fade-in zoom-in duration-200"
+            className="pointer-events-auto flex items-center justify-center w-11 h-11 rounded-full bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-transform hover:scale-105 active:scale-95 z-50 animate-in fade-in zoom-in duration-200"
             title="Toggle Fullscreen Chat"
           >
-            <MessageSquare size={18} />
+            <MessageSquare size={19} />
           </button>
         </div>
       )}

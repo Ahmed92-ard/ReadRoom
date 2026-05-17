@@ -90,63 +90,61 @@ export function GooglePicker({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Server helpers ────────────────────────────────────────────────────────
-
-  const uploadFile = async (file: File, folderId: string | null, relativePath: string): Promise<any> => {
-    if (!libraryId || !channelId) throw new Error('Room context required');
-    const formData = new FormData();
-    formData.append('file', file, fileBasename(relativePath));
-    if (folderId) formData.append('folderId', folderId);
-    const res = await fetch(
-      `/api/libraries/${libraryId}/channels/${channelId}/pdfs/upload`,
-      { method: 'POST', body: formData }
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
-    return data.pdf;
-  };
-
-  const createFolder = async (name: string, parentId: string | null): Promise<string> => {
-    if (!libraryId || !channelId) throw new Error('Room context required');
-    const res = await fetch(
-      `/api/libraries/${libraryId}/channels/${channelId}/folders`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, parentId }),
-      }
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Failed to create folder');
-    return data.folder.id;
-  };
-
-  const resolveFolderPath = async (
-    relativePath: string,
-    folderCache: Map<string, string>
-  ): Promise<string | null> => {
-    const parts = relativePath.split('/');
-    if (parts.length <= 1) return initialFolderId;
-
-    const folderParts = parts.slice(0, -1);
-    let parentId: string | null = initialFolderId;
-
-    for (let i = 0; i < folderParts.length; i++) {
-      const cacheKey = `${initialFolderId ?? 'root'}:${folderParts.slice(0, i + 1).join('/')}`;
-      if (folderCache.has(cacheKey)) {
-        parentId = folderCache.get(cacheKey)!;
-      } else {
-        const id = await createFolder(folderParts[i], parentId);
-        folderCache.set(cacheKey, id);
-        parentId = id;
-      }
-    }
-    return parentId;
-  };
-
   // ── Core upload batch ─────────────────────────────────────────────────────
 
   const runUpload = useCallback(async (items: UploadItem[]) => {
+    const uploadFile = async (file: File, folderId: string | null, relativePath: string): Promise<any> => {
+      if (!libraryId || !channelId) throw new Error('Room context required');
+      const formData = new FormData();
+      formData.append('file', file, fileBasename(relativePath));
+      if (folderId) formData.append('folderId', folderId);
+      const res = await fetch(
+        `/api/libraries/${libraryId}/channels/${channelId}/pdfs/upload`,
+        { method: 'POST', body: formData }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      return data.pdf;
+    };
+
+    const createFolder = async (name: string, parentId: string | null): Promise<string> => {
+      if (!libraryId || !channelId) throw new Error('Room context required');
+      const res = await fetch(
+        `/api/libraries/${libraryId}/channels/${channelId}/folders`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, parentId }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to create folder');
+      return data.folder.id;
+    };
+
+    const resolveFolderPath = async (
+      relativePath: string,
+      folderCache: Map<string, string>
+    ): Promise<string | null> => {
+      const parts = relativePath.split('/');
+      if (parts.length <= 1) return initialFolderId;
+
+      const folderParts = parts.slice(0, -1);
+      let parentId: string | null = initialFolderId;
+
+      for (let i = 0; i < folderParts.length; i++) {
+        const cacheKey = `${initialFolderId ?? 'root'}:${folderParts.slice(0, i + 1).join('/')}`;
+        if (folderCache.has(cacheKey)) {
+          parentId = folderCache.get(cacheKey)!;
+        } else {
+          const id = await createFolder(folderParts[i], parentId);
+          folderCache.set(cacheKey, id);
+          parentId = id;
+        }
+      }
+      return parentId;
+    };
+
     const pdfs = items.filter(({ file }) => isPdf(file));
     if (pdfs.length === 0) {
       setError('No PDF files found in the selection.');
@@ -434,11 +432,16 @@ export function GooglePicker({
             )}
           </div>
 
-          <p className="text-xs text-room-muted text-center">
-            {queue.length > 0
-              ? 'Add more folders or click Upload to start.'
-              : 'Add folders one by one to queue them, then upload together.'}
-          </p>
+          <div className="space-y-1 text-center">
+            <p className="text-[11px] text-room-muted">
+              {queue.length > 0
+                ? 'Add more folders or click Upload to start.'
+                : 'Add folders one by one to queue them, then upload together.'}
+            </p>
+            <p className="text-[10px] text-room-muted/80">
+              Note: Folder selection supports uploading a single folder. For uploading multiple folders at once, please use drag-and-drop.
+            </p>
+          </div>
         </div>
       </div>
     </div>
