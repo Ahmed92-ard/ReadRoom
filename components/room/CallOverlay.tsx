@@ -24,6 +24,7 @@ import {
   Volume2
 } from 'lucide-react';
 import { stringToColor, makeInitials } from '@/lib/utils/avatar';
+import { usePresenceStore } from '@/store/presenceStore';
 
 interface CallOverlayProps {
   roomId: string;
@@ -330,7 +331,7 @@ LIVEKIT_API_SECRET=your-api-secret`}
     );
   }
 
-  // Otherwise, render nothing (the button is now inside the Chat Header!)
+  // Otherwise, render nothing
   return null;
 }
 
@@ -366,6 +367,10 @@ function InnerCallWidget({
   const [isCamOn, setIsCamOn] = useState(false);
   const [focusedParticipantIdentity, setFocusedParticipantIdentity] = useState<string | null>(null);
 
+  // Profile data from globally synchronized presence store
+  const selfMeta = usePresenceStore((s) => s.self);
+  const remoteUsersMap = usePresenceStore((s) => s.users);
+
   // Sync mic track
   useEffect(() => {
     if (localParticipant) {
@@ -380,10 +385,24 @@ function InnerCallWidget({
     }
   }, [isCamOn, localParticipant]);
 
-  // Unified list containing BOTH the local and remote participants
+  // Strict Set-based participant deduplication (Resolves Issue 1)
   const allParticipants = useMemo(() => {
-    if (!localParticipant) return participants;
-    return [localParticipant, ...participants];
+    const seen = new Set<string>();
+    const uniq: any[] = [];
+
+    if (localParticipant) {
+      seen.add(localParticipant.identity);
+      uniq.push(localParticipant);
+    }
+
+    participants.forEach((p) => {
+      if (!seen.has(p.identity)) {
+        seen.add(p.identity);
+        uniq.push(p);
+      }
+    });
+
+    return uniq;
   }, [localParticipant, participants]);
 
   const activeSpeakers = allParticipants.filter((p) => p.isSpeaking);
@@ -395,6 +414,14 @@ function InnerCallWidget({
   const getCameraTrack = useCallback((p: any) => {
     return videoTracks.find((t) => t.participant.identity === p.identity);
   }, [videoTracks]);
+
+  // Dynamic Presence profile selector
+  const getParticipantMeta = useCallback((identity: string) => {
+    if (localParticipant && identity === localParticipant.identity) {
+      return selfMeta;
+    }
+    return remoteUsersMap.get(identity) || null;
+  }, [localParticipant, selfMeta, remoteUsersMap]);
 
   // MINIMIZED MODE: Sleek Capsule/Pill Layout
   if (isMinimized) {
@@ -414,12 +441,32 @@ function InnerCallWidget({
         <div className="flex-1 min-w-0 flex items-center gap-1.5">
           {activeSpeakers.length > 0 ? (
             <div className="relative flex items-center justify-center">
-              <div 
-                style={{ backgroundColor: stringToColor(activeSpeakers[0].identity) }}
-                className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-[9px] text-white ring-2 ring-emerald-500 animate-pulse"
-              >
-                {makeInitials(activeSpeakers[0].name || '')}
-              </div>
+              {(() => {
+                const meta = getParticipantMeta(activeSpeakers[0].identity);
+                const avatarUrl = meta?.avatarUrl;
+                const avatarColor = meta?.avatarColor || stringToColor(activeSpeakers[0].identity);
+                const initials = meta?.avatarInitials || makeInitials(activeSpeakers[0].name || '');
+
+                return (
+                  <div 
+                    style={{ backgroundColor: avatarColor }}
+                    className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-[9px] text-white ring-2 ring-emerald-500 animate-pulse overflow-hidden relative"
+                  >
+                    {avatarUrl ? (
+                      <img 
+                        src={avatarUrl} 
+                        alt="" 
+                        className="w-full h-full object-cover pointer-events-none"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      initials
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div className="flex items-center gap-1">
@@ -504,16 +551,36 @@ function InnerCallWidget({
                 {getCameraTrack(focusedParticipant) ? (
                   <VideoTrack trackRef={getCameraTrack(focusedParticipant)!} className="w-full h-full object-cover" />
                 ) : (
-                  <div 
-                    style={{ backgroundColor: stringToColor(focusedParticipant.identity) }}
-                    className={`w-16 h-16 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-xl transition-all duration-300 ${
-                      focusedParticipant.isSpeaking 
-                        ? 'ring-4 ring-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.8)] scale-105 animate-pulse' 
-                        : 'border-2 border-slate-700'
-                    }`}
-                  >
-                    {makeInitials(focusedParticipant.name || (focusedParticipant.identity === localParticipant?.identity ? userName : ''))}
-                  </div>
+                  (() => {
+                    const meta = getParticipantMeta(focusedParticipant.identity);
+                    const avatarUrl = meta?.avatarUrl;
+                    const avatarColor = meta?.avatarColor || stringToColor(focusedParticipant.identity);
+                    const initials = meta?.avatarInitials || makeInitials(focusedParticipant.name || (focusedParticipant.identity === localParticipant?.identity ? userName : ''));
+
+                    return (
+                      <div 
+                        style={{ backgroundColor: avatarColor }}
+                        className={`w-16 h-16 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-xl overflow-hidden relative transition-all duration-300 ${
+                          focusedParticipant.isSpeaking 
+                            ? 'ring-4 ring-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.8)] scale-105 animate-pulse' 
+                            : 'border-2 border-slate-700'
+                        }`}
+                      >
+                        {avatarUrl ? (
+                          <img 
+                            src={avatarUrl} 
+                            alt={focusedParticipant.name || ''} 
+                            className="w-full h-full object-cover pointer-events-none"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          initials
+                        )}
+                      </div>
+                    );
+                  })()
                 )}
 
                 {/* Bottom Speaking Indicator */}
@@ -554,16 +621,36 @@ function InnerCallWidget({
                         {cameraTrack ? (
                           <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover pointer-events-none" />
                         ) : (
-                          <div 
-                            style={{ backgroundColor: stringToColor(p.identity) }}
-                            className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[8px] text-white shadow transition-all duration-300 ${
-                              isSpeaking 
-                                ? 'ring-2 ring-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
-                                : 'border border-slate-700'
-                            }`}
-                          >
-                            {makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''))}
-                          </div>
+                          (() => {
+                            const meta = getParticipantMeta(p.identity);
+                            const avatarUrl = meta?.avatarUrl;
+                            const avatarColor = meta?.avatarColor || stringToColor(p.identity);
+                            const initials = meta?.avatarInitials || makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''));
+
+                            return (
+                              <div 
+                                style={{ backgroundColor: avatarColor }}
+                                className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[8px] text-white shadow overflow-hidden relative transition-all duration-300 ${
+                                  isSpeaking 
+                                    ? 'ring-2 ring-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
+                                    : 'border border-slate-700'
+                                }`}
+                              >
+                                {avatarUrl ? (
+                                  <img 
+                                    src={avatarUrl} 
+                                    alt={p.name || ''} 
+                                    className="w-full h-full object-cover pointer-events-none"
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                    }}
+                                  />
+                                ) : (
+                                  initials
+                                )}
+                              </div>
+                            );
+                          })()
                         )}
                         
                         {/* Bottom Speaking Indicator */}
@@ -597,16 +684,36 @@ function InnerCallWidget({
                     {cameraTrack ? (
                       <VideoTrack trackRef={cameraTrack} className="w-full h-full object-cover pointer-events-none" />
                     ) : (
-                      <div 
-                        style={{ backgroundColor: stringToColor(p.identity) }}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs text-white shadow-md transition-all duration-300 ${
-                          isSpeaking 
-                            ? 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
-                            : 'border border-slate-700'
-                        }`}
-                      >
-                        {makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''))}
-                      </div>
+                      (() => {
+                        const meta = getParticipantMeta(p.identity);
+                        const avatarUrl = meta?.avatarUrl;
+                        const avatarColor = meta?.avatarColor || stringToColor(p.identity);
+                        const initials = meta?.avatarInitials || makeInitials(p.name || (p.identity === localParticipant?.identity ? userName : ''));
+
+                        return (
+                          <div 
+                            style={{ backgroundColor: avatarColor }}
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs text-white shadow-md overflow-hidden relative transition-all duration-300 ${
+                              isSpeaking 
+                                ? 'ring-2 ring-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.7)] scale-105 animate-pulse' 
+                                : 'border border-slate-700'
+                            }`}
+                          >
+                            {avatarUrl ? (
+                              <img 
+                                src={avatarUrl} 
+                                alt={p.name || ''} 
+                                className="w-full h-full object-cover pointer-events-none"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              initials
+                            )}
+                          </div>
+                        );
+                      })()
                     )}
 
                     {/* Bottom Speaking Indicator */}

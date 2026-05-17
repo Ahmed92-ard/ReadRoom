@@ -3,6 +3,7 @@
 // Chat.tsx — persistent WhatsApp/Discord-style room chat.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Check,
   CheckCheck,
@@ -1061,43 +1062,44 @@ export function Chat({ roomId, onClose }: ChatProps) {
       )}
       {error && <div className="flex-none border-t border-red-900/50 bg-red-900/20 px-3 py-2 text-xs text-red-200">{error}</div>}
 
-      {activeMenu && activeMenuMessage && (
+      {activeMenu && activeMenuMessage && typeof document !== 'undefined' && createPortal(
         <div
           id="chat-message-context-menu"
           className="fixed z-50 w-44 rounded-lg border border-room-border bg-room-surface p-1.5 shadow-2xl"
           style={{ top: activeMenu.top, left: activeMenu.left }}
         >
-            <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">
-              {EMOJIS.map((emoji) => (
-                <button
-                  key={emoji}
-                  onClick={() => { setActiveMenu(null); toggleReaction(activeMenuMessage, emoji); }}
-                  className="rounded-md px-1.5 py-1 text-sm hover:bg-room-bg"
-                  aria-label={`React ${emoji}`}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-            <button onClick={() => { beginReply(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
-              <Reply size={13} /> Reply
-            </button>
-            {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
-              <button onClick={() => { setEditing(activeMenuMessage); setInput(activeMenuMessage.content); setActiveMenu(null); inputRef.current?.focus(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
-                <Edit3 size={13} /> Edit
+          <div className="mb-1 flex flex-wrap gap-1 border-b border-room-border pb-1">
+            {EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => { setActiveMenu(null); toggleReaction(activeMenuMessage, emoji); }}
+                className="rounded-md px-1.5 py-1 text-sm hover:bg-room-bg"
+                aria-label={`React ${emoji}`}
+              >
+                {emoji}
               </button>
-            )}
-            {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
-              <button onClick={() => { setInfoMessage(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
-                <Info size={13} /> Message info
-              </button>
-            )}
-            {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
-              <button onClick={() => { setActiveMenu(null); removeMessage(activeMenuMessage); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-300 hover:bg-room-bg">
-                <Trash2 size={13} /> Delete
-              </button>
-            )}
+            ))}
           </div>
+          <button onClick={() => { beginReply(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+            <Reply size={13} /> Reply
+          </button>
+          {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+            <button onClick={() => { setEditing(activeMenuMessage); setInput(activeMenuMessage.content); setActiveMenu(null); inputRef.current?.focus(); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+              <Edit3 size={13} /> Edit
+            </button>
+          )}
+          {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+            <button onClick={() => { setInfoMessage(activeMenuMessage); setActiveMenu(null); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-room-text hover:bg-room-bg">
+              <Info size={13} /> Message info
+            </button>
+          )}
+          {self?.userId && activeMenuMessage.userId && typeof activeMenuMessage.userId === 'string' && activeMenuMessage.userId.startsWith(self.userId.split('_')[0]) && (
+            <button onClick={() => { setActiveMenu(null); removeMessage(activeMenuMessage); }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-300 hover:bg-room-bg">
+              <Trash2 size={13} /> Delete
+            </button>
+          )}
+        </div>,
+        document.body
       )}
 
       {(replyTo || editing || attachment) && (
