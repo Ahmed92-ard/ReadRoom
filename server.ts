@@ -10,6 +10,8 @@ import next from 'next';
 import { Server } from 'socket.io';
 import { Redis } from '@upstash/redis';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { sendPushToRoomParticipants } from './lib/backend/push';
+
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = parseInt(process.env.PORT || '3000', 10);
@@ -326,6 +328,21 @@ app.prepare().then(() => {
       // Broadcast message to all other users in room
       socket.to(cleanRoomId).emit('chat:message', message);
 
+      // Async, non-blocking fire-and-forget push trigger
+      const pushPayload = {
+        title: `${message.userName} in #Room`,
+        body: message.content,
+        icon: message.avatarUrl || '/icons/app_icon_192.png',
+        badge: '/icons/app_icon_192.png',
+        data: {
+          url: `/libraries/${socket.data.libraryId || ''}/channels/${cleanRoomId}`,
+          roomId: cleanRoomId,
+          notificationType: 'message' as const,
+          senderName: message.userName
+        }
+      };
+      sendPushToRoomParticipants(cleanRoomId, message.userId, pushPayload, false);
+
       // Notification activity for badges/toasts
       const activity = {
         id: `chat:${message.id}`,
@@ -409,6 +426,22 @@ app.prepare().then(() => {
       const cleanRoomId = sanitizeString(activity.roomId, 64);
       // Forward to all other room members so their library updates instantly
       socket.to(cleanRoomId).emit('pdf:added', activity);
+      
+      // Asynchronously trigger push notification about new PDF upload (non-blocking)
+      const pdfPushPayload = {
+        title: `New document in #Room 📄`,
+        body: `${activity.userName || 'Someone'} uploaded "${activity.title || 'a new PDF'}"`,
+        icon: '/icons/app_icon_192.png',
+        badge: '/icons/app_icon_192.png',
+        data: {
+          url: `/libraries/${socket.data.libraryId || ''}/channels/${cleanRoomId}`,
+          roomId: cleanRoomId,
+          notificationType: 'pdf_added' as const,
+          senderName: activity.userName || 'System'
+        }
+      };
+      sendPushToRoomParticipants(cleanRoomId, socket.data.userId || '', pdfPushPayload, false);
+
       // Also forward as notification for in-app toasts/badges
       socket.to(cleanRoomId).to(socket.data.libraryId ? `library:${socket.data.libraryId}` : cleanRoomId).emit('notification:activity', {
         ...activity,

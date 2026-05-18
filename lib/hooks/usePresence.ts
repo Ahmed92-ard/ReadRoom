@@ -186,6 +186,7 @@ export function usePresence(
         currentRoomId: roomId,
         currentRoomName: roomNameRef.current,
         isActive: true,
+        isFocused: typeof document !== 'undefined' ? (document.visibilityState === 'visible' && document.hasFocus()) : true,
         lastSeen: Date.now(),
       };
     };
@@ -283,7 +284,15 @@ export function usePresence(
       prev = current;
       if (!selfNow) return;
 
-      const patch = { ...current, activeLibraryId: libraryId, currentRoomId: roomId, currentRoomName: roomNameRef.current, isActive: true, lastSeen: Date.now() };
+      const patch = {
+        ...current,
+        activeLibraryId: libraryId,
+        currentRoomId: roomId,
+        currentRoomName: roomNameRef.current,
+        isActive: true,
+        isFocused: typeof document !== 'undefined' ? (document.visibilityState === 'visible' && document.hasFocus()) : true,
+        lastSeen: Date.now()
+      };
       updateSelf(patch);
 
       if (throttleTimer) clearTimeout(throttleTimer);
@@ -304,25 +313,42 @@ export function usePresence(
       currentRoomId: roomId,
       currentRoomName: roomName,
       isActive: true,
+      isFocused: typeof document !== 'undefined' ? (document.visibilityState === 'visible' && document.hasFocus()) : true,
       lastSeen: Date.now(),
     };
     updateSelf(patch);
     getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
   }, [roomId, libraryId, roomName, updateSelf]);
 
-  // ── Visibility change → isActive ─────────────────────────────────────────
+  // ── Focus & Visibility change → isFocused & isActive ───────────────────────
   useEffect(() => {
     const handle = () => {
       const self = usePresenceStore.getState().self;
       if (!self) return;
       const isActive = document.visibilityState === 'visible';
+      const isFocused = isActive && document.hasFocus();
       const lastSeen = Date.now();
-      const patch = { activeLibraryId: libraryId, currentRoomId: roomId, currentRoomName: roomNameRef.current, isActive, lastSeen };
+      const patch = {
+        activeLibraryId: libraryId,
+        currentRoomId: roomId,
+        currentRoomName: roomNameRef.current,
+        isActive,
+        isFocused,
+        lastSeen
+      };
       updateSelf(patch);
       getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
     };
+
     document.addEventListener('visibilitychange', handle);
-    return () => document.removeEventListener('visibilitychange', handle);
+    window.addEventListener('focus', handle);
+    window.addEventListener('blur', handle);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handle);
+      window.removeEventListener('focus', handle);
+      window.removeEventListener('blur', handle);
+    };
   }, [roomId, libraryId, updateSelf]);
 
   // ── Resolve "Reader" fallback name after initial join ─────────────────────

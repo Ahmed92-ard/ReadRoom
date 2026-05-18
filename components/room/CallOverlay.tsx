@@ -103,6 +103,15 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
       }
     };
     window.addEventListener('readroom-join-call', handleJoinEvent);
+
+    // Trigger auto-join if routed via a push notification click
+    try {
+      if (sessionStorage.getItem('__readroom_join_call_pending__') === '1') {
+        sessionStorage.removeItem('__readroom_join_call_pending__');
+        handleJoinEvent();
+      }
+    } catch {}
+
     return () => window.removeEventListener('readroom-join-call', handleJoinEvent);
   }, [isConnected, isConnecting, dimensions, isMinimized]);
 
@@ -129,6 +138,15 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
       setToken(data.token);
       setUrl(data.url);
       setIsConnected(true);
+
+      // Notify other library members of this incoming call (non-blocking)
+      fetch(`/api/rooms/${roomId}/call/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callerName: userName }),
+      }).catch((notifyErr) => {
+        console.warn('[CallOverlay] Failed to dispatch push notifications:', notifyErr);
+      });
     } catch (err) {
       console.error('[CallOverlay] Failed to join call:', err);
       setError(err instanceof Error ? err.message : 'Calling server unreachable');

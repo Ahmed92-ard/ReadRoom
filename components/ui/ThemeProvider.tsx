@@ -1,11 +1,16 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useUIStore } from '@/store/uiStore';
 import { ensureRuntimeStateVersion } from '@/lib/runtime/recovery';
+import { useAuth } from '@/lib/hooks/useAuth';
+import { usePushNotifications } from '@/lib/hooks/usePushNotifications';
+
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const setTheme = useUIStore((state) => state.setTheme);
+  const router = useRouter();
 
   // Initialize theme from localStorage on mount
   useEffect(() => {
@@ -39,6 +44,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [setTheme]);
 
+  const { user } = useAuth();
+  const { registerPush } = usePushNotifications();
+
+  // Register push notifications globally once authenticated
+  useEffect(() => {
+    if (user?.id) {
+      registerPush(user.id);
+    }
+  }, [user?.id, registerPush]);
+
+
   // Register service worker
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
@@ -53,6 +69,24 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
 
     navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
+
+    const handleSWMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'NOTIFICATION_ROUTE') {
+        const { url, roomId, isCall } = event.data;
+        if (url) {
+          if (isCall) {
+            try {
+              sessionStorage.setItem('__readroom_join_call_pending__', '1');
+            } catch {}
+            // Trigger instant join call event for hot path
+            window.dispatchEvent(new CustomEvent('readroom-join-call'));
+          }
+          router.push(url);
+        }
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleSWMessage);
 
     navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
       .then((registration) => {
@@ -79,6 +113,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+      navigator.serviceWorker.removeEventListener('message', handleSWMessage);
     };
   }, []);
 

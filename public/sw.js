@@ -160,3 +160,88 @@ self.addEventListener('fetch', (event) => {
     return offlineResponse();
   }));
 });
+
+// ── Web Push Notifications — Phase 1 Isolated Layer ────────────────────────
+self.addEventListener('push', (event) => {
+  if (!event.data) {
+    log('Push event received with no payload');
+    return;
+  }
+
+  try {
+    const payload = event.data.json();
+    const title = payload.title || 'ReadRoom';
+    const options = {
+      body: payload.body || '',
+      icon: payload.icon || '/icons/app_icon_192.png',
+      badge: payload.badge || '/icons/app_icon_192.png',
+      data: payload.data || {},
+      vibrate: payload.vibrate || [100, 50, 100],
+      actions: payload.actions || [],
+      tag: payload.tag || (payload.data && payload.data.roomId ? `room-${payload.data.roomId}` : undefined),
+      renotify: true,
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(title, options)
+    );
+  } catch (err) {
+    log('Failed to parse incoming push event:', err);
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const action = event.action;
+  const payloadData = event.notification.data || {};
+  const urlToOpen = payloadData.url || '/';
+  const roomId = payloadData.roomId;
+  const isCall = payloadData.isCall || action === 'join';
+
+  if (action === 'decline') {
+    log('Call invitation declined');
+    return;
+  }
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // 1. Try to find and reuse an existing open window of the application
+      for (let client of windowClients) {
+        const clientUrl = new URL(client.url);
+        if (clientUrl.origin === self.location.origin) {
+          return client.focus().then((focusedClient) => {
+            // Post notification event internally to prevent full-page reload
+            focusedClient.postMessage({
+              type: 'NOTIFICATION_ROUTE',
+              url: urlToOpen,
+              roomId: roomId,
+              isCall: !!isCall,
+            });
+
+            // Only trigger a browser navigation if they aren't already on the correct channel/room page
+            if (roomId && !clientUrl.pathname.includes(roomId)) {
+              return focusedClient.navigate(urlToOpen);
+            }
+          });
+        }
+      }
+
+      // 2. If no window is open, launch a new one
+      return self.clients.openWindow(urlToOpen).then((newClient) => {
+        if (newClient && roomId) {
+          // A brief delay to let the single page app boot before sending the message
+          setTimeout(() => {
+            newClient.postMessage({
+              type: 'NOTIFICATION_ROUTE',
+              url: urlToOpen,
+              roomId: roomId,
+              isCall: !!isCall,
+            });
+          }, 3000);
+        }
+      });
+    })
+  );
+});
+

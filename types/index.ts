@@ -31,6 +31,7 @@ export interface UserMeta {
   currentRoomId?: string | null;
   currentRoomName?: string | null;
   isActive?: boolean;
+  isFocused?: boolean;
   lastSeen?: number;
 }
 
