@@ -962,7 +962,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
 
           return (
             <React.Fragment key={msg.id}>
-              {showDay && <div className="sticky top-2 z-10 mx-auto my-3 w-fit rounded-full bg-room-bg/90 px-3 py-1 text-[10px] font-medium text-room-muted shadow-sm">{formatDay(msg.ts)}</div>}
+              {showDay && <div className="relative mx-auto my-3 block w-fit rounded-full bg-room-bg/95 border border-room-border/40 px-3 py-1 text-[10px] font-medium text-room-muted shadow-sm">{formatDay(msg.ts)}</div>}
               {firstUnreadId === msg.id && <div className="my-3 border-t border-blue-400/40 pt-2 text-center text-[10px] font-semibold uppercase tracking-wide text-blue-300">Unread</div>}
               <div
                 id={`chat-msg-${msg.id}`}
@@ -1229,39 +1229,48 @@ export function Chat({ roomId, onClose }: ChatProps) {
         </div>
       )}
 
-      {mediaOpen && (
-        <div className="absolute inset-0 z-20 flex flex-col bg-room-surface/96 backdrop-blur-3xl">
-          <div className="flex items-center gap-2 border-b border-room-border px-3 py-2">
-            <h3 className="flex-1 text-sm font-semibold text-room-text">Media and Files</h3>
-            <button onClick={() => setMediaOpen(false)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={18} /></button>
+      {mediaOpen && typeof document !== 'undefined' && createPortal(
+        <div 
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 animate-in fade-in duration-200"
+          onClick={() => setMediaOpen(false)}
+        >
+          <div 
+            className="flex h-[80vh] w-full max-w-md flex-col rounded-xl border border-room-border bg-room-surface shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-none items-center gap-2 border-b border-room-border px-4 py-3">
+              <h3 className="flex-1 text-sm font-semibold text-room-text">Media and Files</h3>
+              <button onClick={() => setMediaOpen(false)} className="rounded-lg p-1.5 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close media"><X size={18} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {visibleMediaSections.length === 0 && (
+                <p className="py-8 text-center text-xs text-room-muted">No media or files yet</p>
+              )}
+              {visibleMediaSections.map((kind) => (
+                <section key={kind} className="mb-5">
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-room-muted">{kind}</h4>
+                  <div className={kind === 'images' || kind === 'videos' ? 'grid grid-cols-3 gap-2' : 'space-y-2'}>
+                      {mediaByKind[kind].map((m) => {
+                        const a = m.attachments?.[0];
+                        const url = a?.url ?? m.attachmentUrl ?? '#';
+                        const name = a?.name ?? m.attachmentName ?? 'Attachment';
+                        return kind === 'images' ? (
+                          <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="aspect-square overflow-hidden rounded-lg border border-room-border bg-room-bg"><img src={url} alt={name} loading="lazy" className="h-full w-full object-cover" /></a>
+                        ) : (
+                          <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
+                            {React.createElement(attachmentIcon(m.attachmentType), { size: 16, className: 'text-blue-300' })}
+                            <span className="min-w-0 flex-1 truncate">{name}</span>
+                            <Download size={16} className="text-room-muted" />
+                          </a>
+                        );
+                      })}
+                  </div>
+                </section>
+              ))}
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-3">
-            {visibleMediaSections.length === 0 && (
-              <p className="py-8 text-center text-xs text-room-muted">No media or files yet</p>
-            )}
-            {visibleMediaSections.map((kind) => (
-              <section key={kind} className="mb-5">
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-room-muted">{kind}</h4>
-                <div className={kind === 'images' || kind === 'videos' ? 'grid grid-cols-3 gap-2' : 'space-y-2'}>
-                    {mediaByKind[kind].map((m) => {
-                      const a = m.attachments?.[0];
-                      const url = a?.url ?? m.attachmentUrl ?? '#';
-                      const name = a?.name ?? m.attachmentName ?? 'Attachment';
-                      return kind === 'images' ? (
-                        <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="aspect-square overflow-hidden rounded-lg border border-room-border bg-room-bg"><img src={url} alt={name} loading="lazy" className="h-full w-full object-cover" /></a>
-                      ) : (
-                        <a key={m.id} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
-                          {React.createElement(attachmentIcon(m.attachmentType), { size: 16, className: 'text-blue-300' })}
-                          <span className="min-w-0 flex-1 truncate">{name}</span>
-                          <Download size={16} className="text-room-muted" />
-                        </a>
-                      );
-                    })}
-                </div>
-              </section>
-            ))}
-          </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -48,7 +48,10 @@ async function putCache(request, response) {
 
 async function networkFirst(request, fallbackToCache = false) {
   try {
-    const response = await fetch(request, { cache: 'no-store' });
+    // Chromium throws TypeError if we pass custom options (like cache) when fetching a navigation request
+    const isNav = request.mode === 'navigate';
+    const fetchOptions = isNav ? undefined : { cache: 'no-store' };
+    const response = await fetch(request, fetchOptions);
     if (request.method === 'GET') await putCache(request, response);
     return response;
   } catch (err) {
@@ -180,6 +183,7 @@ self.addEventListener('push', (event) => {
       actions: payload.actions || [],
       tag: payload.tag || (payload.data && payload.data.roomId ? `room-${payload.data.roomId}` : undefined),
       renotify: true,
+      requireInteraction: payload.requireInteraction !== undefined ? !!payload.requireInteraction : (payload.data && !!payload.data.isCall),
     };
 
     event.waitUntil(
