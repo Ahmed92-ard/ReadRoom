@@ -60,11 +60,11 @@ export async function POST(req: Request, { params }: { params: Promise<Params> |
 
     // 4. Assemble call ringing push payload
     const payload = {
-      title: 'Incoming Call 📞',
-      body: `${callerName} is calling in #${room.name}`,
+      title: 'ReadRoom',
+      body: 'Incoming Call',
       icon: '/icons/app_icon_192.png',
       badge: '/icons/app_icon_192.png',
-      vibrate: [100, 50, 100, 50, 100, 50, 100],
+      vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250, 500, 250],
       data: {
         url: `/libraries/${libraryId}/channels/${roomId}`, // navigate internally inside app
         roomId: roomId,

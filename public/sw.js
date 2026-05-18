@@ -195,7 +195,11 @@ self.addEventListener('notificationclick', (event) => {
 
   const action = event.action;
   const payloadData = event.notification.data || {};
-  const urlToOpen = payloadData.url || '/';
+  
+  // Resolve relative path to a fully-qualified absolute URL. 
+  // This is required for the mobile/desktop OS (e.g. Brave Android) to intercept 
+  // the navigation intent and direct it to the installed standalone PWA app window.
+  const urlToOpen = new URL(payloadData.url || '/', self.location.origin).href;
   const roomId = payloadData.roomId;
   const isCall = payloadData.isCall || action === 'join';
 

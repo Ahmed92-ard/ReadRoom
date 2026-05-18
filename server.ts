@@ -330,8 +330,8 @@ app.prepare().then(() => {
 
       // Async, non-blocking fire-and-forget push trigger
       const pushPayload = {
-        title: `${message.userName} in #Room`,
-        body: message.content,
+        title: 'ReadRoom',
+        body: '1 New Message',
         icon: message.avatarUrl || '/icons/app_icon_192.png',
         badge: '/icons/app_icon_192.png',
         data: {
