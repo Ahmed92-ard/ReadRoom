@@ -588,9 +588,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   const activeTabs = isMobile ? mobileTabs : desktopTabs;
   const notificationStorageKey = `readroom:notification-state:${roomId}:${initialUserId}`;
+  const isFullscreen = typeof document !== 'undefined' && !!document.fullscreenElement;
   const isChatVisible = isMobile
     ? mobileChatOpen || (mobileSheetExpanded && activePanel === 'chat')
-    : !chatSidebarCollapsed || (sidebarOpen && activePanel === 'chat');
+    : (isFullscreen ? fullscreenChatOpen : !chatSidebarCollapsed) || (sidebarOpen && activePanel === 'chat');
   const processedNotificationIdsRef = useRef<Set<string>>(new Set());
   const processedBrowserNotificationIdsRef = useRef<Set<string>>(new Set());
   const unreadCountRef = useRef(0);
@@ -602,7 +603,16 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   useEffect(() => {
     isChatVisibleRef.current = isChatVisible;
-  }, [isChatVisible]);
+    console.log('[RoomShell Notification Debug] Chat visibility evaluated:', {
+      isChatVisible,
+      isMobile,
+      isFullscreen,
+      fullscreenChatOpen,
+      chatSidebarCollapsed,
+      sidebarOpen,
+      activePanel
+    });
+  }, [isChatVisible, isMobile, isFullscreen, fullscreenChatOpen, chatSidebarCollapsed, sidebarOpen, activePanel]);
 
   useEffect(() => {
     const updateFullscreenHost = () => {
@@ -705,6 +715,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [librarySidebarCollapsed, chatSidebarCollapsed, sidebarOpen, toggleNavigation, toggleChatSidebar, setSidebarOpen]);
 
   const clearUnread = useCallback(() => {
+    console.log('[RoomShell Notification Debug] clearUnread() triggered. Resetting unreadCount to 0.');
     setUnreadCount(0);
     unreadCountRef.current = 0;
     try {
@@ -740,7 +751,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const isDocFocused = document.hasFocus();
     const activeEl = document.activeElement?.tagName;
 
-    console.log(`[DesktopNotificationDebug] showBrowserNotification triggered:`, {
+    console.log(`[RoomShell Notification Debug] showBrowserNotification triggered:`, {
       activityId: activity?.id,
       isVisible,
       isDocFocused,
@@ -749,21 +760,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     });
 
     if (Notification.permission !== 'granted') {
-      console.log(`[DesktopNotificationDebug] Skipped: permission not granted`);
+      console.log(`[RoomShell Notification Debug] Browser notification suppressed: permission not granted`);
       return;
     }
     if (!activity?.id) return;
 
     // Deduplication check
     if (processedBrowserNotificationIdsRef.current.has(activity.id)) {
-      console.log(`[DesktopNotificationDebug] Skipped: duplicate detected (${activity.id})`);
+      console.log(`[RoomShell Notification Debug] Browser notification suppressed: duplicate detected (${activity.id})`);
       return;
     }
 
     // Throttling check (15 seconds)
     const now = Date.now();
     if (now - lastNotificationTimeRef.current < 15000) {
-      console.log(`[DesktopNotificationDebug] Skipped: throttle active (time elapsed: ${now - lastNotificationTimeRef.current}ms)`);
+      console.log(`[RoomShell Notification Debug] Browser notification suppressed: throttle active (time elapsed: ${now - lastNotificationTimeRef.current}ms)`);
       return;
     }
 
@@ -771,7 +782,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const hasActiveFocus = isVisible && isDocFocused;
     
     if (hasActiveFocus) {
-      console.log(`[DesktopNotificationDebug] Skipped: app has active focus (hasActiveFocus: true)`);
+      console.log(`[RoomShell Notification Debug] Browser notification suppressed: app has active focus (hasActiveFocus: true)`);
       return;
     }
 
@@ -779,7 +790,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     lastNotificationTimeRef.current = now;
     processedBrowserNotificationIdsRef.current.add(activity.id);
 
-    console.log(`[DesktopNotificationDebug] Triggering Notification constructor. Title: ${activity.title}`);
+    console.log(`[RoomShell Notification Debug] Triggering Notification constructor. Title: ${activity.title}`);
 
     try {
       let icon = '/icons/app_icon_192.png';
@@ -1428,7 +1439,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
     const handleActivity = (activity: RoomActivity) => {
       if (!activity?.id) return;
-      if (processedNotificationIdsRef.current.has(activity.id)) return;
+      if (processedNotificationIdsRef.current.has(activity.id)) {
+        console.log('[RoomShell Notification Debug] Same-room deduplication skip. Activity ID already processed:', activity.id);
+        return;
+      }
 
       const isSameRoom = activity.roomId === roomId;
       const activityUserBaseId = activity.userId?.split('_')[0];
@@ -1436,12 +1450,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       // ── Cross-room messages: desktop notification if hidden, in-app toast if focused ──
       if (!isSameRoom && activity.type === 'chat:message') {
         if (activityUserBaseId === initialUserId) return;
-        if (processedNotificationIdsRef.current.has(activity.id)) return;
+        if (processedNotificationIdsRef.current.has(activity.id)) {
+          console.log('[RoomShell Notification Debug] Cross-room deduplication skip. ID:', activity.id);
+          return;
+        }
         processedNotificationIdsRef.current.add(activity.id);
         const isFocused = document.visibilityState === 'visible' && document.hasFocus();
+        console.log('[RoomShell Notification Debug] Cross-room message activity routed. RoomID:', activity.roomId, 'Activity ID:', activity.id, 'isFocused:', isFocused);
         if (!isFocused) {
           showBrowserNotification(activity);
         } else {
+          console.log('[RoomShell Notification Debug] Pushing in-app toast for cross-room message.');
           pushToast(activity);
         }
         return;
@@ -1464,13 +1483,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       // Show toast if: chat is not visible, OR we're in fullscreen (chat is hidden behind PDF), OR it's a non-chat event
       const isFullscreen = Boolean(document.fullscreenElement);
-      if (!isChatVisibleRef.current || isFullscreen || nextActivity.type !== 'chat:message') {
+      const shouldPushToast = !isChatVisibleRef.current || isFullscreen || nextActivity.type !== 'chat:message';
+      console.log('[RoomShell Notification Debug] Same-room activity. ID:', activity.id, 'isChatVisibleRef:', isChatVisibleRef.current, 'isFullscreen:', isFullscreen, 'activityType:', nextActivity.type, 'shouldPushToast:', shouldPushToast);
+      if (shouldPushToast) {
+        console.log('[RoomShell Notification Debug] Pushing in-app toast for same-room activity.');
         pushToast(nextActivity);
       }
 
       // Show browser notification whenever the app is unfocused/minimized —
       // regardless of whether chat was open before the window was minimized.
       const isFocused = document.visibilityState === 'visible' && document.hasFocus();
+      console.log('[RoomShell Notification Debug] Same-room focus detection. isFocused:', isFocused);
       if (!isFocused) {
         showBrowserNotification(nextActivity);
       }
@@ -1478,6 +1501,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       if (!isChatVisibleRef.current || nextActivity.type === 'mention') {
         setUnreadCount((prev) => {
           const next = Math.min(999, prev + 1);
+          console.log('[RoomShell Notification Debug] unreadCount incremented. prev:', prev, 'next:', next);
           unreadCountRef.current = next;
           persistNotificationState(next, nextActivity.id);
           return next;
@@ -1519,7 +1543,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           if (String(row?.sender_id ?? '').split('_')[0] === initialUserId) return;
 
           const activityId = `chat:${row.id}`;
-          if (processedNotificationIdsRef.current.has(activityId)) return;
+          if (processedNotificationIdsRef.current.has(activityId)) {
+            console.log('[RoomShell Notification Debug] Cross-room DB subscription deduplication skip. ID:', activityId);
+            return;
+          }
           processedNotificationIdsRef.current.add(activityId);
 
           const roomName = roomNames.get(messageRoomId) ?? 'Room';
@@ -1535,11 +1562,13 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             metadata: { roomName, libraryId },
           };
 
-          pushToast(activity);
           const isFocused = document.visibilityState === 'visible' && document.hasFocus();
+          console.log('[RoomShell Notification Debug] Cross-room DB notification routing. RoomID:', messageRoomId, 'Activity ID:', activityId, 'isFocused:', isFocused);
+          pushToast(activity);
           if (!isFocused) showBrowserNotification(activity);
           setUnreadCount((prev) => {
             const next = Math.min(999, prev + 1);
+            console.log('[RoomShell Notification Debug] unreadCount incremented (cross-room DB). prev:', prev, 'next:', next);
             unreadCountRef.current = next;
             persistNotificationState(next, activity.id);
             return next;
@@ -2638,7 +2667,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                <div 
                  className={
                    isFullscreenChat && fullscreenChatOpen
-                     ? "absolute bottom-6 right-16 z-50 w-[360px] h-[520px] max-w-[calc(100vw-32px)] max-h-[calc(100vh-100px)] rounded-2xl border border-room-border/60 bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto flex flex-col overflow-hidden transition-all duration-300 transform scale-100 origin-bottom-right"
+                     ? "absolute bottom-24 right-16 z-50 w-[420px] h-[600px] max-w-[calc(100vw-32px)] max-h-[calc(100vh-120px)] rounded-2xl border border-room-border/60 bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto flex flex-col overflow-hidden transition-all duration-300 transform scale-100 origin-bottom-right"
                      : `flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50 ${chatSidebarCollapsed && !isFullscreenChat ? 'hidden' : ''} ${isFullscreenChat && !fullscreenChatOpen ? 'hidden' : ''}`
                  }
                  style={!isFullscreenChat ? { width: chatWidth } : undefined}
@@ -2660,13 +2689,25 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                      onMouseDown={handleChatResizeMouseDown}
                    />
                  )}
-                 <ChatSidebar 
-                    roomId={roomId} 
-                    onClose={toggleChatSidebar} 
-                    width={chatWidth} 
-                    onResizeMouseDown={handleChatResizeMouseDown}
-                    forceVisible={isFullscreenChat}
-                  />
+                 {isFullscreenChat ? (
+                   <div className="flex-1 min-h-0 w-full flex flex-col">
+                     <ChatSidebar 
+                       roomId={roomId} 
+                       onClose={toggleChatSidebar} 
+                       width={undefined} 
+                       onResizeMouseDown={handleChatResizeMouseDown}
+                       forceVisible={true}
+                     />
+                   </div>
+                 ) : (
+                   <ChatSidebar 
+                     roomId={roomId} 
+                     onClose={toggleChatSidebar} 
+                     width={chatWidth} 
+                     onResizeMouseDown={handleChatResizeMouseDown}
+                     forceVisible={false}
+                   />
+                 )}
                </div>
              );
 
