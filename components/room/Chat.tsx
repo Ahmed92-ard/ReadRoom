@@ -32,6 +32,7 @@ import type { ChatAttachment, ChatMessage, ChatReaction } from '@/types';
 interface ChatProps {
   roomId: string;
   onClose?: () => void;
+  portalTargetId?: string;
 }
 
 interface FloatingMenu {
@@ -106,7 +107,7 @@ function positionMenu(anchor: DOMRect | { left: number; right: number; top: numb
   return { top, left, placement: openAbove ? 'above' : 'below', align: alignRight ? 'right' : 'left' };
 }
 
-export function Chat({ roomId, onClose }: ChatProps) {
+export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
   const presenceProfiles = usePresenceStore(
     (s) => Array.from(s.users.values()).map(u => ({
@@ -167,6 +168,10 @@ export function Chat({ roomId, onClose }: ChatProps) {
   // Unique per-instance ID so two <Chat roomId={x} /> components never share the same
   // Supabase channel object. Supabase SDK throws if .on() is called after .subscribe().
   const channelInstanceId = useRef(Math.random().toString(36).slice(2));
+
+  const lastScrollTopRef = useRef<number>(0);
+  const isRelocatingRef = useRef<boolean>(false);
+  const prevPortalTargetIdRef = useRef<string | undefined>(portalTargetId);
 
   const messagesEndpoint = canUseAdvancedApi
     ? `/api/libraries/${libraryId}/channels/${channelId}/messages`
@@ -531,13 +536,62 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    if (isRelocatingRef.current) {
+      console.log('[Chat Scroll Debug] Ignoring scroll event during relocation/restoration. scrollTop:', el.scrollTop);
+      return;
+    }
     if (activeMenu) setActiveMenu(null);
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     setIsAtBottom(atBottom);
+    lastScrollTopRef.current = el.scrollTop;
+    console.log('[Chat Scroll Debug] handleScroll: updated lastScrollTop to:', el.scrollTop, 'isAtBottom:', atBottom);
     if (el.scrollTop < 120 && hasOlder && !loadingOlder && !search) {
       loadOlder();
     }
   }, [activeMenu, hasOlder, loadingOlder, loadOlder, search]);
+
+  useEffect(() => {
+    if (prevPortalTargetIdRef.current !== portalTargetId) {
+      const prev = prevPortalTargetIdRef.current;
+      prevPortalTargetIdRef.current = portalTargetId;
+      
+      const el = scrollRef.current;
+      if (!el) return;
+
+      console.log('[Chat Scroll Debug] portalTargetId changed from:', prev, 'to:', portalTargetId, 'isAtBottom:', isAtBottomRef.current, 'lastScrollTop:', lastScrollTopRef.current);
+
+      isRelocatingRef.current = true;
+      const wasAtBottom = isAtBottomRef.current;
+      const targetScrollTop = lastScrollTopRef.current;
+
+      // Double-RAF to let the browser re-mount the portal first and calculate heights
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const container = scrollRef.current;
+          if (!container) {
+            isRelocatingRef.current = false;
+            return;
+          }
+
+          if (wasAtBottom) {
+            console.log('[Chat Scroll Debug] Restoring scroll to bottom.');
+            bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+            setIsAtBottom(true);
+          } else {
+            console.log('[Chat Scroll Debug] Restoring scroll to scrollTop:', targetScrollTop);
+            container.scrollTop = targetScrollTop;
+            setIsAtBottom(false);
+          }
+
+          // Small timeout to let trailing scroll events settle
+          setTimeout(() => {
+            isRelocatingRef.current = false;
+            console.log('[Chat Scroll Debug] Relocation complete. container.scrollTop:', container.scrollTop);
+          }, 100);
+        });
+      });
+    }
+  }, [portalTargetId]);
 
   useEffect(() => {
     if (!activeMenu) return;

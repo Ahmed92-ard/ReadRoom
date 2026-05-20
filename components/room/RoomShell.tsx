@@ -847,9 +847,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [roomId, libraryId, router]);
 
   const pushToast = useCallback((activity: RoomActivity) => {
+    console.log('[RoomShell Notification Debug] pushToast() executing. Activity ID:', activity.id, 'Title:', activity.title);
     const toast: ToastActivity = { ...activity, toastId: `${activity.id}:${Date.now()}` };
-    setToasts((prev) => [...prev.slice(-3), toast]);
+    setToasts((prev) => {
+      const next = [...prev.slice(-3), toast];
+      console.log('[RoomShell Notification Debug] Current toasts in stack:', next.map(t => t.toastId));
+      return next;
+    });
     window.setTimeout(() => {
+      console.log('[RoomShell Notification Debug] Auto-removing toast:', toast.toastId);
       setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
     }, 5200);
   }, []);
@@ -1481,10 +1487,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         ? { ...activity, type: 'mention' as const, title: `${activity.userName ?? 'Someone'} mentioned you` }
         : activity;
 
-      // Show toast if: chat is not visible, OR we're in fullscreen (chat is hidden behind PDF), OR it's a non-chat event
-      const isFullscreen = Boolean(document.fullscreenElement);
-      const shouldPushToast = !isChatVisibleRef.current || isFullscreen || nextActivity.type !== 'chat:message';
-      console.log('[RoomShell Notification Debug] Same-room activity. ID:', activity.id, 'isChatVisibleRef:', isChatVisibleRef.current, 'isFullscreen:', isFullscreen, 'activityType:', nextActivity.type, 'shouldPushToast:', shouldPushToast);
+      // Activity-type-aware suppression logic
+      const isMessage = nextActivity.type === 'chat:message';
+      const isMentionActivity = nextActivity.type === 'mention';
+      const isSystemActivity = nextActivity.type === 'pdf:added' || nextActivity.type === 'presence:join';
+
+      let shouldPushToast = false;
+      if (isMentionActivity) {
+        shouldPushToast = true; // Mentions are high priority
+      } else if (isMessage || isSystemActivity) {
+        shouldPushToast = !isChatVisibleRef.current; // Suppress when chat is open/visible
+      }
+
+      console.log('[RoomShell Notification Debug] Same-room activity. ID:', activity.id, 'isChatVisibleRef:', isChatVisibleRef.current, 'activityType:', nextActivity.type, 'shouldPushToast:', shouldPushToast);
       if (shouldPushToast) {
         console.log('[RoomShell Notification Debug] Pushing in-app toast for same-room activity.');
         pushToast(nextActivity);
@@ -2697,6 +2712,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                        width={undefined} 
                        onResizeMouseDown={handleChatResizeMouseDown}
                        forceVisible={true}
+                        portalTargetId={isFullscreenChat ? 'fullscreen' : 'sidebar'}
                      />
                    </div>
                  ) : (
@@ -2706,6 +2722,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                      width={chatWidth} 
                      onResizeMouseDown={handleChatResizeMouseDown}
                      forceVisible={false}
+                      portalTargetId={isFullscreenChat ? 'fullscreen' : 'sidebar'}
                    />
                  )}
                </div>
@@ -2753,7 +2770,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             />
           )}
           <div className={`fixed inset-y-0 right-0 w-full max-w-[90%] md:max-w-[400px] bg-room-surface/96 backdrop-blur-3xl border-l border-room-border/50 z-[70] shadow-2xl transition-transform duration-300 transform ${mobileChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-            <ChatSidebar roomId={roomId} onClose={() => setMobileChatOpen(false)} />
+            <ChatSidebar roomId={roomId} onClose={() => setMobileChatOpen(false)} portalTargetId="mobile" />
           </div>
         </>
       )}
@@ -2769,8 +2786,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </MobileBottomSheet>
       )}
 
-      {fullscreenHost && typeof document !== 'undefined' && document.body.contains(fullscreenHost)
-        ? createPortal(toastStack, fullscreenHost)
+      {typeof document !== 'undefined' && document.fullscreenElement
+        ? createPortal(toastStack, document.fullscreenElement)
         : toastStack}
 
       {(pendingDeletePdf || pendingDeleteFolderId) && (

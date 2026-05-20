@@ -21,9 +21,10 @@ interface ChatSidebarProps {
   /** Desktop only: mousedown handler for right-edge resize handle */
   onResizeMouseDown?: (e: React.MouseEvent) => void;
   forceVisible?: boolean;
+  portalTargetId?: string;
 }
 
-export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown, forceVisible }: ChatSidebarProps) {
+export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown, forceVisible, portalTargetId }: ChatSidebarProps) {
   const { chatSidebarCollapsed } = useUIStore();
   const isMobile = useIsMobile();
 
@@ -42,7 +43,7 @@ export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown, forceVi
 
       {/* Chat — always mounted, never unmounted */}
       <div className="flex-1 min-h-0">
-        <Chat roomId={roomId} onClose={onClose} />
+        <Chat roomId={roomId} onClose={onClose} portalTargetId={portalTargetId} />
       </div>
 
       {/* Drag-to-resize handle on right edge (desktop only) */}
