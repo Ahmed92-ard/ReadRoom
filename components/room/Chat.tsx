@@ -1118,7 +1118,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
             </button>
           )}
         </div>,
-        document.body
+        document.fullscreenElement || document.body
       )}
 
       {(replyTo || editing || attachment) && (
@@ -1270,7 +1270,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
             </div>
           </div>
         </div>,
-        document.body
+        document.fullscreenElement || document.body
       )}
     </div>
   );

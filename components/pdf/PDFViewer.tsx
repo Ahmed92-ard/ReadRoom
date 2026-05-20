@@ -547,6 +547,9 @@ export function PDFViewer({
           </button>
         </div>
       )}
+
+      {/* Portal target for fullscreen overlays (prevents React DOM reconciliation crashes) */}
+      <div className="readroom-fullscreen-portal absolute inset-0 z-[100] pointer-events-none" />
     </div>
   );
 }

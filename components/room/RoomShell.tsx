@@ -385,6 +385,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const rightSidebarContainerRef = useRef<HTMLDivElement>(null);
   const followTarget = usePDFStore((s) => s.followTarget);
+  const hasRestoredViewers = useRef(false);
 
   const [channelPDFs, setChannelPDFs] = useState<ChannelPDF[]>([]);
   const [rootPdfs, setRootPdfs] = useState<ChannelPDF[]>([]);
@@ -595,7 +596,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     const updateFullscreenHost = () => {
       const doc = document as any;
       const el = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement || null;
-      setFullscreenHost(el);
+      if (el) {
+        const portalRoot = el.querySelector('.readroom-fullscreen-portal');
+        setFullscreenHost(portalRoot || el);
+      } else {
+        setFullscreenHost(null);
+      }
     };
     updateFullscreenHost();
     document.addEventListener('fullscreenchange', updateFullscreenHost);
@@ -1115,7 +1121,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
   // ── Viewer session persistence: write whenever viewers/paneOrder change ───
   useEffect(() => {
-    if (!viewersStorageKey) return;
+    if (!viewersStorageKey || !hasRestoredViewers.current) return;
     if (viewerPersistTimer.current) clearTimeout(viewerPersistTimer.current);
     viewerPersistTimer.current = setTimeout(() => {
       try {
@@ -1180,6 +1186,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           setRoom(buildRoomState(null));
           // Close any stale viewers that don't belong to this (empty) room
           setOpenViewers([]);
+          hasRestoredViewers.current = true;
           setIsTransitioning(false);
           return;
         }
@@ -1246,6 +1253,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           } catch { /* non-critical — viewer restore failure is silent */ }
         }
 
+        hasRestoredViewers.current = true;
         setIsTransitioning(false);
       } catch (err) {
         if (myToken === transitionTokenRef.current) {
