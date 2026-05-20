@@ -239,6 +239,13 @@ const ResizablePaneWrapper = React.memo(({
   onDrop: () => void;
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    console.log('[ResizablePaneWrapper] Pane mounted', { paneKey });
+    return () => {
+      console.log('[ResizablePaneWrapper] Pane UNMOUNTED', { paneKey });
+    };
+  }, [paneKey]);
   
   const handleResizeStart = (e: React.MouseEvent, dir: 'r' | 'b' | 'br') => {
     e.preventDefault();
@@ -631,6 +638,28 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, []);
 
   useEffect(() => {
+    const handleToggle = () => {
+      setFullscreenChatOpen(prev => !prev);
+    };
+    const handleOpen = () => {
+      setFullscreenChatOpen(true);
+    };
+    const handleClose = () => {
+      setFullscreenChatOpen(false);
+    };
+
+    window.addEventListener('toggle-fullscreen-chat', handleToggle);
+    window.addEventListener('open-fullscreen-chat', handleOpen);
+    window.addEventListener('close-fullscreen-chat', handleClose);
+
+    return () => {
+      window.removeEventListener('toggle-fullscreen-chat', handleToggle);
+      window.removeEventListener('open-fullscreen-chat', handleOpen);
+      window.removeEventListener('close-fullscreen-chat', handleClose);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       // Avoid closing on mouse down during resize or drag operations
       if (isResizingRef.current || isChatResizingRef.current) return;
@@ -645,6 +674,11 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       
       // If clicking header or toggle buttons, let their click handlers handle it
       if (target.closest('header') || target.closest('button')) {
+        return;
+      }
+
+      // If clicking inside the fullscreen portal (chat overlay, calling overlay, etc.), do not close sidebars
+      if (target.closest('.readroom-fullscreen-portal')) {
         return;
       }
 
@@ -2458,6 +2492,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
              Fades out once isTransitioning becomes false. */}
         {isTransitioning && (
           <div
+            key="room-transition-overlay"
             aria-hidden
             className="absolute inset-0 z-[45] flex items-center justify-center
                        bg-room-bg/60 backdrop-blur-[2px] pointer-events-none
@@ -2470,7 +2505,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           </div>
         )}
 
-        <div className="flex-1 min-h-0 relative">
+        <div key="workspace-grid-container" className="flex-1 min-h-0 relative">
           {room?.pdf || openViewers.length > 0 ? (() => {
             const totalViewers = (room?.pdf ? 1 : 0) + openViewers.length;
             const allPanes: { key: string; element: React.ReactNode }[] = [];
@@ -2479,7 +2514,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
               allPanes.push({
                 key: 'main-workspace',
                 element: (
-                  <section className="min-h-0 h-full flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
+                  <section key="main-workspace-section" className="min-h-0 h-full flex flex-col overflow-hidden rounded-lg border border-room-border bg-room-bg">
                     <div className="flex-none flex items-center justify-between gap-3 px-3 py-2 border-b border-room-border bg-room-surface">
                       <div className="min-w-0">
                         <p className="truncate text-xs font-semibold text-room-text">{room.pdf.filename}</p>
@@ -2499,7 +2534,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                       </button>
                     </div>
                     <div className="flex-1 min-h-0">
-                      <PDFViewer pdf={room.pdf} accessToken={null} onRetry={() => {}} externalContainerRef={mainContainerRef} roomId={roomId} />
+                      <PDFViewer key="main-workspace-pdfviewer" pdf={room.pdf} accessToken={null} onRetry={() => {}} externalContainerRef={mainContainerRef} roomId={roomId} />
                     </div>
                   </section>
                 )
@@ -2511,6 +2546,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 key: viewer.key,
                 element: (
                   <SecondaryViewerSection
+                    key={`secondary-viewer-${viewer.key}`}
                     viewer={viewer}
                     onClose={() => setOpenViewers((prev) => prev.filter((item) => item.key !== viewer.key))}
                     onStateChange={updateOpenViewerState}

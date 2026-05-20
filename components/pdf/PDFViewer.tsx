@@ -182,6 +182,13 @@ export function PDFViewer({
   }, []);
 
   useEffect(() => {
+    console.log('[PDFViewer] Component mounted', { filename: pdf?.filename, pdfId: pdf?.fileId });
+    return () => {
+      console.log('[PDFViewer] Component UNMOUNTED', { filename: pdf?.filename, pdfId: pdf?.fileId });
+    };
+  }, []);
+
+  useEffect(() => {
     const handler = () => {
       try {
         const doc = document as any;
