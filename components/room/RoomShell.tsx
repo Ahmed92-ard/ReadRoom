@@ -434,6 +434,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const [moveTargetFolderId, setMoveTargetFolderId] = useState<string | null>(null);
   const [movingPdfId, setMovingPdfId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastActivity[]>([]);
+  useEffect(() => {
+    console.log('[RoomShell Notification Debug] toasts state changed. Current queue length:', toasts.length, 'IDs:', toasts.map(t => t.toastId));
+  }, [toasts]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [leftView, setLeftView] = useState<'nav' | 'shelf'>('nav');
   const [mobileSheetExpanded, setMobileSheetExpanded] = useState(false);
@@ -1444,20 +1447,24 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     };
 
     const handleActivity = (activity: RoomActivity) => {
+      console.log('[RoomShell Notification Debug] handleActivity invoked. Activity ID:', activity?.id, 'Type:', activity?.type, 'Room ID:', activity?.roomId);
       if (!activity?.id) return;
-      if (processedNotificationIdsRef.current.has(activity.id)) {
+      
+      const hasProcessed = processedNotificationIdsRef.current.has(activity.id);
+      console.log('[RoomShell Notification Debug] Deduplication check for ID:', activity.id, 'Already processed:', hasProcessed);
+      if (hasProcessed) {
         console.log('[RoomShell Notification Debug] Same-room deduplication skip. Activity ID already processed:', activity.id);
         return;
       }
 
       const isSameRoom = activity.roomId === roomId;
       const activityUserBaseId = activity.userId?.split('_')[0];
+      console.log('[RoomShell Notification Debug] Same-room check. isSameRoom:', isSameRoom, 'activity.roomId:', activity.roomId, 'roomId:', roomId, 'activityUserBaseId:', activityUserBaseId, 'initialUserId:', initialUserId);
 
       // ── Cross-room messages: desktop notification if hidden, in-app toast if focused ──
       if (!isSameRoom && activity.type === 'chat:message') {
-        if (activityUserBaseId === initialUserId) return;
-        if (processedNotificationIdsRef.current.has(activity.id)) {
-          console.log('[RoomShell Notification Debug] Cross-room deduplication skip. ID:', activity.id);
+        if (activityUserBaseId === initialUserId) {
+          console.log('[RoomShell Notification Debug] Cross-room message from self. Skipping.');
           return;
         }
         processedNotificationIdsRef.current.add(activity.id);
@@ -1473,12 +1480,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       }
 
       // ── Same-room activities ──────────────────────────────────────────────
-      if (!isSameRoom) return;
+      if (!isSameRoom) {
+        console.log('[RoomShell Notification Debug] Not same room and not cross-room message. Skipping.');
+        return;
+      }
 
       processedNotificationIdsRef.current.add(activity.id);
+      console.log('[RoomShell Notification Debug] Added to processedNotificationIdsRef:', activity.id);
 
       // Skip own activities
-      if (activityUserBaseId === initialUserId) return;
+      if (activityUserBaseId === initialUserId) {
+        console.log('[RoomShell Notification Debug] Same-room activity is from self. Skipping.');
+        return;
+      }
 
       // Handle mention logic
       const body = activity.body ?? '';
@@ -2315,9 +2329,16 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     </div>
   );
 
+  const isFullscreenActive = typeof document !== 'undefined' && !!document.fullscreenElement;
+  console.log('[RoomShell Notification Debug] Evaluating toastStack JSX. Active toasts count:', toasts.length, 'isFullscreenActive:', isFullscreenActive);
+
   const toastStack = (
-    <div className="pointer-events-none fixed right-4 top-20 z-[2147483647] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2">
+    <div 
+      className={`pointer-events-none ${isFullscreenActive ? 'absolute' : 'fixed'} right-4 top-20 z-[2147483647] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2`}
+      data-testid="toast-stack"
+    >
       {toasts.map((toast) => {
+        console.log('[RoomShell Notification Debug] Rendering individual toast JSX in stack:', toast.toastId, 'title:', toast.title);
         const toastRoomName = typeof toast.metadata?.roomName === 'string'
           ? toast.metadata.roomName
           : room?.name;
@@ -2328,6 +2349,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             key={toast.toastId}
             type="button"
             onClick={() => {
+              console.log('[RoomShell Notification Debug] Toast button clicked:', toast.toastId);
               setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
               
               if (document.fullscreenElement || fullscreenHost) {
@@ -2786,9 +2808,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </MobileBottomSheet>
       )}
 
-      {typeof document !== 'undefined' && document.fullscreenElement
-        ? createPortal(toastStack, document.fullscreenElement)
-        : toastStack}
+      {typeof document !== 'undefined'
+        ? createPortal(toastStack, document.fullscreenElement || document.body)
+        : null}
 
       {(pendingDeletePdf || pendingDeleteFolderId) && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

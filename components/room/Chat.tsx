@@ -463,6 +463,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
   }, [updateMessages]);
 
   useEffect(() => {
+    if (isRelocatingRef.current) return;
     if (isAtBottom) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       setUnreadCount(0);
@@ -564,32 +565,53 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
       const wasAtBottom = isAtBottomRef.current;
       const targetScrollTop = lastScrollTopRef.current;
 
-      // Double-RAF to let the browser re-mount the portal first and calculate heights
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const container = scrollRef.current;
-          if (!container) {
-            isRelocatingRef.current = false;
-            return;
-          }
+      let lastHeight = el.scrollHeight;
+      let stableFrames = 0;
+      let checkCount = 0;
 
+      const checkStabilization = () => {
+        const container = scrollRef.current;
+        if (!container) {
+          isRelocatingRef.current = false;
+          return;
+        }
+
+        const currentHeight = container.scrollHeight;
+        console.log('[Chat Scroll Debug] Stabilization check. currentHeight:', currentHeight, 'lastHeight:', lastHeight, 'stableFrames:', stableFrames);
+
+        if (currentHeight === lastHeight && currentHeight > 0) {
+          stableFrames++;
+        } else {
+          stableFrames = 0;
+          lastHeight = currentHeight;
+        }
+
+        checkCount++;
+        // Wait until height has been identical for 3 consecutive frames, or fallback to a safety limit (60 frames ~ 1 second)
+        if (stableFrames >= 3 || checkCount > 60) {
+          console.log('[Chat Scroll Debug] scrollHeight stabilized at:', currentHeight, 'after checkCount:', checkCount);
+          
           if (wasAtBottom) {
             console.log('[Chat Scroll Debug] Restoring scroll to bottom.');
-            bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+            container.scrollTop = container.scrollHeight;
             setIsAtBottom(true);
           } else {
-            console.log('[Chat Scroll Debug] Restoring scroll to scrollTop:', targetScrollTop);
+            console.log('[Chat Scroll Debug] Restoring scroll to targetScrollTop:', targetScrollTop);
             container.scrollTop = targetScrollTop;
             setIsAtBottom(false);
           }
 
-          // Small timeout to let trailing scroll events settle
+          // Keep isRelocatingRef active for another 100ms to absorb any trailing layout/rendering scroll events
           setTimeout(() => {
             isRelocatingRef.current = false;
-            console.log('[Chat Scroll Debug] Relocation complete. container.scrollTop:', container.scrollTop);
+            console.log('[Chat Scroll Debug] Relocation complete. Final container.scrollTop:', container.scrollTop);
           }, 100);
-        });
-      });
+        } else {
+          requestAnimationFrame(checkStabilization);
+        }
+      };
+
+      requestAnimationFrame(checkStabilization);
     }
   }, [portalTargetId]);
 
