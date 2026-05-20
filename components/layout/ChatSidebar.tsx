@@ -20,15 +20,16 @@ interface ChatSidebarProps {
   width?: number;
   /** Desktop only: mousedown handler for right-edge resize handle */
   onResizeMouseDown?: (e: React.MouseEvent) => void;
+  forceVisible?: boolean;
 }
 
-export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown }: ChatSidebarProps) {
+export function ChatSidebar({ roomId, onClose, width, onResizeMouseDown, forceVisible }: ChatSidebarProps) {
   const { chatSidebarCollapsed } = useUIStore();
   const isMobile = useIsMobile();
 
   // On desktop: hide via CSS when collapsed so Chat stays mounted.
   // On mobile: the parent controls visibility via a slide-in drawer; always render.
-  const hidden = !isMobile && chatSidebarCollapsed;
+  const hidden = !isMobile && chatSidebarCollapsed && !forceVisible;
 
   return (
     <div

@@ -2624,16 +2624,33 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                      onMouseDown={handleChatResizeMouseDown}
                    />
                  )}
-                 <ChatSidebar roomId={roomId} onClose={toggleChatSidebar} width={chatWidth} onResizeMouseDown={handleChatResizeMouseDown} />
+                 <ChatSidebar 
+                    roomId={roomId} 
+                    onClose={toggleChatSidebar} 
+                    width={chatWidth} 
+                    onResizeMouseDown={handleChatResizeMouseDown}
+                    forceVisible={isFullscreenChat}
+                  />
                </div>
              );
 
              const chatTarget = (isFullscreenChat && fullscreenPortalNode) 
                                 ? fullscreenPortalNode 
                                 : rightSidebarContainerRef.current;
-             
-             if (!chatTarget) return null;
-             return createPortal(chatSidebarContent, chatTarget);
+                          if (typeof window !== 'undefined') {
+                console.log('[FullscreenChatDebug]', {
+                  fullscreenElement: document.fullscreenElement,
+                  fullscreenHost,
+                  fullscreenPortalNode,
+                  resolvedPortalTarget: chatTarget ? (chatTarget.className || chatTarget.nodeName) : null,
+                  chatSidebarCollapsed,
+                  fullscreenChatOpen,
+                  renderedSuccessfully: !!chatTarget
+                });
+              }
+
+              if (!chatTarget) return null;
+              return createPortal(chatSidebarContent, chatTarget);
           })()}
 
           {/* Aux Sidebar (People/Notes) Overlay */}
