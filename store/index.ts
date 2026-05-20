@@ -190,7 +190,7 @@ export const useUIStore = create<UIStore>((set) => ({
   librarySidebarCollapsed: true,
   channelSidebarCollapsed: true,
   chatSidebarCollapsed: false,
-  activePanel: 'presence',
+  activePanel: 'shelf',
   theme: 'dark',
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),

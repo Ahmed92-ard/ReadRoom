@@ -34,6 +34,10 @@ interface FolderTreeProps {
   libraryId?: string;
   channelId?: string;
   onReorderItem?: (type: 'pdf' | 'folder', id: string, newParentId: string | null, newPosition: number) => Promise<void>;
+  /** Set of folder IDs that are currently expanded (from localStorage). Absent = default open. */
+  expandedFolderIds?: Set<string>;
+  /** Called whenever a folder is toggled so the parent can persist the state. */
+  onFolderToggle?: (folderId: string, expanded: boolean) => void;
 }
 
 // ── PDF row ───────────────────────────────────────────────────────────────────
@@ -132,6 +136,8 @@ function FolderNode({
   onRenameFolder,
   onCreateFolder,
   onReorderItem,
+  expandedFolderIds,
+  onFolderToggle,
 }: {
   folder: PDFFolder;
   depth: number;
@@ -146,8 +152,18 @@ function FolderNode({
   onRenameFolder: (id: string, name: string) => Promise<void>;
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
   onReorderItem?: (type: 'pdf' | 'folder', id: string, newParentId: string | null, newPosition: number) => Promise<void>;
+  expandedFolderIds?: Set<string>;
+  onFolderToggle?: (folderId: string, expanded: boolean) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  // Persisted state uses two sentinels stored in the Set:
+  //   "{id}:open"   → was explicitly opened
+  //   "{id}:closed" → was explicitly closed
+  // If neither sentinel is present the folder is unseen → default to open (true).
+  const [expanded, setExpanded] = useState<boolean>(() => {
+    if (!expandedFolderIds) return true;
+    if (expandedFolderIds.has(folder.id + ':closed')) return false;
+    return true; // default open for both explicit :open and unseen folders
+  });
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(folder.name);
   const [creatingChild, setCreatingChild] = useState(false);
@@ -208,7 +224,11 @@ function FolderNode({
           hasActiveChild && !expanded ? 'text-blue-400' : 'text-room-text'
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => {
+          const next = !expanded;
+          setExpanded(next);
+          onFolderToggle?.(folder.id, next);
+        }}
       >
         {/* Expand chevron */}
         <span className="flex-shrink-0 text-room-muted">
@@ -329,6 +349,8 @@ function FolderNode({
               onRenameFolder={onRenameFolder}
               onCreateFolder={onCreateFolder}
               onReorderItem={onReorderItem}
+              expandedFolderIds={expandedFolderIds}
+              onFolderToggle={onFolderToggle}
             />
           ))}
 
@@ -378,6 +400,8 @@ export function FolderTree({
   onRenameFolder,
   onCreateFolder,
   onReorderItem,
+  expandedFolderIds,
+  onFolderToggle,
 }: FolderTreeProps) {
   const [creatingRoot, setCreatingRoot] = useState(false);
   const [rootFolderName, setRootFolderName] = useState('');
@@ -431,6 +455,8 @@ export function FolderTree({
           onRenameFolder={onRenameFolder}
           onCreateFolder={onCreateFolder}
           onReorderItem={onReorderItem}
+          expandedFolderIds={expandedFolderIds}
+          onFolderToggle={onFolderToggle}
         />
       ))}
 

@@ -392,6 +392,28 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const [currentChannelPdfId, setCurrentChannelPdfId] = useState<string | null>(null);
   const [openViewers, setOpenViewers] = useState<OpenViewer[]>([]);
   const [paneOrder, setPaneOrder] = useState<string[]>([]);
+
+  // ── Transition state (stale-while-loading overlay; no blank flash) ──────────
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  // ── Folder expansion persistence ────────────────────────────────────────────
+  // Set uses two sentinels per folder: "{id}:open" and "{id}:closed".
+  // Absent sentinel = unseen folder → defaults to open.
+  // Initialised empty; the folderExpandStorageKey effect below loads room-specific
+  // data once libraryId/channelId are available.
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => new Set<string>());
+
+  // Token incremented on every channel transition; stale async completions compare
+  // against this ref and bail out if a newer transition is already in progress.
+  const transitionTokenRef = useRef<number>(0);
+
+  // Debounce timers — prevent write storms to localStorage
+  const folderExpandPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewerPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Active viewer key — persisted alongside open viewers
+  const [lastActiveViewerKey, setLastActiveViewerKey] = useState<string>('main-workspace');
+
   const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null);
   const [dragOverPaneKey, setDragOverPaneKey] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -873,6 +895,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const selectionStorageKey = libraryId && channelId
     ? `readroom:selected-pdf:${libraryId}:${channelId}:${initialUserId}`
     : null;
+  // ── Session persistence keys (scoped per room + user) ────────────────────
+  const viewersStorageKey = libraryId && channelId
+    ? `readroom:open-viewers:${libraryId}:${channelId}:${initialUserId}`
+    : null;
+  const paneOrderStorageKey = libraryId && channelId
+    ? `readroom:pane-order:${libraryId}:${channelId}:${initialUserId}`
+    : null;
+  const activeViewerStorageKey = libraryId && channelId
+    ? `readroom:active-viewer:${libraryId}:${channelId}:${initialUserId}`
+    : null;
+  const folderExpandStorageKey = libraryId && channelId
+    ? `readroom:folder-expanded:${libraryId}:${channelId}`
+    : null;
   const [fullscreenHost, setFullscreenHost] = useState<Element | null>(null);
 
   const buildRoomState = useCallback(
@@ -1047,23 +1082,84 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     });
   }, [libraryId, roomId, room?.name, initialRoom?.name, updateSelf]);
 
+  // ── Folder expansion state: re-read from storage when room changes ────────
+  useEffect(() => {
+    if (!folderExpandStorageKey) return;
+    try {
+      const raw = localStorage.getItem(folderExpandStorageKey);
+      setExpandedFolderIds(raw ? new Set<string>(JSON.parse(raw)) : new Set<string>());
+    } catch {
+      setExpandedFolderIds(new Set<string>());
+    }
+  // Only re-run when the room context changes (key derivation).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderExpandStorageKey]);
+
+  /** Stable callback passed to <FolderTree>. Debounces localStorage writes. */
+  const handleFolderToggle = useCallback((folderId: string, expanded: boolean) => {
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      // Remove both sentinels then write the new one
+      next.delete(folderId + ':open');
+      next.delete(folderId + ':closed');
+      next.add(folderId + (expanded ? ':open' : ':closed'));
+      // Debounce the write so rapid clicks don't thrash storage
+      if (folderExpandPersistTimer.current) clearTimeout(folderExpandPersistTimer.current);
+      folderExpandPersistTimer.current = setTimeout(() => {
+        if (!folderExpandStorageKey) return;
+        try { localStorage.setItem(folderExpandStorageKey, JSON.stringify(Array.from(next))); } catch {}
+      }, 400);
+      return next;
+    });
+  }, [folderExpandStorageKey]);
+
+  // ── Viewer session persistence: write whenever viewers/paneOrder change ───
+  useEffect(() => {
+    if (!viewersStorageKey) return;
+    if (viewerPersistTimer.current) clearTimeout(viewerPersistTimer.current);
+    viewerPersistTimer.current = setTimeout(() => {
+      try {
+        // Only persist lightweight identifiers — NOT full pdf meta or viewer state
+        const lightViewers = openViewers.map((v) => ({ pdfId: v.pdfId, key: v.key, title: v.title }));
+        localStorage.setItem(viewersStorageKey, JSON.stringify(lightViewers));
+      } catch {}
+    }, 400);
+    return () => { if (viewerPersistTimer.current) clearTimeout(viewerPersistTimer.current); };
+  }, [openViewers, viewersStorageKey]);
+
+  useEffect(() => {
+    if (!paneOrderStorageKey) return;
+    try { localStorage.setItem(paneOrderStorageKey, JSON.stringify(paneOrder)); } catch {}
+  }, [paneOrder, paneOrderStorageKey]);
+
+  useEffect(() => {
+    if (!activeViewerStorageKey) return;
+    try { localStorage.setItem(activeViewerStorageKey, lastActiveViewerKey); } catch {}
+  }, [lastActiveViewerKey, activeViewerStorageKey]);
+
   useEffect(() => {
     if (!libraryId || !channelId) {
       setChannelPDFs([]);
       setRootPdfs([]);
       setFolderTree([]);
-      setCurrentChannelPdfId(null);
+      // Do NOT clear currentChannelPdfId or openViewers here:
+      // keep stale content visible while transitioning (no blank flash).
+      setIsTransitioning(false);
       return;
     }
 
-    let cancelled = false;
+    // ── Transition token: incremented on every new channel; stale completions bail ──
+    const myToken = ++transitionTokenRef.current;
+    setIsTransitioning(true);
 
     // Fetch folder tree (includes all PDFs organized by folder)
     const loadTree = async () => {
       try {
         const res = await fetch(`/api/libraries/${libraryId}/channels/${channelId}/folders`);
         const data = await res.json().catch(() => ({}));
-        if (cancelled) return;
+
+        // Bail if a newer transition started while this fetch was in-flight
+        if (myToken !== transitionTokenRef.current) return;
 
         const rp = ((data.rootPdfs ?? []) as any[]).map(normalizeChannelPDF);
         const ft = data.folders ?? [];
@@ -1082,6 +1178,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         if (!desiredPdf) {
           setCurrentChannelPdfId(null);
           setRoom(buildRoomState(null));
+          // Close any stale viewers that don't belong to this (empty) room
+          setOpenViewers([]);
+          setIsTransitioning(false);
           return;
         }
 
@@ -1095,17 +1194,71 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           setRoom(buildRoomState(desiredMeta));
         }
         publishActivePdf(desiredPdf.id, desiredPdf.filename);
+
+        // ── Close any viewers from the previous room that don't exist here ──────
+        // This prevents cross-room PDF leakage without wiping state prematurely.
+        const allPdfIds = new Set(allPdfs.map((p) => p.id));
+        setOpenViewers((prev) => prev.filter((v) => allPdfIds.has(v.pdfId)));
+
+        // ── Restore secondary viewers from session storage ────────────────────
+        // Stagger via requestIdleCallback to avoid PDF.js initialization spikes.
+        if (viewersStorageKey && myToken === transitionTokenRef.current) {
+          try {
+            const rawViewers = localStorage.getItem(viewersStorageKey);
+            const storedViewers: Array<{ pdfId: string; key: string; title: string }> =
+              rawViewers ? JSON.parse(rawViewers) : [];
+
+            // Only restore viewers whose pdfId exists in this room's PDF registry
+            const validViewers = storedViewers.filter(
+              (sv) => allPdfIds.has(sv.pdfId) && sv.key !== 'main-workspace'
+            );
+
+            // Restore pane order first (cheap, synchronous)
+            if (paneOrderStorageKey) {
+              try {
+                const rawOrder = localStorage.getItem(paneOrderStorageKey);
+                if (rawOrder) setPaneOrder(JSON.parse(rawOrder));
+              } catch {}
+            }
+
+            // Restore active viewer key
+            if (activeViewerStorageKey) {
+              try {
+                const stored = localStorage.getItem(activeViewerStorageKey);
+                if (stored) setLastActiveViewerKey(stored);
+              } catch {}
+            }
+
+            // Stagger viewer reopening: one per idle callback to avoid layout thrashing
+            validViewers.forEach((sv, idx) => {
+              const schedule = typeof requestIdleCallback !== 'undefined'
+                ? (cb: () => void) => requestIdleCallback(cb, { timeout: 2000 + idx * 500 })
+                : (cb: () => void) => setTimeout(cb, 300 + idx * 200);
+
+              schedule(() => {
+                // Final guard: bail if another transition has started
+                if (myToken !== transitionTokenRef.current) return;
+                const sourcePdf = allPdfs.find((p) => p.id === sv.pdfId);
+                if (!sourcePdf) return;
+                openPdfViewer(sourcePdf, { title: sv.title });
+              });
+            });
+          } catch { /* non-critical — viewer restore failure is silent */ }
+        }
+
+        setIsTransitioning(false);
       } catch (err) {
-        if (!cancelled) {
+        if (myToken === transitionTokenRef.current) {
           console.error('[RoomShell] failed to fetch folder tree', err);
           setPdfLibraryError(err instanceof Error ? err.message : String(err));
+          setIsTransitioning(false);
         }
       }
     };
 
     loadTree();
-    return () => { cancelled = true; };
-  }, [libraryId, channelId, buildRoomState, channelPdfToMeta, normalizeChannelPDF, publishActivePdf, selectionStorageKey, setRoom]);
+    // No cleanup cancel flag needed — transitionTokenRef handles ordering.
+  }, [libraryId, channelId, buildRoomState, channelPdfToMeta, normalizeChannelPDF, publishActivePdf, selectionStorageKey, setRoom, viewersStorageKey, paneOrderStorageKey, activeViewerStorageKey, openPdfViewer]);
 
   // Find which PDF pane is currently at index 0 after sorting according to paneOrder
   const topPane = useMemo(() => {
@@ -1938,6 +2091,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 libraryId={libraryId}
                 channelId={channelId}
                 onReorderItem={handleReorderItem}
+                expandedFolderIds={expandedFolderIds}
+                onFolderToggle={handleFolderToggle}
               />
             </div>
           </div>
@@ -2275,6 +2430,24 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       )}
 {/* Main area - Persistent Fullscreen Canvas */}
       <main className="absolute inset-0 flex flex-col min-w-0 h-full z-0">
+
+        {/* ── Room transition overlay ─────────────────────────────────────────
+             Shown while loadTree is in-flight on channel switch.
+             Sits above existing PDF content so it stays visible (no blank flash).
+             Fades out once isTransitioning becomes false. */}
+        {isTransitioning && (
+          <div
+            aria-hidden
+            className="absolute inset-0 z-[45] flex items-center justify-center
+                       bg-room-bg/60 backdrop-blur-[2px] pointer-events-none
+                       animate-in fade-in duration-150"
+          >
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-6 h-6 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+              <span className="text-xs text-room-muted select-none">Switching room…</span>
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 min-h-0 relative">
           {room?.pdf || openViewers.length > 0 ? (() => {

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { usePDFStore } from '@/store/pdfStore';
-import { useRoomStore } from '@/store/roomStore';
+
 import { useAuth } from '@/lib/hooks/useAuth';
 import { RoomShell } from '@/components/room/RoomShell';
 
@@ -18,7 +18,6 @@ export default function ChannelPage() {
 
   const { channels, loadingChannels, error, setActiveChannel, setActiveLibrary } = useWorkspaceStore();
   const [startupTimedOut, setStartupTimedOut] = useState(false);
-  const clearRoom = useRoomStore((s) => s.clearRoom);
   const setFollowMode = usePDFStore((s) => s.setFollowMode);
 
   useEffect(() => {
@@ -26,10 +25,12 @@ export default function ChannelPage() {
   }, [libraryId, setActiveLibrary]);
 
   useEffect(() => {
-    clearRoom();
+    // Do NOT call clearRoom() here — nulling room causes RoomShell to flash blank.
+    // RoomShell's loadTree effect overwrites stale state atomically once the new
+    // channel's PDF tree resolves (stale-while-transitioning pattern).
     setFollowMode(false);
     setActiveChannel(channelId);
-  }, [channelId, setActiveChannel, clearRoom, setFollowMode]);
+  }, [channelId, setActiveChannel, setFollowMode]);
 
   useEffect(() => {
     if (!authLoading && !user) router.replace('/auth');
