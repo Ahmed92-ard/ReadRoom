@@ -164,6 +164,9 @@ export function Chat({ roomId, onClose }: ChatProps) {
   const isAtBottomRef = useRef(isAtBottom);
   const selfRef = useRef(self);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  // Unique per-instance ID so two <Chat roomId={x} /> components never share the same
+  // Supabase channel object. Supabase SDK throws if .on() is called after .subscribe().
+  const channelInstanceId = useRef(Math.random().toString(36).slice(2));
 
   const messagesEndpoint = canUseAdvancedApi
     ? `/api/libraries/${libraryId}/channels/${channelId}/messages`
@@ -354,7 +357,7 @@ export function Chat({ roomId, onClose }: ChatProps) {
     };
 
     const channel = supabase
-      .channel(`chat-messages:${roomId}`)
+      .channel(`chat-messages:${roomId}:${channelInstanceId.current}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${roomId}` },
