@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   LiveKitRoom, 
   useTracks, 
@@ -86,6 +87,38 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [isMinimized, dimensions]);
+
+  // Dynamic Fullscreen Portal Targeting
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const updateTarget = () => {
+      if (typeof document !== 'undefined') {
+        const doc = document as any;
+        const fsEl = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement;
+        
+        if (fsEl) {
+          const specificTarget = fsEl.querySelector('.readroom-fullscreen-portal');
+          setPortalTarget(specificTarget || fsEl);
+        } else {
+          setPortalTarget(document.body);
+        }
+      }
+    };
+    updateTarget();
+    
+    document.addEventListener('fullscreenchange', updateTarget);
+    document.addEventListener('webkitfullscreenchange', updateTarget);
+    document.addEventListener('mozfullscreenchange', updateTarget);
+    document.addEventListener('MSFullscreenChange', updateTarget);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', updateTarget);
+      document.removeEventListener('webkitfullscreenchange', updateTarget);
+      document.removeEventListener('mozfullscreenchange', updateTarget);
+      document.removeEventListener('MSFullscreenChange', updateTarget);
+    };
+  }, []);
 
   // Listen to the chat-header "Join Call" trigger event
   useEffect(() => {
@@ -287,7 +320,8 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
 
   // Render Setup Configuration Helper
   if (isConfigError) {
-    return (
+    if (!portalTarget) return null;
+    return createPortal(
       <div 
         style={{ left: position.x, top: position.y }}
         className="absolute z-[999] w-[320px] rounded-2xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl pointer-events-auto transition-all text-slate-100"
@@ -315,12 +349,13 @@ LIVEKIT_API_SECRET=your-api-secret`}
         <p className="text-[10px] text-slate-400 mt-3 text-center">
           Get free Cloud sandbox keys from <a href="https://livekit.io" target="_blank" rel="noreferrer" className="text-indigo-400 underline">livekit.io</a>.
         </p>
-      </div>
+      </div>,
+      portalTarget
     );
   }
 
   // Render Connected Call UI using LiveKit Room context
-  if (isConnected && token && url) {
+  if (isConnected && token && url && portalTarget) {
     return (
       <LiveKitRoom
         token={token}
@@ -331,22 +366,25 @@ LIVEKIT_API_SECRET=your-api-secret`}
         onDisconnected={handleDisconnected}
         connectOptions={{ autoSubscribe: true }}
       >
-        <div 
-          style={{ left: position.x, top: position.y }}
-          className="absolute z-[999] pointer-events-auto transition-transform"
-        >
-          <InnerCallWidget 
-            isMinimized={isMinimized}
-            setIsMinimized={setIsMinimized}
-            handleDragStart={handleDragStart}
-            handleDisconnect={handleDisconnected}
-            userId={userId}
-            userName={userName}
-            dimensions={dimensions}
-            handleResizeStart={handleResizeStart}
-            handleResizeTouchStart={handleResizeTouchStart}
-          />
-        </div>
+        {createPortal(
+          <div 
+            style={{ left: position.x, top: position.y }}
+            className="absolute z-[999] pointer-events-auto transition-transform"
+          >
+            <InnerCallWidget 
+              isMinimized={isMinimized}
+              setIsMinimized={setIsMinimized}
+              handleDragStart={handleDragStart}
+              handleDisconnect={handleDisconnected}
+              userId={userId}
+              userName={userName}
+              dimensions={dimensions}
+              handleResizeStart={handleResizeStart}
+              handleResizeTouchStart={handleResizeTouchStart}
+            />
+          </div>,
+          portalTarget
+        )}
         <RoomAudioRenderer />
       </LiveKitRoom>
     );
