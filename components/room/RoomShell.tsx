@@ -822,8 +822,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [notificationStorageKey]);
 
   useEffect(() => {
-    if (isChatVisible) clearUnread();
-  }, [clearUnread, isChatVisible]);
+    if (libraryChatOpen) clearUnread();
+  }, [clearUnread, libraryChatOpen]);
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
