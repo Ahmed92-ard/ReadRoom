@@ -30,8 +30,10 @@ export async function GET(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Add server_id alias for frontend compat
-  const normalized = (channels ?? []).map((c) => ({ ...c, server_id: c.library_id }));
+  // Add server_id alias for frontend compat; exclude hidden library chat rooms
+  const normalized = (channels ?? [])
+    .filter((c) => !c.is_library_chat)
+    .map((c) => ({ ...c, server_id: c.library_id }));
   return NextResponse.json({ channels: normalized });
 }
 

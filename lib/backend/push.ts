@@ -165,19 +165,27 @@ export function sendPushToRoomParticipants(
 
       if (recipientIds.length === 0) return;
 
-      // 3. For each recipient, check focus state in Redis and dispatch if applicable
+      // 3. For each recipient, check focus state in Redis and dispatch if applicable.
+      //    Key written by usePresence → /api/presence/focus (90s TTL, 30s heartbeat).
       await Promise.all(
         recipientIds.map(async (userId) => {
-          // Check Redis active presence
-          const presenceRaw = await redis.get(`presence:${roomId}:${userId}`);
+          // Check Redis active presence (keyed per-user, not per-room)
+          const presenceRaw = await redis.get(`presence:user:${userId}`);
           if (presenceRaw) {
             try {
-              const presence = typeof presenceRaw === 'string' ? JSON.parse(presenceRaw) : presenceRaw;
-              
-              // Safeguard focus state: if user is online in the room and is actively focused,
-              // do NOT trigger duplicate push notification alerts.
-              if (presence && presence.isFocused === true && !isCallNotification) {
-                return; 
+              const presence = typeof presenceRaw === 'string'
+                ? JSON.parse(presenceRaw as string)
+                : (presenceRaw as Record<string, unknown>);
+
+              // Suppress only when the user is focused AND viewing the same library.
+              // If they are focused elsewhere, deliver the push.
+              if (
+                presence &&
+                presence.isFocused === true &&
+                presence.activeLibraryId === libraryId &&
+                !isCallNotification
+              ) {
+                return;
               }
             } catch (jsonErr) {
               console.warn('[PushService] Error parsing presence data:', jsonErr);

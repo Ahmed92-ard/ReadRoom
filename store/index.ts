@@ -165,7 +165,6 @@ interface UIStore {
   sidebarOpen: boolean;
   librarySidebarCollapsed: boolean;
   channelSidebarCollapsed: boolean;
-  chatSidebarCollapsed: boolean;
   activePanel: ActivePanel;
   theme: 'dark' | 'light';
   settingsOpen: boolean;
@@ -174,7 +173,6 @@ interface UIStore {
   toggleSidebar: () => void;
   toggleLibrarySidebar: () => void;
   toggleChannelSidebar: () => void;
-  toggleChatSidebar: () => void;
   setActivePanel: (panel: ActivePanel) => void;
   setTheme: (theme: 'dark' | 'light') => void;
   toggleTheme: () => void;
@@ -189,14 +187,12 @@ export const useUIStore = create<UIStore>((set) => ({
   sidebarOpen: true,
   librarySidebarCollapsed: true,
   channelSidebarCollapsed: true,
-  chatSidebarCollapsed: false,
   activePanel: 'shelf',
   theme: 'dark',
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   toggleLibrarySidebar: () => set((s) => ({ librarySidebarCollapsed: !s.librarySidebarCollapsed })),
   toggleChannelSidebar: () => set((s) => ({ channelSidebarCollapsed: !s.channelSidebarCollapsed })),
-  toggleChatSidebar: () => set((s) => ({ chatSidebarCollapsed: !s.chatSidebarCollapsed })),
   setActivePanel: (activePanel) => set({ activePanel }),
   setTheme: (theme) => { applyThemeToDOM(theme); set({ theme }); },
   toggleTheme: () => set((s) => {

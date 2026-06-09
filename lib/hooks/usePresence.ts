@@ -329,8 +329,18 @@ export function usePresence(
     }
   }, [roomId, libraryId, roomName, updateSelf]);
 
-  // ── Focus & Visibility change → isFocused & isActive ───────────────────────
+  // ── Focus & Visibility change → isFocused & isActive + Redis heartbeat ─────
   useEffect(() => {
+    // Fire-and-forget Redis write so push.ts can suppress notifications
+    // for users who are actively focused on this library.
+    const syncRedis = (isFocused: boolean) => {
+      fetch('/api/presence/focus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, libraryId, isFocused }),
+      }).catch(() => {}); // never block the UI
+    };
+
     const handle = () => {
       const self = usePresenceStore.getState().self;
       if (!self) return;
@@ -343,22 +353,33 @@ export function usePresence(
         currentRoomName: roomNameRef.current,
         isActive,
         isFocused,
-        lastSeen
+        lastSeen,
       };
       updateSelf(patch);
       if (channelRef.current) {
         channelRef.current.track(presenceOnly({ ...self, ...patch }));
       }
+      syncRedis(isFocused);
     };
 
     document.addEventListener('visibilitychange', handle);
     window.addEventListener('focus', handle);
     window.addEventListener('blur', handle);
 
+    // 30-second heartbeat — refreshes the 90s Redis TTL while focused.
+    const heartbeat = setInterval(() => {
+      const isActive = document.visibilityState === 'visible';
+      const isFocused = isActive && document.hasFocus();
+      if (isFocused) syncRedis(true);
+    }, 30_000);
+
     return () => {
       document.removeEventListener('visibilitychange', handle);
       window.removeEventListener('focus', handle);
       window.removeEventListener('blur', handle);
+      clearInterval(heartbeat);
+      // Mark as unfocused on cleanup so push is delivered to this user after navigation.
+      syncRedis(false);
     };
   }, [roomId, libraryId, updateSelf]);
 

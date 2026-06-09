@@ -18,7 +18,7 @@ import { GooglePicker } from '@/components/drive/GooglePicker';
 import { FolderTree } from '@/components/room/FolderTree';
 import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
-import { ChatSidebar } from '@/components/layout/ChatSidebar';
+import { LibraryChatDrawer } from '@/components/library/LibraryChatDrawer';
 import { SettingsOverlay } from '@/components/room/SettingsOverlay';
 import { CallOverlay } from '@/components/room/CallOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
@@ -352,10 +352,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const { 
     sidebarOpen, setSidebarOpen, activePanel, setActivePanel,
     librarySidebarCollapsed, channelSidebarCollapsed, toggleLibrarySidebar, toggleChannelSidebar,
-    chatSidebarCollapsed, toggleChatSidebar,
     toggleNavigation,
     settingsOpen, setSettingsOpen,
   leftSidebarWidth, setLeftSidebarWidth} = useUIStore();
+  const [libraryChatOpen, setLibraryChatOpen] = useState(false);
 
   const params = useParams();
   const libraryId = params?.libraryId as string | undefined;
@@ -440,18 +440,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const [unreadCount, setUnreadCount] = useState(0);
   const [leftView, setLeftView] = useState<'nav' | 'shelf'>('nav');
   const [mobileSheetExpanded, setMobileSheetExpanded] = useState(false);
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [isEditingRoomName, setIsEditingRoomName] = useState(false);
   const [roomNameDraft, setRoomNameDraft] = useState('');
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   const isMobile = useIsMobile();
   const mainContainerRef = useRef<HTMLDivElement>(null);
-
-  // Fullscreen Chat State
-  const [fullscreenChatOpen, setFullscreenChatOpen] = useState(false);
-  const [fullscreenHost, setFullscreenHost] = useState<HTMLElement | null>(null);
-  const [fullscreenPortalNode, setFullscreenPortalNode] = useState<HTMLElement | null>(null);
 
   // ── Resizable right sidebar ─────────────────────────────────────────────────
   const SIDEBAR_MIN = 200;
@@ -592,9 +586,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const activeTabs = isMobile ? mobileTabs : desktopTabs;
   const notificationStorageKey = `readroom:notification-state:${roomId}:${initialUserId}`;
   const isFullscreen = typeof document !== 'undefined' && !!document.fullscreenElement;
-  const isChatVisible = isMobile
-    ? mobileChatOpen || (mobileSheetExpanded && activePanel === 'chat')
-    : (isFullscreen ? fullscreenChatOpen : !chatSidebarCollapsed) || (sidebarOpen && activePanel === 'chat');
   const processedNotificationIdsRef = useRef<Set<string>>(new Set());
   const processedBrowserNotificationIdsRef = useRef<Set<string>>(new Set());
   const unreadCountRef = useRef(0);
@@ -605,72 +596,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [unreadCount]);
 
   useEffect(() => {
-    isChatVisibleRef.current = isChatVisible;
-    console.log('[RoomShell Notification Debug] Chat visibility evaluated:', {
-      isChatVisible,
-      isMobile,
-      isFullscreen,
-      fullscreenChatOpen,
-      chatSidebarCollapsed,
-      sidebarOpen,
-      activePanel
-    });
-  }, [isChatVisible, isMobile, isFullscreen, fullscreenChatOpen, chatSidebarCollapsed, sidebarOpen, activePanel]);
+    isChatVisibleRef.current = libraryChatOpen;
+  }, [libraryChatOpen]);
 
-  useEffect(() => {
-    const updateFullscreenHost = () => {
-      try {
-        const doc = document as any;
-        const el = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement;
-        
-        if (!el) {
-          setFullscreenHost(null);
-          setFullscreenPortalNode(null);
-        } else {
-          setFullscreenHost(el as HTMLElement);
-          
-          // Hunt for the stable React portal container injected by our fullscreen components (like PDFViewer)
-          const portalRoot = el.querySelector('.readroom-fullscreen-portal');
-          setFullscreenPortalNode((portalRoot as HTMLElement) || (el as HTMLElement));
-        }
-      } catch (err) {
-        console.error('[RoomShell] Error tracking fullscreen host:', err);
-      }
-    };
-    updateFullscreenHost();
-    document.addEventListener('fullscreenchange', updateFullscreenHost);
-    document.addEventListener('webkitfullscreenchange', updateFullscreenHost);
-    document.addEventListener('mozfullscreenchange', updateFullscreenHost);
-    document.addEventListener('MSFullscreenChange', updateFullscreenHost);
-    return () => {
-      document.removeEventListener('fullscreenchange', updateFullscreenHost);
-      document.removeEventListener('webkitfullscreenchange', updateFullscreenHost);
-      document.removeEventListener('mozfullscreenchange', updateFullscreenHost);
-      document.removeEventListener('MSFullscreenChange', updateFullscreenHost);
-    };
-  }, []);
 
-  useEffect(() => {
-    const handleToggle = () => {
-      setFullscreenChatOpen(prev => !prev);
-    };
-    const handleOpen = () => {
-      setFullscreenChatOpen(true);
-    };
-    const handleClose = () => {
-      setFullscreenChatOpen(false);
-    };
-
-    window.addEventListener('toggle-fullscreen-chat', handleToggle);
-    window.addEventListener('open-fullscreen-chat', handleOpen);
-    window.addEventListener('close-fullscreen-chat', handleClose);
-
-    return () => {
-      window.removeEventListener('toggle-fullscreen-chat', handleToggle);
-      window.removeEventListener('open-fullscreen-chat', handleOpen);
-      window.removeEventListener('close-fullscreen-chat', handleClose);
-    };
-  }, []);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -702,9 +631,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
 
       // Check Right Sidebars collapse
       if (rightSidebarContainerRef.current && !rightSidebarContainerRef.current.contains(target)) {
-        if (!chatSidebarCollapsed) {
-          toggleChatSidebar();
-        }
         if (sidebarOpen) {
           setSidebarOpen(false);
         }
@@ -715,7 +641,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
     };
-  }, [librarySidebarCollapsed, chatSidebarCollapsed, sidebarOpen, toggleNavigation, toggleChatSidebar, setSidebarOpen]);
+  }, [librarySidebarCollapsed, sidebarOpen, toggleNavigation, setSidebarOpen]);
 
   const clearUnread = useCallback(() => {
     console.log('[RoomShell Notification Debug] clearUnread() triggered. Resetting unreadCount to 0.');
@@ -2373,28 +2299,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             key={toast.toastId}
             type="button"
             onClick={() => {
-              console.log('[RoomShell Notification Debug] Toast button clicked:', toast.toastId);
               setToasts((prev) => prev.filter((item) => item.toastId !== toast.toastId));
-              
-              if (document.fullscreenElement || fullscreenHost) {
-                window.dispatchEvent(new CustomEvent('open-fullscreen-chat'));
-                if (toast.type === 'chat:message' || toast.type === 'mention') {
-                  clearUnread();
-                }
-                return;
-              }
-
               if (isOtherRoom && libraryId) {
                 router.push(`/libraries/${libraryId}/channels/${toast.roomId}`);
                 return;
               }
               if (toast.type === 'chat:message' || toast.type === 'mention') {
-                if (isMobile) setMobileChatOpen(true);
-                else if (chatSidebarCollapsed) toggleChatSidebar();
+                if (libraryId) setLibraryChatOpen(true);
                 clearUnread();
               }
             }}
-            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface/96 px-4 py-3 text-left shadow-2xl shadow-black/30 backdrop-blur transition hover:bg-room-hover"
+            className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface px-4 py-3 text-left shadow-2xl shadow-black/30 transition hover:bg-room-hover"
           >
             <div className="flex items-start gap-3">
               <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${
@@ -2484,12 +2399,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           {isMobile ? (
             <>
               <button 
-                onClick={() => setMobileChatOpen(!mobileChatOpen)} 
-                className="p-2 rounded-xl text-room-muted hover:text-room-text hover:bg-room-hover relative" 
-                title="Chat"
+                onClick={() => setLibraryChatOpen(!libraryChatOpen)}
+                className={`p-2 rounded-xl transition-all relative ${libraryChatOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
+                title="Library Chat"
               >
                 <MessageSquare size={20} />
-                {unreadCount > 0 && (
+                {unreadCount > 0 && !libraryChatOpen && (
                   <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-room-bg select-none animate-pulse">
                     {unreadCount > 99 ? '99+' : unreadCount}
                   </span>
@@ -2506,12 +2421,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           ) : (
             <>
               <button 
-                onClick={toggleChatSidebar} 
-                className={`p-2 rounded-xl transition-all relative ${!chatSidebarCollapsed ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`} 
-                title="Chat"
+                onClick={() => setLibraryChatOpen(!libraryChatOpen)}
+                className={`p-2 rounded-xl transition-all relative ${libraryChatOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
+                title="Library Chat"
               >
                 <MessageSquare size={20} />
-                {unreadCount > 0 && (
+                {unreadCount > 0 && !libraryChatOpen && (
                   <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-room-bg select-none animate-pulse">
                     {unreadCount > 99 ? '99+' : unreadCount}
                   </span>
@@ -2545,7 +2460,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {/* Unified Left Sidebar Overlay */}
       {!isMobile && !librarySidebarCollapsed && (
         <div className="absolute top-0 left-0 bottom-0 z-[55] flex pointer-events-none transition-all duration-300">
-          <div ref={leftSidebarRef} className="flex h-full bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto border-r border-room-border/50">
+          <div ref={leftSidebarRef} className="flex h-full bg-room-surface shadow-2xl pointer-events-auto border-r border-room-border">
             
             {/* Sidebar Content */}
             <div className="flex flex-col bg-transparent border-l border-room-border/30" style={{ width: leftSidebarWidth }}>
@@ -2721,81 +2636,9 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {!isMobile && (
         <div ref={rightSidebarContainerRef} className="absolute top-0 right-0 bottom-0 z-[55] flex flex-row-reverse pointer-events-none">
           
-          {/* Always-Portaled Chat Sidebar Overlay */}
-          {(() => {
-             const isFullscreenChat = fullscreenHost !== null;
-             const chatSidebarContent = (
-               <div 
-                 className={
-                   isFullscreenChat && fullscreenChatOpen
-                     ? "absolute bottom-24 right-16 z-50 w-[420px] h-[600px] max-w-[calc(100vw-32px)] max-h-[calc(100vh-120px)] rounded-2xl border border-room-border/60 bg-room-surface/96 backdrop-blur-3xl shadow-2xl pointer-events-auto flex flex-col overflow-hidden transition-all duration-300 transform scale-100 origin-bottom-right"
-                     : `flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50 ${chatSidebarCollapsed && !isFullscreenChat ? 'hidden' : ''} ${isFullscreenChat && !fullscreenChatOpen ? 'hidden' : ''}`
-                 }
-                 style={!isFullscreenChat ? { width: chatWidth } : undefined}
-               >
-                 {isFullscreenChat && fullscreenChatOpen && (
-                   <div className="flex-none flex items-center justify-between px-3 py-2 border-b border-room-border bg-black/10 dark:bg-black/25">
-                     <span className="text-xs font-semibold text-room-text">Room Chat (Fullscreen)</span>
-                     <button 
-                       onClick={() => setFullscreenChatOpen(false)}
-                       className="p-1 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover"
-                     >
-                       <X size={16} />
-                     </button>
-                   </div>
-                 )}
-                 {!isFullscreenChat && (
-                   <div 
-                     className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
-                     onMouseDown={handleChatResizeMouseDown}
-                   />
-                 )}
-                 {isFullscreenChat ? (
-                   <div className="flex-1 min-h-0 w-full flex flex-col">
-                     <ChatSidebar 
-                       roomId={roomId} 
-                       onClose={toggleChatSidebar} 
-                       width={undefined} 
-                       onResizeMouseDown={handleChatResizeMouseDown}
-                       forceVisible={true}
-                        portalTargetId={isFullscreenChat ? 'fullscreen' : 'sidebar'}
-                     />
-                   </div>
-                 ) : (
-                   <ChatSidebar 
-                     roomId={roomId} 
-                     onClose={toggleChatSidebar} 
-                     width={chatWidth} 
-                     onResizeMouseDown={handleChatResizeMouseDown}
-                     forceVisible={false}
-                      portalTargetId={isFullscreenChat ? 'fullscreen' : 'sidebar'}
-                   />
-                 )}
-               </div>
-             );
-
-             const chatTarget = (isFullscreenChat && fullscreenPortalNode) 
-                                ? fullscreenPortalNode 
-                                : rightSidebarContainerRef.current;
-                          if (typeof window !== 'undefined') {
-                console.log('[FullscreenChatDebug]', {
-                  fullscreenElement: document.fullscreenElement,
-                  fullscreenHost,
-                  fullscreenPortalNode,
-                  resolvedPortalTarget: chatTarget ? (chatTarget.className || chatTarget.nodeName) : null,
-                  chatSidebarCollapsed,
-                  fullscreenChatOpen,
-                  renderedSuccessfully: !!chatTarget
-                });
-              }
-
-              if (!chatTarget) return null;
-              return createPortal(chatSidebarContent, chatTarget);
-          })()}
-
           {/* Aux Sidebar (People/Notes) Overlay */}
           {sidebarOpen && (activePanel === 'presence' || activePanel === 'notes') && (
-             <div className="flex h-full relative pointer-events-auto shadow-2xl backdrop-blur-3xl bg-room-surface/96 border-l border-room-border/50" style={{ width: sidebarWidth }}>
+             <div className="flex h-full relative pointer-events-auto shadow-2xl bg-room-surface border-l border-room-border" style={{ width: sidebarWidth }}>
                 <div 
                   className="absolute left-0 top-0 bottom-0 w-2 -translate-x-1 cursor-col-resize hover:bg-blue-500/20 active:bg-blue-500/40 z-50 transition-colors"
                   onMouseDown={handleResizeMouseDown}
@@ -2806,19 +2649,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
       )}
       </div>
-{/* Mobile Chat Drawer */}
-      {isMobile && (
-        <>
-          {mobileChatOpen && (
-            <div 
-              className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[60] animate-in fade-in"
-              onClick={() => setMobileChatOpen(false)}
-            />
-          )}
-          <div className={`fixed inset-y-0 right-0 w-full max-w-[90%] md:max-w-[400px] bg-room-surface/96 backdrop-blur-3xl border-l border-room-border/50 z-[70] shadow-2xl transition-transform duration-300 transform ${mobileChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-            <ChatSidebar roomId={roomId} onClose={() => setMobileChatOpen(false)} portalTargetId="mobile" />
-          </div>
-        </>
+
+      {/* Library Chat Drawer — fixed overlay, works on all screen sizes */}
+      {libraryId && (
+        <LibraryChatDrawer
+          libraryId={libraryId}
+          open={libraryChatOpen}
+          onClose={() => setLibraryChatOpen(false)}
+          onUnreadChange={setUnreadCount}
+        />
       )}
 
       {/* Mobile Sheet Backdrop & Container handled via MobileBottomSheet component */}

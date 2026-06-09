@@ -99,7 +99,7 @@ export function SettingsOverlay() {
   return (
     <div className="fixed inset-0 z-[80] flex flex-col bg-room-bg overflow-y-auto">
       {/* Header */}
-      <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg/90 backdrop-blur-md z-10 flex-shrink-0">
+      <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg z-10 flex-shrink-0">
         <button
           onClick={close}
           className="p-2 hover:bg-room-hover rounded-full transition-colors text-room-muted hover:text-room-text"

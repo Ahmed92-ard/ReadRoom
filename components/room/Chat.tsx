@@ -33,6 +33,8 @@ interface ChatProps {
   roomId: string;
   onClose?: () => void;
   portalTargetId?: string;
+  /** Called whenever unread message count changes. Used to badge the FAB. */
+  onUnreadChange?: (count: number) => void;
 }
 
 interface FloatingMenu {
@@ -107,7 +109,7 @@ function positionMenu(anchor: DOMRect | { left: number; right: number; top: numb
   return { top, left, placement: openAbove ? 'above' : 'below', align: alignRight ? 'right' : 'left' };
 }
 
-export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
+export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
   const presenceProfiles = usePresenceStore(
     (s) => Array.from(s.users.values()).map(u => ({
@@ -184,6 +186,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
 
   useEffect(() => { isAtBottomRef.current = isAtBottom; }, [isAtBottom]);
   useEffect(() => { selfRef.current = self; }, [self]);
+  useEffect(() => { onUnreadChange?.(unreadCount); }, [unreadCount, onUnreadChange]);
 
   const updateMessages = useCallback((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
     setMessages((prev) => {

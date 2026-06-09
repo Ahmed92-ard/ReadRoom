@@ -356,7 +356,7 @@ export function PDFViewer({
   return (
     <div ref={viewerRef} className="relative flex flex-col h-full bg-room-bg overflow-hidden">
       {/* Toolbar */}
-      <div className="flex-none flex items-center justify-between px-2 md:px-4 py-1.5 md:py-2 border-b border-room-border bg-room-surface/80 backdrop-blur-sm z-10">
+      <div className="flex-none flex items-center justify-between px-2 md:px-4 py-1.5 md:py-2 border-b border-room-border bg-room-surface z-10">
         {/* Page navigation */}
         <div className="flex items-center gap-1 md:gap-2">
           <button
