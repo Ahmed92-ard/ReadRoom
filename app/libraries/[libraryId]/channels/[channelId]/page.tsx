@@ -8,6 +8,7 @@ import { usePDFStore } from '@/store/pdfStore';
 
 import { useAuth } from '@/lib/hooks/useAuth';
 import dynamic from 'next/dynamic';
+import { AppNavigation } from '@/components/layout/AppNavigation';
 
 const RoomShell = dynamic(() => import('@/components/room/RoomShell').then((mod) => mod.RoomShell), {
   ssr: false,
@@ -84,16 +85,18 @@ export default function ChannelPage() {
     : null;
 
   return (
-    <div className="h-[100dvh] bg-room-bg overflow-hidden">
-      {initialRoom ? (
-        <RoomShell
-          roomId={channelId}
-          initialUserId={user.id}
-          initialUserName={userName}
-          initialRoom={initialRoom}
-        />
-      ) : startupTimedOut || error ? (
-        <div className="flex h-full items-center justify-center px-6">
+    <div className="flex h-[100dvh] bg-room-bg overflow-hidden">
+      <AppNavigation />
+      <div className="min-w-0 flex-1">
+        {initialRoom ? (
+          <RoomShell
+            roomId={channelId}
+            initialUserId={user.id}
+            initialUserName={userName}
+            initialRoom={initialRoom}
+          />
+        ) : startupTimedOut || error ? (
+          <div className="flex h-full items-center justify-center px-6 pb-16 md:pb-0">
           <div className="max-w-sm text-center">
             <h2 className="text-lg font-semibold text-room-text">Room could not finish loading</h2>
             <p className="mt-2 text-sm text-room-muted">
@@ -117,17 +120,18 @@ export default function ChannelPage() {
               </button>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex h-full items-center justify-center">
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center pb-16 md:pb-0">
           <div className="text-center">
             <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
             <p className="mt-3 text-xs text-room-muted">
               {loadingChannels ? 'Loading room…' : 'Preparing room…'}
             </p>
           </div>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

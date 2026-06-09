@@ -6,7 +6,6 @@ import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Maximize2, Minimize2, Rotat
 import { useShallow } from 'zustand/react/shallow';
 import { usePDFStore } from '@/store/pdfStore';
 import { VirtualizedPages } from './VirtualizedPages';
-import { Chat } from '@/components/room/Chat';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { PDFMeta } from '@/types';
 
@@ -55,7 +54,6 @@ export function PDFViewer({
   externalContainerRef,
   roomId
 }: PDFViewerProps) {
-  const [fullscreenChatOpen, setFullscreenChatOpen] = useState(false);
   const store = usePDFStore(
     useShallow((s) => ({
       page: s.page,
@@ -368,7 +366,7 @@ export function PDFViewer({
             <ChevronLeft size={18} />
           </button>
 
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-room-bg/50 rounded-lg border border-room-border">
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-room-bg rounded-lg border border-room-border">
             <input
               type="text"
               value={loadState === 'ready' ? inputPage : '—'}

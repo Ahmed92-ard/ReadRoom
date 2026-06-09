@@ -139,7 +139,7 @@ export function SettingsOverlay() {
                     </div>
                     <button
                       onClick={() => setShowUploadAvatar(true)}
-                      className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                      className="absolute inset-0 rounded-full bg-black/70 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
                       title="Change avatar"
                     >
                       <User size={20} className="text-white" />

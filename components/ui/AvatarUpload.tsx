@@ -71,7 +71,7 @@ export function AvatarUpload({ currentUrl, currentColor, currentInitials, onUplo
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70">
       <div className="relative w-full max-w-sm mx-4 rounded-2xl bg-room-surface border border-room-border shadow-2xl p-6">
         {/* Close */}
         <button

@@ -770,7 +770,7 @@ export function GlobalChat() {
     }
     const Icon = attachmentIcon(kind);
     return (
-      <a href={url ?? '#'} target={url ? '_blank' : undefined} rel={url ? 'noopener noreferrer' : undefined} className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg/70 px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
+      <a href={url ?? '#'} target={url ? '_blank' : undefined} rel={url ? 'noopener noreferrer' : undefined} className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
         <Icon size={16} className="text-blue-300" />
         <span className="min-w-0 flex-1 truncate">{name}</span>
         {url && <Download size={16} className="text-room-muted" />}
@@ -812,7 +812,7 @@ export function GlobalChat() {
       )}
 
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-3 bg-room-bg/30">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-3 py-3 bg-room-bg">
         {!search && messages.length > 0 && hasOlder && (
           <button onClick={loadOlder} disabled={loadingOlder} className="mx-auto mb-3 block rounded-full border border-room-border px-3 py-1 text-xs text-room-muted hover:text-room-text disabled:opacity-50">
             {loadingOlder ? 'Loading…' : 'Load older'}
@@ -900,7 +900,7 @@ export function GlobalChat() {
                         : 'border-room-border/85 bg-room-surface text-room-text hover:bg-room-hover transition-all duration-200'
                     }`}>
                       {msg.replyTo && (
-                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-black/30 dark:bg-black/50 px-2 py-1 text-left">
+                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-room-bg px-2 py-1 text-left">
                           <span className="block truncate text-[10px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
                           <span className="line-clamp-2 text-[11px] text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
                         </button>
@@ -1057,7 +1057,7 @@ export function GlobalChat() {
             className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent py-2.5 text-sm text-room-text outline-none placeholder:text-room-muted"
             style={{ overflowY: 'auto' }}
           />
-          <button onClick={send} onMouseDown={(e) => e.preventDefault()} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
+          <button type="button" onClick={send} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
             {uploading ? <SmilePlus size={18} className="animate-pulse" /> : <Send size={18} />}
           </button>
         </div>
@@ -1065,7 +1065,7 @@ export function GlobalChat() {
 
       {/* Dialogs */}
       {clearConfirmOpen && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
           <div className="w-full max-w-sm rounded-xl border border-room-border bg-room-surface p-4 shadow-2xl">
             <h3 className="text-sm font-semibold text-room-text">Clear chat for me?</h3>
             <p className="mt-2 text-xs leading-relaxed text-room-muted">
@@ -1080,7 +1080,7 @@ export function GlobalChat() {
       )}
 
       {activeInfoMessage && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
           <div className="flex max-h-[82%] w-full max-w-md flex-col rounded-xl border border-room-border bg-room-surface shadow-2xl">
             <div className="flex items-center gap-2 border-b border-room-border px-4 py-3">
               <h3 className="flex-1 text-sm font-semibold text-room-text">Message info</h3>
@@ -1130,7 +1130,7 @@ export function GlobalChat() {
 
       {mediaOpen && typeof document !== 'undefined' && createPortal(
         <div 
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 px-4 animate-in fade-in duration-200"
           onClick={() => setMediaOpen(false)}
         >
           <div 

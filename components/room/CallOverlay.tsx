@@ -324,7 +324,7 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
     return createPortal(
       <div 
         style={{ left: position.x, top: position.y }}
-        className="absolute z-[999] w-[320px] rounded-2xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl pointer-events-auto transition-all text-slate-100"
+        className="absolute z-[999] w-[320px] rounded-2xl border border-room-border bg-room-surface p-4 shadow-2xl pointer-events-auto transition-all text-room-text"
       >
         <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
           <div className="flex items-center gap-2 text-indigo-400 font-semibold text-sm">
@@ -485,7 +485,7 @@ function InnerCallWidget({
   // MINIMIZED MODE: Sleek Capsule/Pill Layout
   if (isMinimized) {
     return (
-      <div className="flex h-12 w-[190px] items-center justify-between rounded-full border border-slate-700/60 bg-slate-900/90 pl-3 pr-2 shadow-2xl backdrop-blur-xl">
+      <div className="flex h-12 w-[190px] items-center justify-between rounded-full border border-room-border bg-room-surface pl-3 pr-2 shadow-2xl">
         {/* Drag handler area */}
         <div 
           onMouseDown={(e) => handleDragStart(e.clientX, e.clientY)}
@@ -573,7 +573,7 @@ function InnerCallWidget({
   return (
     <div 
       style={!isMinimized && dimensions ? { width: dimensions.width, height: dimensions.height } : undefined}
-      className="w-[280px] rounded-2xl border border-slate-700/60 bg-slate-900/90 p-4 shadow-2xl backdrop-blur-xl text-slate-100 flex flex-col gap-3.5 relative overflow-hidden h-full"
+      className="w-[280px] rounded-2xl border border-room-border bg-room-surface p-4 shadow-2xl text-room-text flex flex-col gap-3.5 relative overflow-hidden h-full"
     >
       
       {/* Draggable grip and header */}
@@ -649,12 +649,12 @@ function InnerCallWidget({
 
                 {/* Muted Mic Indicator Overlay */}
                 {!focusedParticipant.isMicrophoneEnabled && (
-                  <div className="absolute bottom-2 right-2 bg-rose-500/90 text-white p-1.5 rounded-md shadow-md backdrop-blur-sm border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
+                  <div className="absolute bottom-2 right-2 bg-rose-600 text-white p-1.5 rounded-md shadow-md border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
                     <MicOff size={12} className="w-3 h-3" />
                   </div>
                 )}
 
-                <div className="absolute bottom-2 left-2 bg-slate-900/80 px-2 py-0.5 rounded-md text-[10px] text-slate-100 border border-slate-800 font-medium">
+                <div className="absolute bottom-2 left-2 bg-room-surface px-2 py-0.5 rounded-md text-[10px] text-room-text border border-room-border font-medium">
                   {focusedParticipant.identity === localParticipant?.identity ? `${focusedParticipant.name || userName} (You)` : focusedParticipant.name || 'Reader'}
                 </div>
 
@@ -664,7 +664,7 @@ function InnerCallWidget({
                     e.stopPropagation();
                     setFocusedParticipantIdentity(null);
                   }}
-                  className="absolute top-2 right-2 rounded-full p-1 bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-slate-100 border border-slate-700 transition-colors pointer-events-auto shadow-md"
+                  className="absolute top-2 right-2 rounded-full p-1 bg-room-surface hover:bg-room-hover text-room-muted hover:text-room-text border border-room-border transition-colors pointer-events-auto shadow-md"
                   title="Exit focused view"
                 >
                   <Minimize2 size={13} />
@@ -731,7 +731,7 @@ function InnerCallWidget({
                           </div>
                         )}
 
-                        <div className="absolute bottom-0.5 left-1 bg-slate-900/70 px-1 py-0.2 rounded text-[7px] text-slate-300 truncate max-w-[90%] pointer-events-none">
+                        <div className="absolute bottom-0.5 left-1 bg-room-surface px-1 py-0.2 rounded text-[7px] text-room-muted truncate max-w-[90%] pointer-events-none">
                           {p.identity === localParticipant?.identity ? 'You' : p.name || 'Reader'}
                         </div>
                       </div>
@@ -810,12 +810,12 @@ function InnerCallWidget({
 
                         {/* Muted Mic Indicator Overlay */}
                         {isMuted && (
-                          <div className="absolute bottom-1.5 right-1.5 bg-rose-500/90 text-white p-1 rounded-md shadow-md backdrop-blur-sm border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
+                          <div className="absolute bottom-1.5 right-1.5 bg-rose-600 text-white p-1 rounded-md shadow-md border border-rose-600/30 flex items-center justify-center z-20 pointer-events-none" title="Microphone muted">
                             <MicOff size={10} className="w-2.5 h-2.5" />
                           </div>
                         )}
 
-                        <div className="absolute bottom-1 left-1.5 bg-slate-900/80 px-1.5 py-0.5 rounded text-[9px] text-slate-200 truncate max-w-[85%] border border-slate-800/60 pointer-events-none">
+                        <div className="absolute bottom-1 left-1.5 bg-room-surface px-1.5 py-0.5 rounded text-[9px] text-room-text truncate max-w-[85%] border border-room-border pointer-events-none">
                           {p.identity === localParticipant?.identity ? `${p.name || userName} (You)` : p.name || 'Reader'}
                         </div>
                       </div>

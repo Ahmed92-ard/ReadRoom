@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter, useParams, usePathname } from 'next/navigation';
-import { Plus, Trash2, Pencil, AlertCircle, MessageSquare } from 'lucide-react';
+import { useRouter, useParams } from 'next/navigation';
+import { Plus, Trash2, Pencil, AlertCircle } from 'lucide-react';
 import { useWorkspaceStore, type LibraryData } from '@/store/workspaceStore';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useUIStore } from '@/store/uiStore';
@@ -99,7 +99,7 @@ function LibraryIcon({
       {/* Rename modal */}
       {showRenameModal && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70"
           onClick={(e) => { e.stopPropagation(); setShowRenameModal(false); }}
         >
           <div className="bg-room-surface border border-room-border rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -123,7 +123,7 @@ function LibraryIcon({
       {/* Delete confirm */}
       {showDeleteConfirm && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70"
           onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(false); }}
         >
           <div className="bg-room-surface border border-room-border rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -209,7 +209,7 @@ function CreateJoinModal({ mode, onClose, onSwitchMode, onCreated }: CreateJoinM
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={onClose}
     >
       <div
@@ -303,7 +303,6 @@ export function LibrarySidebar({
 }) {
   const router = useRouter();
   const params = useParams();
-  const pathname = usePathname();
   const activeLibraryId = params?.libraryId as string | undefined;
   const { libraries, fetchLibraries, setActiveLibrary, updateLibrary } = useWorkspaceStore();
   const { librarySidebarCollapsed } = useUIStore();
@@ -353,23 +352,8 @@ export function LibrarySidebar({
           </button>
         </div>
         <div className="p-2 flex flex-col gap-1.5">
-          <button
-            onClick={() => { router.push('/chat'); if (onClose) onClose(); }}
-            className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all w-full ${
-              pathname === '/chat'
-                ? 'bg-blue-500 border-blue-400 text-white'
-                : 'bg-room-surface border-transparent text-room-muted hover:bg-room-hover hover:text-room-text'
-            }`}
-          >
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${pathname === '/chat' ? 'bg-white/20' : 'bg-blue-500/10 text-blue-400'}`}>
-              <MessageSquare size={16} />
-            </div>
-            <span className="text-sm font-semibold truncate flex-1">Global Chat</span>
-          </button>
-          <div className="h-px bg-room-border my-1" />
-
           {libraries.map((library) => {
-            const active = library.id === activeLibraryId && pathname !== '/chat';
+            const active = library.id === activeLibraryId;
             const initials = library.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
             return (
               <div
@@ -444,24 +428,11 @@ export function LibrarySidebar({
         }`}
       >
         <div className="flex flex-col items-center gap-2 flex-1 w-full px-2">
-          <button
-            onClick={() => router.push('/chat')}
-            title="Global Chat"
-            className={`w-10 h-10 rounded-2xl transition-all duration-200 flex items-center justify-center shadow-md cursor-pointer flex-shrink-0 ${
-              pathname === '/chat'
-                ? 'bg-blue-500 text-white font-bold'
-                : 'bg-room-surface text-room-muted hover:rounded-xl hover:bg-blue-500 hover:text-white'
-            }`}
-          >
-            <MessageSquare size={20} />
-          </button>
-          <div className="w-8 h-px bg-room-border flex-shrink-0 my-1" />
-
           {libraries.map((library) => (
             <LibraryIcon
               key={library.id}
               library={library}
-              active={library.id === activeLibraryId && pathname !== '/chat'}
+              active={library.id === activeLibraryId}
               onClick={() => handleSelectLibrary(library)}
             />
           ))}

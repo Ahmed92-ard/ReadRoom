@@ -7,6 +7,8 @@ import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { BookOpen, Plus, Link, Loader2, AlertCircle } from 'lucide-react';
 import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
+import { AppNavigation } from '@/components/layout/AppNavigation';
+import { LibraryChatLauncher } from '@/components/chat/GlobalChatOverlay';
 
 export default function LibrariesPage() {
   const router = useRouter();
@@ -74,9 +76,10 @@ export default function LibrariesPage() {
 
   return (
     <div className="flex h-screen bg-room-bg overflow-hidden">
+      <AppNavigation />
       <LibrarySidebar />
 
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex items-center justify-center p-6 pb-20 md:pb-6">
         {loadingLibraries ? (
           <Loader2 size={32} className="animate-spin text-room-muted" />
         ) : libraries.length === 0 ? (
@@ -123,7 +126,7 @@ export default function LibrariesPage() {
       {/* Create modal */}
       {showCreate && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
           onClick={() => setShowCreate(false)}
         >
           <div
@@ -166,7 +169,7 @@ export default function LibrariesPage() {
       {/* Join modal */}
       {showJoin && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
           onClick={() => setShowJoin(false)}
         >
           <div
@@ -205,6 +208,7 @@ export default function LibrariesPage() {
           </div>
         </div>
       )}
+      <LibraryChatLauncher hidden={showCreate || showJoin} />
     </div>
   );
 }

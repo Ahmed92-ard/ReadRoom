@@ -20,6 +20,7 @@ import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { SettingsOverlay } from '@/components/room/SettingsOverlay';
 import { CallOverlay } from '@/components/room/CallOverlay';
+import { LibraryChatLauncher } from '@/components/chat/GlobalChatOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
 import { usePresence } from '@/lib/hooks/usePresence';
 
@@ -141,7 +142,7 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
       {/* Backdrop */}
       {expanded && (
         <div 
-          className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-30 animate-in fade-in"
+          className="fixed inset-0 bg-black/70 z-30 animate-in fade-in"
           onClick={() => setExpanded(false)}
         />
       )}
@@ -150,7 +151,7 @@ function MobileBottomSheet({ children, expanded, setExpanded, fullHeight }: Bott
         ref={sheetRef}
         className={`
           absolute bottom-0 left-0 right-0 z-40
-          bg-room-surface/96 backdrop-blur-3xl border-t border-room-border/50
+          bg-room-surface border-t border-room-border
           rounded-t-2xl shadow-2xl
           transition-[height] duration-300 ease-out
           ${expanded ? (fullHeight ? 'h-[100dvh] rounded-none' : 'h-[75dvh]') : 'h-0 overflow-hidden'}
@@ -2287,7 +2288,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       {settingsOpen && <SettingsOverlay />}
 
       {/* Persistent Workspace Topbar */}
-      <header className="flex-none flex items-center justify-between h-14 px-4 border-b border-room-border bg-room-surface/96 backdrop-blur-3xl z-[60]">
+      <header className="flex-none flex items-center justify-between h-14 px-4 border-b border-room-border bg-room-surface z-[60]">
         
         {/* Left Nav */}
         <div className="flex items-center gap-1">
@@ -2366,6 +2367,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         </div>
       </header>
 
+      <LibraryChatLauncher hidden={settingsOpen || showPicker || Boolean(pendingDeletePdf || pendingDeleteFolderId || movingPdf)} />
+
       {/* Main Workspace Area (Constrained below Topbar) */}
       <div className="flex-1 relative min-h-0 w-full overflow-hidden">
 
@@ -2412,7 +2415,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             key="room-transition-overlay"
             aria-hidden
             className="absolute inset-0 z-[45] flex items-center justify-center
-                       bg-room-bg/60 backdrop-blur-[2px] pointer-events-none
+                       bg-room-bg pointer-events-none
                        animate-in fade-in duration-150"
           >
             <div className="flex flex-col items-center gap-3">
@@ -2579,7 +2582,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         : null}
 
       {(pendingDeletePdf || pendingDeleteFolderId) && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-sm rounded-2xl border border-room-border bg-room-surface p-5 shadow-2xl">
             <h2 className="text-base font-semibold text-room-text">
               {pendingDeletePdf ? 'Delete PDF?' : 'Delete folder?'}
@@ -2615,7 +2618,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       )}
 
       {movingPdf && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-sm rounded-2xl border border-room-border bg-room-surface p-5 shadow-2xl">
             <h2 className="text-base font-semibold text-room-text">Move PDF</h2>
             <p className="mt-1 truncate text-sm text-room-muted">{movingPdf.filename}</p>

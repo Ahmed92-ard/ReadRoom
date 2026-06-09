@@ -42,7 +42,7 @@ function isLowEndDevice(): boolean {
 function PagePlaceholder({ width, height }: { width: number; height: number }) {
   return (
     <div
-      className="mx-auto bg-room-surface/50 rounded-sm"
+      className="mx-auto bg-room-surface rounded-sm"
       style={{ width, height }}
       aria-hidden="true"
     />

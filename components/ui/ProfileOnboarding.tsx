@@ -89,7 +89,7 @@ export function ProfileOnboarding() {
 
   return (
     <>
-      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 p-4">
         <div className="w-full max-w-md rounded-2xl border border-room-border bg-room-surface shadow-2xl">
           <div className="px-6 pt-6 pb-4 border-b border-room-border">
             <div className="flex items-center gap-3">
@@ -117,7 +117,7 @@ export function ProfileOnboarding() {
                 ) : (
                   <span className="text-lg font-bold text-white">{initials}</span>
                 )}
-                <span className="absolute inset-x-0 bottom-0 flex h-6 items-center justify-center bg-black/50 text-white">
+                <span className="absolute inset-x-0 bottom-0 flex h-6 items-center justify-center bg-black/70 text-white">
                   <Camera size={13} />
                 </span>
               </button>

@@ -1,8 +1,8 @@
 // app/chat/page.tsx
 'use client';
 
-import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { GlobalChat } from '@/components/chat/GlobalChat';
+import { AppNavigation } from '@/components/layout/AppNavigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
@@ -28,8 +28,8 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-full bg-room-bg overflow-hidden">
-      <LibrarySidebar />
-      <div className="flex-1 flex flex-col min-w-0 bg-room-bg">
+      <AppNavigation />
+      <div className="flex-1 flex flex-col min-w-0 bg-room-bg pb-16 md:pb-0">
         <GlobalChat />
       </div>
     </div>

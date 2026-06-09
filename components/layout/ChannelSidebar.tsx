@@ -118,7 +118,7 @@ function ChannelRow({ channel, active, onClick }: { channel: ChannelData; active
       </button>
 
       {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowDeleteConfirm(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowDeleteConfirm(false)}>
           <div className="bg-room-surface border border-room-border rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold text-red-400 mb-2">Delete Channel</h2>
             <p className="text-sm text-room-muted mb-5">
@@ -324,7 +324,7 @@ export function ChannelSidebar({ inBottomSheet = false, onClose }: { inBottomShe
 
       {/* Add channel modal */}
       {showAddChannel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowAddChannel(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowAddChannel(false)}>
           <div className="bg-room-surface border border-room-border rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold text-room-text mb-1">Add a Room</h2>
             <p className="text-sm text-room-muted mb-5">Rooms are for books, topics, or anything else.</p>

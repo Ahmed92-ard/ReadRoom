@@ -946,7 +946,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
     }
     const Icon = attachmentIcon(kind);
     return (
-      <a href={url ?? '#'} target={url ? '_blank' : undefined} rel={url ? 'noopener noreferrer' : undefined} className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg/70 px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
+      <a href={url ?? '#'} target={url ? '_blank' : undefined} rel={url ? 'noopener noreferrer' : undefined} className="mt-2 flex items-center gap-2 rounded-lg border border-room-border bg-room-bg px-3 py-2 text-xs text-room-text hover:border-blue-400/50">
         <Icon size={16} className="text-blue-300" />
         <span className="min-w-0 flex-1 truncate">{name}</span>
         {url && <Download size={16} className="text-room-muted" />}
@@ -1033,7 +1033,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
 
           return (
             <React.Fragment key={msg.id}>
-              {showDay && <div className="relative mx-auto my-3 block w-fit rounded-full bg-room-bg/95 border border-room-border/40 px-3 py-1 text-[10px] font-medium text-room-muted shadow-sm">{formatDay(msg.ts)}</div>}
+              {showDay && <div className="relative mx-auto my-3 block w-fit rounded-full bg-room-surface border border-room-border px-3 py-1 text-[10px] font-medium text-room-muted shadow-sm">{formatDay(msg.ts)}</div>}
               {firstUnreadId === msg.id && <div className="my-3 border-t border-blue-400/40 pt-2 text-center text-[10px] font-semibold uppercase tracking-wide text-blue-300">Unread</div>}
               <div
                 id={`chat-msg-${msg.id}`}
@@ -1072,11 +1072,11 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
                   <div className={`relative flex items-start gap-1 w-full ${isSelf ? 'flex-row-reverse' : ''}`}>
                     <div className={`min-w-0 border px-3 py-1 text-sm leading-relaxed shadow-sm ${bubbleRadius} ${
                       isSelf 
-                        ? 'border-blue-500/50 bg-blue-600/30 dark:bg-blue-600/45 text-white hover:bg-blue-600/35 dark:hover:bg-blue-600/50 backdrop-blur-md transition-all duration-200' 
-                        : 'border-room-border/80 bg-black/20 dark:bg-black/50 text-white hover:bg-black/35 dark:hover:bg-black/65 backdrop-blur-md transition-all duration-200'
+                        ? 'border-blue-500/50 bg-blue-600 text-white hover:bg-blue-500 transition-all duration-200'
+                        : 'border-room-border bg-room-surface text-room-text hover:bg-room-hover transition-all duration-200'
                     }`}>
                       {msg.replyTo && (
-                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-black/40 dark:bg-black/60 px-2 py-1 text-left backdrop-blur-sm">
+                        <button onClick={() => jumpTo(msg.replyTo!.id)} className="mb-1 block w-full rounded-md border-l-2 border-blue-400 bg-room-bg px-2 py-1 text-left">
                           <span className="block truncate text-[10px] font-semibold text-blue-300">{msg.replyTo.userName}</span>
                           <span className="line-clamp-2 text-[11px] text-room-muted">{summarize(msg.replyTo as ChatMessage)}</span>
                         </button>
@@ -1090,7 +1090,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
                     </div>
 
                     <div className={`invisible relative flex shrink-0 items-center gap-0.5 pt-0.5 group-hover:visible ${activeMenu?.messageId === msg.id ? '!visible' : ''}`}>
-                      <button onClick={() => beginReply(msg)} className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text" aria-label="Reply">
+                      <button onClick={() => beginReply(msg)} className="rounded-full bg-room-surface p-1 text-room-muted hover:text-room-text" aria-label="Reply">
                         <Reply size={12} />
                       </button>
                       <button
@@ -1100,7 +1100,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
                           openMessageMenu(msg.id, e.currentTarget.getBoundingClientRect());
                         }}
                         data-chat-menu-trigger="true"
-                        className="rounded-full bg-room-bg/80 p-1 text-room-muted hover:text-room-text"
+                        className="rounded-full bg-room-surface p-1 text-room-muted hover:text-room-text"
                         aria-label="Message actions"
                       >
                         <MoreVertical size={12} />
@@ -1193,7 +1193,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
       )}
 
       {(replyTo || editing || attachment) && (
-        <div className="flex flex-none items-center gap-2 border-t border-room-border bg-room-bg/60 px-3 py-2">
+        <div className="flex flex-none items-center gap-2 border-t border-room-border bg-room-surface px-3 py-2">
           <div className="min-w-0 flex-1 text-xs text-room-muted">
             {editing ? <span>Editing message</span> : replyTo ? <span>Replying to <b className="text-room-text">{replyTo.userName}</b>: {summarize(replyTo)}</span> : null}
             {attachment && <span className="block truncate text-room-text"><Paperclip size={12} className="mr-1 inline" />{attachment.name}</span>}
@@ -1230,14 +1230,14 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
             className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent py-2.5 text-sm text-room-text outline-none placeholder:text-room-muted"
             style={{ overflowY: 'auto' }}
           />
-          <button onClick={send} onMouseDown={(e) => e.preventDefault()} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
+          <button type="button" onClick={send} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
             {uploading ? <SmilePlus size={18} className="animate-pulse" /> : <Send size={18} />}
           </button>
         </div>
       </div>
 
       {clearConfirmOpen && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
           <div className="w-full max-w-sm rounded-xl border border-room-border bg-room-surface p-4 shadow-2xl">
             <h3 className="text-sm font-semibold text-room-text">Clear chat for me?</h3>
             <p className="mt-2 text-xs leading-relaxed text-room-muted">
@@ -1252,7 +1252,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
       )}
 
       {activeInfoMessage && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
           <div className="flex max-h-[82%] w-full max-w-md flex-col rounded-xl border border-room-border bg-room-surface shadow-2xl">
             <div className="flex items-center gap-2 border-b border-room-border px-4 py-3">
               <h3 className="flex-1 text-sm font-semibold text-room-text">Message info</h3>
@@ -1302,7 +1302,7 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
 
       {mediaOpen && typeof document !== 'undefined' && createPortal(
         <div 
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 px-4 animate-in fade-in duration-200"
           onClick={() => setMediaOpen(false)}
         >
           <div 

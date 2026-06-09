@@ -7,6 +7,8 @@ import { useWorkspaceStore } from '@/store/workspaceStore';
 import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
 import { AlertCircle, Hash, Loader2 } from 'lucide-react';
+import { AppNavigation } from '@/components/layout/AppNavigation';
+import { LibraryChatLauncher } from '@/components/chat/GlobalChatOverlay';
 
 export default function LibraryPage() {
   const router = useRouter();
@@ -27,9 +29,10 @@ export default function LibraryPage() {
 
   return (
     <div className="flex h-screen bg-room-bg overflow-hidden">
+      <AppNavigation />
       <LibrarySidebar />
       <ChannelSidebar />
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center pb-16 md:pb-0">
         {loadingChannels ? (
           <Loader2 size={28} className="animate-spin text-room-muted" />
         ) : error ? (
@@ -60,6 +63,7 @@ export default function LibraryPage() {
           <Loader2 size={28} className="animate-spin text-room-muted" />
         )}
       </div>
+      <LibraryChatLauncher />
     </div>
   );
 }

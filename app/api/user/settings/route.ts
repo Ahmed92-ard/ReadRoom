@@ -73,6 +73,38 @@ export async function GET() {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Ensure this user is enrolled in the global-library (fire-and-forget).
+  // Runs on every sign-in; ON CONFLICT makes it idempotent.
+  (async () => {
+    try {
+      // Make sure the global library exists (idempotent — uses DO NOTHING on conflict)
+      await db.from('libraries').upsert({
+        id: 'global-library',
+        name: 'Global Library',
+        invite_code: 'GLOBAL12',
+        owner_id: user.id,
+      }, { onConflict: 'id', ignoreDuplicates: true });
+
+      // Ensure the global chat room exists
+      await db.from('rooms').upsert({
+        id: 'global-chat',
+        library_id: 'global-library',
+        name: 'Global Chat',
+        type: 'text',
+        position: -999,
+      }, { onConflict: 'id', ignoreDuplicates: true });
+
+      // Enrol this user as a member
+      await db.from('library_members').upsert({
+        library_id: 'global-library',
+        user_id: user.id,
+        role: 'member',
+      }, { onConflict: 'library_id,user_id', ignoreDuplicates: true });
+    } catch (e) {
+      console.warn('[api/user/settings] global-library enrolment failed:', e);
+    }
+  })();
+
   return NextResponse.json({
     profile,
     profileComplete: isProfileComplete(profile, user),

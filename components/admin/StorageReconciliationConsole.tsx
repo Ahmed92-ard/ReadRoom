@@ -306,7 +306,7 @@ export function StorageReconciliationConsole({ onBack, onExit }: StorageReconcil
         {/* Orphans Detailed Table */}
         {orphans.length > 0 && (
           <div className="bg-room-surface border border-room-border rounded-2xl overflow-hidden shadow-sm">
-            <div className="px-6 py-4 border-b border-room-border flex items-center justify-between bg-room-bg/30">
+            <div className="px-6 py-4 border-b border-room-border flex items-center justify-between bg-room-bg">
               <div className="flex items-center gap-2">
                 <FileText size={18} className="text-red-400" />
                 <h3 className="font-bold text-room-text">Identified Storage Orphans ({orphans.length})</h3>
@@ -318,7 +318,7 @@ export function StorageReconciliationConsole({ onBack, onExit }: StorageReconcil
             <div className="overflow-x-auto max-h-[350px]">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-room-bg/10 border-b border-room-border text-room-muted uppercase tracking-wider text-[11px] font-semibold">
+                  <tr className="bg-room-bg border-b border-room-border text-room-muted uppercase tracking-wider text-[11px] font-semibold">
                     <th className="px-6 py-3">File Name</th>
                     <th className="px-6 py-3">Storage Path (Library/Room/PDF)</th>
                     <th className="px-6 py-3">File Size</th>
@@ -363,7 +363,7 @@ export function StorageReconciliationConsole({ onBack, onExit }: StorageReconcil
             <div className="overflow-x-auto max-h-[220px]">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="bg-room-bg/10 border-b border-room-border text-room-muted uppercase tracking-wider text-[11px] font-semibold">
+                  <tr className="bg-room-bg border-b border-room-border text-room-muted uppercase tracking-wider text-[11px] font-semibold">
                     <th className="px-6 py-3">File Name</th>
                     <th className="px-6 py-3">Storage Path</th>
                     <th className="px-6 py-3">File Size</th>

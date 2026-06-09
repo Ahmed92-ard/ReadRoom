@@ -89,7 +89,7 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen bg-room-bg text-room-text flex flex-col">
       {/* Header */}
-      <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg/80 backdrop-blur-md z-10">
+      <header className="h-16 border-b border-room-border flex items-center px-6 gap-4 sticky top-0 bg-room-bg z-10">
         <button 
           onClick={handleBack}
           className="p-2 hover:bg-room-hover rounded-full transition-colors text-room-muted hover:text-room-text"
@@ -132,7 +132,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     onClick={() => setShowUploadAvatar(true)}
-                    className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                    className="absolute inset-0 rounded-full bg-black/70 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
                     title="Change avatar"
                   >
                     <User size={20} className="text-white" />
