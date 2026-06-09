@@ -122,7 +122,19 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
 
   // Listen to the chat-header "Join Call" trigger event
   useEffect(() => {
+    console.log('[CallOverlay] Mounted component instance. RoomId:', roomId, 'UserId:', userId);
+    return () => {
+      console.log('[CallOverlay] Unmounted component instance. RoomId:', roomId);
+    };
+  }, []);
+
+  useEffect(() => {
+    console.log('[CallOverlay] State update - roomId:', roomId, 'isConnected:', isConnected, 'isConnecting:', isConnecting, 'hasToken:', !!token);
+  }, [roomId, isConnected, isConnecting, token]);
+
+  useEffect(() => {
     const handleJoinEvent = () => {
+      console.log('[CallOverlay] received readroom-join-call event. isConnected:', isConnected, 'isConnecting:', isConnecting);
       if (!isConnected && !isConnecting) {
         handleJoinCall();
       } else {
@@ -146,10 +158,11 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
     } catch {}
 
     return () => window.removeEventListener('readroom-join-call', handleJoinEvent);
-  }, [isConnected, isConnecting, dimensions, isMinimized]);
+  }, [isConnected, isConnecting, dimensions, isMinimized, roomId, userId, userName]);
 
   // Fetch token and join
   const handleJoinCall = async () => {
+    console.log('[CallOverlay] handleJoinCall triggered. Fetching token for roomId:', roomId, 'userId:', userId);
     setError(null);
     setIsConfigError(false);
     setIsConnecting(true);
@@ -163,11 +176,13 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
       }
 
       if (data.status === 'unconfigured') {
+        console.warn('[CallOverlay] LiveKit server is unconfigured.');
         setIsConfigError(true);
         setIsConnecting(false);
         return;
       }
 
+      console.log('[CallOverlay] Fetched token successfully. Connecting to LiveKit server url:', data.url);
       setToken(data.token);
       setUrl(data.url);
       setIsConnected(true);
@@ -189,6 +204,7 @@ export function CallOverlay({ roomId, userId, userName }: CallOverlayProps) {
   };
 
   const handleDisconnected = useCallback(() => {
+    console.log('[CallOverlay] handleDisconnected called. Resetting token and URL.');
     setIsConnected(false);
     setToken(null);
     setUrl(null);

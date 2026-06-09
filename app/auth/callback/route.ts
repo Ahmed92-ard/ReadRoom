@@ -68,7 +68,7 @@ export async function GET(request: Request) {
   }
 
   // ── 3. Inspect cookies before attempting PKCE exchange ───────────────────
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const allCookies = cookieStore.getAll();
   const pkceRelated = allCookies.filter(c =>
     c.name.includes('code_verifier') ||
@@ -97,13 +97,15 @@ export async function GET(request: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return cookieStore.getAll();
+        async getAll() {
+          const store = await cookies();
+          return store.getAll();
         },
-        setAll(cookiesToSet) {
+        async setAll(cookiesToSet) {
+          const store = await cookies();
           cookiesToSet.forEach(({ name, value, options }) => {
             try {
-              cookieStore.set(name, value, options);
+              store.set(name, value, options);
             } catch (e) {
               console.warn('[auth/callback] cookie set skipped (expected in route handlers):', name);
             }

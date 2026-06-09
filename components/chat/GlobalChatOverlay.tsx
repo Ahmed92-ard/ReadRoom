@@ -38,10 +38,7 @@ export function GlobalChatOverlay({ open, onClose }: GlobalChatOverlayProps) {
       />
       <section className="relative flex h-[100dvh] w-full flex-col border-room-border bg-room-bg shadow-2xl animate-in slide-in-from-right duration-200 md:max-w-[460px] md:border-l">
         <div className="flex h-12 flex-none items-center justify-between border-b border-room-border bg-room-surface px-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-room-text">
-            <MessageSquare size={18} className="text-blue-400" />
-            Global Chat
-          </div>
+          <MessageSquare size={18} className="text-blue-400" aria-hidden />
           <button
             type="button"
             onClick={onClose}

@@ -34,6 +34,14 @@ interface FloatingMenu {
   align: 'left' | 'right';
 }
 
+interface TyperInfo {
+  ts: number;
+  userName: string;
+  avatarColor: string;
+  avatarUrl: string | null;
+  avatarInitials: string;
+}
+
 const GLOBAL_ROOM_ID = 'global-chat';
 const messageCache = new Map<string, ChatMessage[]>();
 const loadedRooms = new Set<string>();
@@ -101,26 +109,8 @@ function positionMenu(anchor: DOMRect | { left: number; right: number; top: numb
 
 export function GlobalChat() {
   const self = usePresenceStore((s) => s.self);
-  const presenceProfiles = usePresenceStore(
-    (s) => Array.from(s.users.values()).map(u => ({
-      userId: u.userId,
-      userName: u.userName,
-      avatarUrl: u.avatarUrl,
-      avatarColor: u.avatarColor,
-      avatarInitials: u.avatarInitials
-    })),
-    (a, b) => {
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) {
-        if (a[i].userId !== b[i].userId) return false;
-        if (a[i].userName !== b[i].userName) return false;
-        if (a[i].avatarUrl !== b[i].avatarUrl) return false;
-        if (a[i].avatarColor !== b[i].avatarColor) return false;
-        if (a[i].avatarInitials !== b[i].avatarInitials) return false;
-      }
-      return true;
-    }
-  );
+  const usersMap = usePresenceStore((s) => s.users);
+  const presenceProfiles = useMemo(() => Array.from(usersMap.values()), [usersMap]);
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => messageCache.get(GLOBAL_ROOM_ID) ?? []);
   const [input, setInput] = useState('');
@@ -132,7 +122,7 @@ export function GlobalChat() {
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [activeTypers, setActiveTypers] = useState<Record<string, number>>({});
+  const [activeTypers, setActiveTypers] = useState<Record<string, TyperInfo>>({});
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [hasOlder, setHasOlder] = useState(true);
@@ -268,7 +258,16 @@ export function GlobalChat() {
       chatChannelRef.current?.send({
         type: 'broadcast',
         event: 'chat:typing',
-        payload: { roomId: GLOBAL_ROOM_ID, userId: self.userId, userName: self.userName, typing: true, ts: Date.now() }
+        payload: {
+          roomId: GLOBAL_ROOM_ID,
+          userId: self.userId,
+          userName: self.userName,
+          avatarColor: self.avatarColor,
+          avatarUrl: self.avatarUrl,
+          avatarInitials: self.avatarInitials,
+          typing: true,
+          ts: Date.now()
+        }
       }).catch(() => {});
     }
 
@@ -281,7 +280,16 @@ export function GlobalChat() {
       chatChannelRef.current?.send({
         type: 'broadcast',
         event: 'chat:typing',
-        payload: { roomId: GLOBAL_ROOM_ID, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() }
+        payload: {
+          roomId: GLOBAL_ROOM_ID,
+          userId: self.userId,
+          userName: self.userName,
+          avatarColor: self.avatarColor,
+          avatarUrl: self.avatarUrl,
+          avatarInitials: self.avatarInitials,
+          typing: false,
+          ts: Date.now()
+        }
       }).catch(() => {});
       typingStopTimeoutRef.current = null;
     }, 3000); // 3 seconds inactivity debounce
@@ -298,7 +306,16 @@ export function GlobalChat() {
       chatChannelRef.current?.send({
         type: 'broadcast',
         event: 'chat:typing',
-        payload: { roomId: GLOBAL_ROOM_ID, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() }
+        payload: {
+          roomId: GLOBAL_ROOM_ID,
+          userId: self.userId,
+          userName: self.userName,
+          avatarColor: self.avatarColor,
+          avatarUrl: self.avatarUrl,
+          avatarInitials: self.avatarInitials,
+          typing: false,
+          ts: Date.now()
+        }
       }).catch(() => {});
     }
   }, [self]);
@@ -378,7 +395,16 @@ export function GlobalChat() {
       }));
     };
 
-    const handleTyping = (payload: { roomId: string; userId: string; userName: string; typing: boolean; ts: number }) => {
+    const handleTyping = (payload: {
+      roomId: string;
+      userId: string;
+      userName: string;
+      avatarColor?: string;
+      avatarUrl?: string | null;
+      avatarInitials?: string;
+      typing: boolean;
+      ts: number;
+    }) => {
       const currentSelf = selfRef.current;
       if (payload.roomId !== GLOBAL_ROOM_ID || payload.userId === currentSelf?.userId) return;
 
@@ -388,7 +414,16 @@ export function GlobalChat() {
       }
 
       if (payload.typing) {
-        setActiveTypers((prev) => ({ ...prev, [payload.userId]: Date.now() }));
+        setActiveTypers((prev) => ({
+          ...prev,
+          [payload.userId]: {
+            ts: Date.now(),
+            userName: payload.userName,
+            avatarColor: payload.avatarColor ?? '#6366f1',
+            avatarUrl: payload.avatarUrl ?? null,
+            avatarInitials: payload.avatarInitials ?? payload.userName.slice(0, 2).toUpperCase(),
+          }
+        }));
         
         typingTimerRefs.current[payload.userId] = setTimeout(() => {
           setActiveTypers((prev) => {
@@ -716,18 +751,16 @@ export function GlobalChat() {
   }, [activeMenu]);
 
   const typingUsersList = useMemo(() => {
-    return Object.keys(activeTypers).map((uid) => {
-      const found = presenceProfiles.find((u) => u.userId && String(u.userId).split('_')[0] === uid.split('_')[0]);
-      const name = found?.userName ?? 'Reader';
+    return Object.entries(activeTypers).map(([uid, info]) => {
       return {
         userId: uid,
-        name,
-        avatarUrl: found?.avatarUrl ?? null,
-        avatarColor: found?.avatarColor ?? '#6366f1',
-        avatarInitials: found?.avatarInitials ?? name.slice(0, 2).toUpperCase(),
+        name: info.userName,
+        avatarUrl: info.avatarUrl,
+        avatarColor: info.avatarColor,
+        avatarInitials: info.avatarInitials,
       };
     });
-  }, [activeTypers, presenceProfiles]);
+  }, [activeTypers]);
 
   const resolveReceiptName = useCallback((userId: string) => {
     const baseId = userId ? String(userId).split('_')[0] : '';
@@ -787,24 +820,30 @@ export function GlobalChat() {
 
   return (
     <div className="relative flex h-full flex-col bg-transparent">
-      {/* Header */}
-      <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2 bg-room-surface">
-        <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={18} /></button>
-        <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={18} /></button>
-        <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={18} /></button>
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('readroom-join-call'))}
-          className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text transition-colors"
-          aria-label="Join voice/video call"
-          title="Join Call"
-        >
-          <Phone size={18} className="text-indigo-400 hover:text-indigo-300" />
-        </button>
-        <div className="min-w-0 flex-1 text-center text-xs font-semibold uppercase tracking-wide text-room-muted">Global Chat</div>
-      </div>
-
-      {searchOpen && (
+      {!searchOpen ? (
+        <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2 bg-room-surface">
+          <button onClick={() => setSearchOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={18} /></button>
+          <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={18} /></button>
+          <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={18} /></button>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('readroom-join-call'))}
+            className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text transition-colors"
+            aria-label="Join voice/video call"
+            title="Join Call"
+          >
+            <Phone size={18} className="text-indigo-400 hover:text-indigo-300" />
+          </button>
+          <div className="min-w-0 flex-1" />
+        </div>
+      ) : (
         <div className="flex flex-none items-center gap-2 border-b border-room-border px-3 py-2 bg-room-surface">
+          <button
+            onClick={() => { setSearchOpen(false); setSearch(''); }}
+            className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text"
+            aria-label="Close search"
+          >
+            <X size={18} />
+          </button>
           <Search size={15} className="text-room-muted" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search text, sender, files" className="min-w-0 flex-1 bg-transparent text-sm text-room-text outline-none placeholder:text-room-muted" />
           {search && <button onClick={() => setSearch('')} className="text-room-muted hover:text-room-text" aria-label="Clear search"><X size={15} /></button>}
@@ -1030,9 +1069,15 @@ export function GlobalChat() {
 
       {/* Footer / Input */}
       <div className="flex-none border-t border-room-border p-3 bg-room-surface">
-        <div className="flex items-end gap-2 rounded-xl border border-room-border bg-room-bg px-2 transition-colors focus-within:border-blue-500/50">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+          className="flex items-end gap-2 rounded-xl border border-room-border bg-room-bg px-2 transition-colors focus-within:border-blue-500/50"
+        >
           <input ref={fileRef} type="file" className="hidden" onChange={(e) => setAttachment(e.target.files?.[0] ?? null)} accept="image/*,video/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" />
-          <button onClick={() => { if (fileRef.current) fileRef.current.value = ''; fileRef.current?.click(); }} className="mb-1.5 rounded-lg p-2 text-room-muted hover:bg-room-surface hover:text-room-text" aria-label="Attach file"><Paperclip size={18} /></button>
+          <button type="button" onClick={() => { if (fileRef.current) fileRef.current.value = ''; fileRef.current?.click(); }} className="mb-1.5 rounded-lg p-2 text-room-muted hover:bg-room-surface hover:text-room-text" aria-label="Attach file"><Paperclip size={18} /></button>
           <textarea
             ref={inputRef}
             value={input}
@@ -1057,10 +1102,21 @@ export function GlobalChat() {
             className="max-h-28 min-h-[42px] flex-1 resize-none bg-transparent py-2.5 text-sm text-room-text outline-none placeholder:text-room-muted"
             style={{ overflowY: 'auto' }}
           />
-          <button type="button" onClick={send} disabled={(!input.trim() && !attachment) || uploading} className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Send">
+          <button
+            type="submit"
+            onTouchStart={(e) => {
+              if ((input.trim() || attachment) && !uploading) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            disabled={(!input.trim() && !attachment) || uploading}
+            className="mb-1 rounded-xl p-2 text-blue-400 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-30"
+            aria-label="Send"
+          >
             {uploading ? <SmilePlus size={18} className="animate-pulse" /> : <Send size={18} />}
           </button>
-        </div>
+        </form>
       </div>
 
       {/* Dialogs */}

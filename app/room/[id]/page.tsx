@@ -34,7 +34,7 @@ export default async function RoomPage({ params }: RoomPageProps) {
 
   if (!room) notFound();
 
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   let userId = cookieStore.get('user_id')?.value;
   let userName = cookieStore.get('user_name')?.value;
   if (!userId) userId = uuidv4();

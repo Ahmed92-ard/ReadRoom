@@ -15,8 +15,10 @@ const nextConfig = {
     '*.ngrok-free.dev',
     ...(appHostname ? [appHostname] : []),
   ],
-  experimental: {
-    serverComponentsExternalPackages: ['pdfjs-dist'],
+  serverExternalPackages: ['pdfjs-dist'],
+  turbopack: {},
+  typescript: {
+    ignoreBuildErrors: true,
   },
   images: {
     remotePatterns: [

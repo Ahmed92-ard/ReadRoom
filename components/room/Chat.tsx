@@ -111,26 +111,8 @@ function positionMenu(anchor: DOMRect | { left: number; right: number; top: numb
 
 export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatProps) {
   const self = usePresenceStore((s) => s.self);
-  const presenceProfiles = usePresenceStore(
-    (s) => Array.from(s.users.values()).map(u => ({
-      userId: u.userId,
-      userName: u.userName,
-      avatarUrl: u.avatarUrl,
-      avatarColor: u.avatarColor,
-      avatarInitials: u.avatarInitials
-    })),
-    (a, b) => {
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) {
-        if (a[i].userId !== b[i].userId) return false;
-        if (a[i].userName !== b[i].userName) return false;
-        if (a[i].avatarUrl !== b[i].avatarUrl) return false;
-        if (a[i].avatarColor !== b[i].avatarColor) return false;
-        if (a[i].avatarInitials !== b[i].avatarInitials) return false;
-      }
-      return true;
-    }
-  );
+  const usersMap = usePresenceStore((s) => s.users);
+  const presenceProfiles = useMemo(() => Array.from(usersMap.values()), [usersMap]);
   const params = useParams();
   const libraryId = params?.libraryId as string | undefined;
   const channelId = params?.channelId as string | undefined;
@@ -963,24 +945,31 @@ export function Chat({ roomId, onClose, portalTargetId, onUnreadChange }: ChatPr
 
   return (
     <div className="relative flex h-full flex-col bg-transparent">
-      <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2">
-        <button onClick={() => setSearchOpen((v) => !v)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={18} /></button>
-        {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={18} /></button>}
-        {canUseAdvancedApi && <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={18} /></button>}
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('readroom-join-call'))}
-          className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text transition-colors"
-          aria-label="Join voice/video call"
-          title="Join Call"
-        >
-          <Phone size={18} className="text-indigo-400 hover:text-indigo-300" />
-        </button>
-        <div className="min-w-0 flex-1 text-center text-xs font-semibold uppercase tracking-wide text-room-muted">Chat</div>
-        {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={18} /></button>}
-      </div>
-
-      {searchOpen && (
+      {!searchOpen ? (
+        <div className="flex flex-none items-center gap-1 border-b border-room-border px-3 py-2">
+          <button onClick={() => setSearchOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Search messages"><Search size={18} /></button>
+          {canUseAdvancedApi && <button onClick={openMedia} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Media and files"><ImageIcon size={18} /></button>}
+          {canUseAdvancedApi && <button onClick={() => setClearConfirmOpen(true)} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Clear chat for me"><Trash2 size={18} /></button>}
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('readroom-join-call'))}
+            className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text transition-colors"
+            aria-label="Join voice/video call"
+            title="Join Call"
+          >
+            <Phone size={18} className="text-indigo-400 hover:text-indigo-300" />
+          </button>
+          <div className="min-w-0 flex-1" />
+          {onClose && <button onClick={onClose} className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text" aria-label="Close chat"><X size={18} /></button>}
+        </div>
+      ) : (
         <div className="flex flex-none items-center gap-2 border-b border-room-border px-3 py-2">
+          <button
+            onClick={() => { setSearchOpen(false); setSearch(''); }}
+            className="rounded-lg p-2 text-room-muted hover:bg-room-bg hover:text-room-text"
+            aria-label="Close search"
+          >
+            <X size={18} />
+          </button>
           <Search size={15} className="text-room-muted" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search text, sender, files" className="min-w-0 flex-1 bg-transparent text-sm text-room-text outline-none placeholder:text-room-muted" />
           {search && <button onClick={() => setSearch('')} className="text-room-muted hover:text-room-text" aria-label="Clear search"><X size={15} /></button>}

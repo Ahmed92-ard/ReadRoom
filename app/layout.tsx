@@ -2,6 +2,7 @@ import '../styles/globals.css';
 import { ThemeProvider } from '@/components/ui/ThemeProvider';
 import { AuthProvider } from '@/lib/hooks/useAuth';
 import { ProfileOnboarding } from '@/components/ui/ProfileOnboarding';
+import { AppServices } from '@/components/layout/AppServices';
 
 export const metadata = {
   title: 'ReadRoom',
@@ -37,7 +38,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-room-bg text-room-text antialiased">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <AuthProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            <AppServices />
+            {children}
+          </ThemeProvider>
           <ProfileOnboarding />
         </AuthProvider>
       </body>

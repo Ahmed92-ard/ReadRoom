@@ -60,7 +60,7 @@ export const PageCanvas = memo(function PageCanvas({
     const renderContext = {
       canvasContext: ctx,
       viewport,
-      intent: isLowEnd ? 'print' : 'display',
+      intent: (isLowEnd ? 'print' : 'display') as 'print' | 'display',
     };
 
     try {
