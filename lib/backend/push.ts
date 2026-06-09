@@ -177,12 +177,15 @@ export function sendPushToRoomParticipants(
                 ? JSON.parse(presenceRaw as string)
                 : (presenceRaw as Record<string, unknown>);
 
-              // Suppress only when the user is focused AND viewing the same library.
-              // If they are focused elsewhere, deliver the push.
+              // Suppress when the user is focused AND viewing the same library OR the global chat.
+              const sameBroadcast =
+                (presence.activeLibraryId === libraryId) ||
+                (presence.activeLibraryId === 'global-library' && presence.currentRoomId === 'global-chat');
+
               if (
                 presence &&
                 presence.isFocused === true &&
-                presence.activeLibraryId === libraryId &&
+                sameBroadcast &&
                 !isCallNotification
               ) {
                 return;

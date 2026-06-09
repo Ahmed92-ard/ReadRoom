@@ -7,7 +7,19 @@ import { useWorkspaceStore } from '@/store/workspaceStore';
 import { usePDFStore } from '@/store/pdfStore';
 
 import { useAuth } from '@/lib/hooks/useAuth';
-import { RoomShell } from '@/components/room/RoomShell';
+import dynamic from 'next/dynamic';
+
+const RoomShell = dynamic(() => import('@/components/room/RoomShell').then((mod) => mod.RoomShell), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+        <p className="mt-3 text-xs text-room-muted">Loading workspace modules...</p>
+      </div>
+    </div>
+  ),
+});
 
 export default function ChannelPage() {
   const router = useRouter();

@@ -18,7 +18,6 @@ import { GooglePicker } from '@/components/drive/GooglePicker';
 import { FolderTree } from '@/components/room/FolderTree';
 import { LibrarySidebar } from '@/components/layout/LibrarySidebar';
 import { ChannelSidebar } from '@/components/layout/ChannelSidebar';
-import { LibraryChatDrawer } from '@/components/library/LibraryChatDrawer';
 import { SettingsOverlay } from '@/components/room/SettingsOverlay';
 import { CallOverlay } from '@/components/room/CallOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
@@ -355,7 +354,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     toggleNavigation,
     settingsOpen, setSettingsOpen,
   leftSidebarWidth, setLeftSidebarWidth} = useUIStore();
-  const [libraryChatOpen, setLibraryChatOpen] = useState(false);
 
   const params = useParams();
   const libraryId = params?.libraryId as string | undefined;
@@ -437,7 +435,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   useEffect(() => {
     console.log('[RoomShell Notification Debug] toasts state changed. Current queue length:', toasts.length, 'IDs:', toasts.map(t => t.toastId));
   }, [toasts]);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [leftView, setLeftView] = useState<'nav' | 'shelf'>('nav');
   const [mobileSheetExpanded, setMobileSheetExpanded] = useState(false);
   const [isEditingRoomName, setIsEditingRoomName] = useState(false);
@@ -588,16 +585,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   const isFullscreen = typeof document !== 'undefined' && !!document.fullscreenElement;
   const processedNotificationIdsRef = useRef<Set<string>>(new Set());
   const processedBrowserNotificationIdsRef = useRef<Set<string>>(new Set());
-  const unreadCountRef = useRef(0);
-  const isChatVisibleRef = useRef(false);
-
-  useEffect(() => {
-    unreadCountRef.current = unreadCount;
-  }, [unreadCount]);
-
-  useEffect(() => {
-    isChatVisibleRef.current = libraryChatOpen;
-  }, [libraryChatOpen]);
+  const isChatVisibleRef = { current: false };
 
 
 
@@ -643,35 +631,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     };
   }, [librarySidebarCollapsed, sidebarOpen, toggleNavigation, setSidebarOpen]);
 
-  const clearUnread = useCallback(() => {
-    console.log('[RoomShell Notification Debug] clearUnread() triggered. Resetting unreadCount to 0.');
-    setUnreadCount(0);
-    unreadCountRef.current = 0;
-    try {
-      const stored = localStorage.getItem(notificationStorageKey);
-      const parsed = stored ? JSON.parse(stored) : {};
-      localStorage.setItem(notificationStorageKey, JSON.stringify({
-        ...parsed,
-        unreadCount: 0,
-        lastReadAt: Date.now(),
-      }));
-    } catch {}
-  }, [notificationStorageKey]);
-
-  const persistNotificationState = useCallback((nextUnreadCount: number, activityId: string) => {
-    try {
-      const stored = localStorage.getItem(notificationStorageKey);
-      const parsed = stored ? JSON.parse(stored) : {};
-      const recentIds = Array.isArray(parsed.recentIds) ? parsed.recentIds : [];
-      const nextRecentIds = [activityId, ...recentIds.filter((id: string) => id !== activityId)].slice(0, 100);
-      localStorage.setItem(notificationStorageKey, JSON.stringify({
-        ...parsed,
-        unreadCount: nextUnreadCount,
-        recentIds: nextRecentIds,
-        updatedAt: Date.now(),
-      }));
-    } catch {}
-  }, [notificationStorageKey]);
 
   const showBrowserNotification = useCallback((activity: RoomActivity) => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
@@ -814,7 +773,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       const stored = localStorage.getItem(notificationStorageKey);
       if (!stored) return;
       const parsed = JSON.parse(stored);
-      setUnreadCount(Number(parsed.unreadCount ?? 0));
       if (Array.isArray(parsed.recentIds)) {
         processedNotificationIdsRef.current = new Set(parsed.recentIds.slice(0, 100));
       }
@@ -822,15 +780,10 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
   }, [notificationStorageKey]);
 
   useEffect(() => {
-    if (libraryChatOpen) clearUnread();
-  }, [clearUnread, libraryChatOpen]);
-
-  useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== notificationStorageKey || !event.newValue) return;
       try {
         const parsed = JSON.parse(event.newValue);
-        setUnreadCount(Number(parsed.unreadCount ?? 0));
         if (Array.isArray(parsed.recentIds)) {
           processedNotificationIdsRef.current = new Set(parsed.recentIds.slice(0, 100));
         }
@@ -1451,15 +1404,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         showBrowserNotification(nextActivity);
       }
 
-      if (!isChatVisibleRef.current || nextActivity.type === 'mention') {
-        setUnreadCount((prev) => {
-          const next = Math.min(999, prev + 1);
-          console.log('[RoomShell Notification Debug] unreadCount incremented. prev:', prev, 'next:', next);
-          unreadCountRef.current = next;
-          persistNotificationState(next, nextActivity.id);
-          return next;
-        });
-      }
     };
 
     channel
@@ -1474,7 +1418,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       supabase.removeChannel(channel);
       broadcastChannelRef.current = null;
     };
-  }, [roomId, initialUserId, initialUserName, buildRoomState, channelPdfToMeta, fetchFolderTree, persistNotificationState, pushToast, showBrowserNotification, currentChannelPdfId, normalizeChannelPDF, publishActivePdf, setRoom]);
+  }, [roomId, initialUserId, initialUserName, buildRoomState, channelPdfToMeta, fetchFolderTree, pushToast, showBrowserNotification, currentChannelPdfId, normalizeChannelPDF, publishActivePdf, setRoom]);
 
   useEffect(() => {
     if (!libraryId || channels.length === 0) return;
@@ -1515,13 +1459,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           console.log('[RoomShell Notification Debug] Cross-room DB notification routing. RoomID:', messageRoomId, 'Activity ID:', activityId, 'isFocused:', isFocused);
           pushToast(activity);
           if (!isFocused) showBrowserNotification(activity);
-          setUnreadCount((prev) => {
-            const next = Math.min(999, prev + 1);
-            console.log('[RoomShell Notification Debug] unreadCount incremented (cross-room DB). prev:', prev, 'next:', next);
-            unreadCountRef.current = next;
-            persistNotificationState(next, activity.id);
-            return next;
-          });
         }
       )
       .subscribe();
@@ -1529,7 +1466,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [channels, initialUserId, libraryId, persistNotificationState, pushToast, roomId, showBrowserNotification]);
+  }, [channels, initialUserId, libraryId, pushToast, roomId, showBrowserNotification]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -2305,8 +2242,7 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
                 return;
               }
               if (toast.type === 'chat:message' || toast.type === 'mention') {
-                if (libraryId) setLibraryChatOpen(true);
-                clearUnread();
+                router.push('/chat');
               }
             }}
             className="pointer-events-auto w-full rounded-lg border border-room-border bg-room-surface px-4 py-3 text-left shadow-2xl shadow-black/30 transition hover:bg-room-hover"
@@ -2399,18 +2335,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           {isMobile ? (
             <>
               <button 
-                onClick={() => setLibraryChatOpen(!libraryChatOpen)}
-                className={`p-2 rounded-xl transition-all relative ${libraryChatOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
-                title="Library Chat"
-              >
-                <MessageSquare size={20} />
-                {unreadCount > 0 && !libraryChatOpen && (
-                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-room-bg select-none animate-pulse">
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                )}
-              </button>
-              <button 
                 onClick={() => setSettingsOpen(true)}
                 className={`p-2 rounded-xl transition-all ${settingsOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
                 title="Settings"
@@ -2420,18 +2344,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
             </>
           ) : (
             <>
-              <button 
-                onClick={() => setLibraryChatOpen(!libraryChatOpen)}
-                className={`p-2 rounded-xl transition-all relative ${libraryChatOpen ? 'bg-blue-500/20 text-blue-400' : 'text-room-muted hover:text-room-text hover:bg-room-hover'}`}
-                title="Library Chat"
-              >
-                <MessageSquare size={20} />
-                {unreadCount > 0 && !libraryChatOpen && (
-                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white shadow-sm ring-2 ring-room-bg select-none animate-pulse">
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                )}
-              </button>
               <button 
                 onClick={() => {
                   if (sidebarOpen && (activePanel === 'presence' || activePanel === 'notes')) setSidebarOpen(false);
@@ -2650,15 +2562,6 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       )}
       </div>
 
-      {/* Library Chat Drawer — fixed overlay, works on all screen sizes */}
-      {libraryId && (
-        <LibraryChatDrawer
-          libraryId={libraryId}
-          open={libraryChatOpen}
-          onClose={() => setLibraryChatOpen(false)}
-          onUnreadChange={setUnreadCount}
-        />
-      )}
 
       {/* Mobile Sheet Backdrop & Container handled via MobileBottomSheet component */}
       {isMobile && (

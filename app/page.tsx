@@ -15,7 +15,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.replace('/libraries');
+        router.replace('/chat');
       } else {
         router.replace('/auth');
       }
