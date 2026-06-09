@@ -3,6 +3,7 @@
 // Supports single files and folder uploads (multiple files with relative paths).
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { sendPushToRoomParticipants } from '@/lib/backend/push';
 import {
   buildPdfStoragePath,
   getDbClient,
@@ -133,6 +134,26 @@ export async function POST(
     .update({ current_pdf_id: pdf.id })
     .eq('id', channelId)
     .is('current_pdf_id', null);
+
+  const { data: profile } = await db
+    .from('users')
+    .select('display_name')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  const pdfPushPayload = {
+    title: `New document in #Room 📄`,
+    body: `${profile?.display_name || user.email?.split('@')[0] || 'Someone'} uploaded "${pdf.filename || 'a document'}"`,
+    icon: '/icons/app_icon_192.png',
+    badge: '/icons/app_icon_192.png',
+    data: {
+      url: `/libraries/${libraryId}/channels/${channelId}`,
+      roomId: channelId,
+      notificationType: 'pdf_added' as const,
+      senderName: profile?.display_name || 'System'
+    }
+  };
+  sendPushToRoomParticipants(channelId, user.id, pdfPushPayload, false);
 
   return NextResponse.json({ pdf: serializeRoomPdf(pdf, libraryId) }, { status: 201 });
 }

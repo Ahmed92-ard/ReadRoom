@@ -6,16 +6,7 @@ import { usePresenceStore } from '@/store/presenceStore';
 import { usePDFStore } from '@/store/pdfStore';
 import { Avatar } from '@/components/ui/Avatar';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
-import { getSocket } from '@/lib/socket/client';
 import type { UserMeta } from '@/types';
-
-function formatLastSeen(ts: number): string {
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 interface PresenceListProps {
   roomId?: string;
@@ -28,23 +19,10 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
   const [showAvatarUpload, setShowAvatarUpload] = useState(false);
 
   const handleAvatarUploaded = (url: string) => {
-    // Update local state immediately
+    // Update local state immediately.
+    // Database writes from the upload API will automatically trigger postgres_changes
+    // on table 'users', which propagates the new avatarUrl to all other clients.
     updateSelf({ avatarUrl: url });
-    const currentSelf = usePresenceStore.getState().self;
-    // Broadcast to all connected clients in the room
-    if (currentSelf && roomId) {
-      getSocket().emit('profile:updated', {
-        userId: currentSelf.userId,
-        userName: currentSelf.userName,
-        avatarUrl: url,
-        avatarColor: currentSelf.avatarColor,
-        avatarInitials: currentSelf.avatarInitials,
-      });
-      getSocket().emit('presence:update', {
-        roomId,
-        user: { userId: currentSelf.userId },
-      });
-    }
   };
 
   // Group all sessions (including self) by base userId
@@ -111,122 +89,70 @@ export function PresenceList({ roomId, roomName = 'ReadRoom' }: PresenceListProp
       )}
 
       <div className="flex-1 p-3 space-y-1 overflow-y-auto">
-      <p className="px-2 pb-2 text-sm font-semibold text-room-text truncate">{roomName}</p>
+        <p className="px-2 pb-2 text-sm font-semibold text-room-text truncate">{roomName}</p>
 
-      {followMode && (
-        <div className="px-3 py-2 mb-4 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-between animate-in fade-in slide-in-from-top-1">
-          <span className="text-xs text-blue-400 font-medium">📍 Following mode on</span>
-          <button
-            onClick={() => setFollowMode(false)}
-            className="text-[11px] text-blue-400 hover:text-white transition-colors"
-          >
-            Stop
-          </button>
-        </div>
-      )}
+        {followMode && (
+          <div className="px-3 py-2 mb-4 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-between animate-in fade-in slide-in-from-top-1">
+            <span className="text-xs text-blue-400 font-medium">📍 Following mode on</span>
+            <button
+              onClick={() => setFollowMode(false)}
+              className="text-[11px] text-blue-400 hover:text-white transition-colors"
+            >
+              Stop
+            </button>
+          </div>
+        )}
 
-      <div className="space-y-1">
-        {all.map((user) => (
-          <div 
-            key={user.userId} 
-            className={`flex items-center gap-3 p-2.5 rounded-xl transition-all duration-200 ${
-              user.isActive ? 'hover:bg-room-hover' : 'opacity-60 grayscale-[0.5]'
-            }`}
-          >
-            <div className="relative">
-              {user.userId.split('_')[0] === self?.userId.split('_')[0] ? (
-                <button
-                  onClick={() => setShowAvatarUpload(true)}
-                  className="relative group/av focus:outline-none"
-                  title="Edit profile photo"
-                >
-                  <Avatar user={user} size="md" showTooltip={false} />
-                  <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover/av:opacity-100 transition-opacity">
-                    <Camera size={12} className="text-white" />
-                  </div>
-                </button>
-              ) : (
-                <Avatar user={user} size="md" showTooltip={false} />
-              )}
-              <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-room-surface ${
-                user.isActive ? 'bg-green-500' : 'bg-gray-500'
-              }`} />
-            </div>
-            
-            <div className="flex-1 min-w-0">
-              <p className="flex min-w-0 items-baseline gap-1 text-sm font-medium text-room-text">
-                <span className="truncate">
-                  {user.userName}
-                  {user.userId.split('_')[0] === self?.userId.split('_')[0] && (
-                    <span className="ml-1 text-[10px] text-room-muted">(you)</span>
-                  )}
-                </span>
-                {user.isActive && user.currentRoomName && (
-                  <span className="min-w-0 truncate text-xs font-normal text-room-muted">- {user.currentRoomName}</span>
-                )}
-              </p>
-              <p className="text-[11px] mt-0.5 flex items-center gap-1.5">
-                {user.isActive ? (
-                  <>
-                    <span className="text-green-400">Active</span>
-                    {(user.activePdfName || user.page) && <span className="text-room-muted">·</span>}
-                    {(user.activePdfName || user.page) && (
-                      <span className="text-room-muted truncate">
-                        {user.activePdfName ? `${user.activePdfName} · ` : ''}page {user.page ?? 1}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-room-muted truncate">
-                    Offline · {typeof user.lastSeen === 'number' ? formatLastSeen(user.lastSeen) : 'recently'}
-                  </span>
-                )}
-              </p>
-            </div>
-
-            {user.isActive && user.userId.split('_')[0] !== self?.userId.split('_')[0] && (
-              <div className="flex items-center gap-1">
-                {user.activePdfId && (
-                  <button
-                    onClick={() => {
-                      window.dispatchEvent(new CustomEvent('readroom:open-pdf', {
-                        detail: { pdfId: user.activePdfId, userName: user.userName },
-                      }));
-                    }}
-                    className="text-xs px-3 py-2 rounded-xl transition-all duration-200 font-medium text-room-muted hover:text-room-text hover:bg-room-hover"
-                  >
-                    Open
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    const isTarget = followTarget === user.userId;
-                    setFollowMode(!isTarget || !followMode, isTarget ? null : user.userId);
-                  }}
-                  className={`text-xs px-4 py-2 rounded-xl transition-all duration-200 font-medium ${
-                    followMode && followTarget === user.userId
-                      ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20'
-                      : 'text-room-muted hover:text-blue-400 hover:bg-room-hover'
+        <div className="space-y-1">
+          {all.map((user) => (
+            <div 
+              key={user.userId}
+              className="flex items-center gap-3 px-2 py-1.5 rounded-xl hover:bg-room-hover/50 transition-colors group"
+            >
+              <div className="relative flex-shrink-0">
+                <Avatar
+                  user={user}
+                  size="md"
+                  showTooltip={false}
+                />
+                <span 
+                  className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-room-surface ${
+                    user.isActive ? 'bg-green-500' : 'bg-gray-500'
                   }`}
-                >
-                  {followMode && followTarget === user.userId ? 'Following' : 'Follow'}
-                </button>
+                />
               </div>
-            )}
-          </div>
-        ))}
-      </div>
 
-      {all.length <= 1 && (
-        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-          <div className="w-12 h-12 rounded-full bg-room-surface flex items-center justify-center text-xl mb-3">
-            👋
-          </div>
-          <p className="text-xs text-room-muted leading-relaxed">
-            Invite others to this room to read together!
-          </p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-room-text truncate">
+                    {user.userName}
+                    {user.userId.split('_')[0] === selfBaseId && ' (You)'}
+                  </p>
+                  {user.userId.split('_')[0] === selfBaseId && (
+                    <button
+                      onClick={() => setShowAvatarUpload(true)}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-room-muted hover:text-room-text hover:bg-room-hover transition-all"
+                      title="Change photo"
+                    >
+                      <Camera size={12} />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-room-muted truncate">
+                  {user.isActive ? (
+                    user.activePdfName ? (
+                      `Viewing: ${user.activePdfName}`
+                    ) : (
+                      'Viewing main room'
+                    )
+                  ) : (
+                    'Offline'
+                  )}
+                </p>
+              </div>
+            </div>
+          ))}
         </div>
-      )}
       </div>
     </div>
   );

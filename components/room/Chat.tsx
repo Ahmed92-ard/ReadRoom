@@ -23,7 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useParams } from 'next/navigation';
-import { getSocket } from '@/lib/socket/client';
+
 import { createClient } from '@/lib/supabase/client';
 import { usePresenceStore } from '@/store/presenceStore';
 import { Avatar } from '@/components/ui/Avatar';
@@ -168,6 +168,8 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
   // Unique per-instance ID so two <Chat roomId={x} /> components never share the same
   // Supabase channel object. Supabase SDK throws if .on() is called after .subscribe().
   const channelInstanceId = useRef(Math.random().toString(36).slice(2));
+  // Broadcast channel ref — used for chat:* events emitted to other users
+  const chatChannelRef = useRef<any>(null);
 
   const lastScrollTopRef = useRef<number>(0);
   const isRelocatingRef = useRef<boolean>(false);
@@ -233,12 +235,15 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
     return () => { cancelled = true; };
   }, [loadMessages, roomId, search]);
 
+  // ── Supabase Realtime broadcast: chat events from other users ──────────────
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket.connected) socket.connect();
+    const supabase = createClient();
+    const channel = supabase.channel(`room-broadcast:${roomId}`, {
+      config: { broadcast: { self: false } },
+    });
 
     const upsert = (msg: ChatMessage) => {
-        if (msg.roomId !== roomId) return;
+      if (msg.roomId !== roomId) return;
       updateMessages((prev) => {
         const existing = prev.find((m) => m.id === msg.id);
         return existing
@@ -306,39 +311,23 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
       });
     };
 
-    const handleUpdate = (payload: { roomId: string; message: ChatMessage }) => upsert(payload.message);
-    const handleConnect = async () => {
-      try {
-        const refreshed = await loadMessages();
-        updateMessages((prev) => {
-          const byId = new Map(prev.map((m) => [m.id, m]));
-          refreshed.forEach((m) => byId.set(m.id, { ...(byId.get(m.id) ?? {}), ...m }));
-          return Array.from(byId.values()).sort((a, b) => a.ts - b.ts);
-        });
-      } catch {
-        // Reconnect refresh is best-effort; the normal API load still owns errors.
-      }
-    };
+    channel
+      .on('broadcast', { event: 'chat:message' }, ({ payload }) => upsert(payload as ChatMessage))
+      .on('broadcast', { event: 'chat:update' }, ({ payload }: any) => upsert(payload.message as ChatMessage))
+      .on('broadcast', { event: 'chat:delete' }, ({ payload }) => handleDelete(payload as any))
+      .on('broadcast', { event: 'chat:reaction' }, ({ payload }) => handleReaction(payload as any))
+      .on('broadcast', { event: 'chat:delivered' }, ({ payload }) => handleDelivered(payload as any))
+      .on('broadcast', { event: 'chat:read' }, ({ payload }) => handleRead(payload as any))
+      .on('broadcast', { event: 'chat:typing' }, ({ payload }) => handleTyping(payload as any))
+      .subscribe();
 
-    socket.on('chat:message', upsert);
-    socket.on('chat:update', handleUpdate);
-    socket.on('chat:delete', handleDelete);
-    socket.on('chat:reaction', handleReaction);
-    socket.on('chat:delivered', handleDelivered);
-    socket.on('chat:read', handleRead);
-    socket.on('chat:typing', handleTyping);
-    socket.on('connect', handleConnect);
+    chatChannelRef.current = channel;
+
     return () => {
-      socket.off('chat:message', upsert);
-      socket.off('chat:update', handleUpdate);
-      socket.off('chat:delete', handleDelete);
-      socket.off('chat:reaction', handleReaction);
-      socket.off('chat:delivered', handleDelivered);
-      socket.off('chat:read', handleRead);
-      socket.off('chat:typing', handleTyping);
-      socket.off('connect', handleConnect);
+      supabase.removeChannel(channel);
+      chatChannelRef.current = null;
     };
-  }, [loadMessages, roomId, updateMessages]);
+  }, [roomId, updateMessages, loadMessages]);
 
   useEffect(() => {
     const supabase = supabaseRef.current;
@@ -431,36 +420,36 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
       if (self && typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = null;
-        try {
-          getSocket().emit('chat:typing', {
-            roomId,
-            userId: self.userId,
-            userName: self.userName,
-            typing: false,
-            ts: Date.now(),
-          });
-        } catch {}
+        chatChannelRef.current?.send({
+          type: 'broadcast',
+          event: 'chat:typing',
+          payload: { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() },
+        }).catch(() => {});
       }
     };
   }, [roomId, self]);
 
 
+  // Profile updates handled via postgres_changes in usePresence (users table);
+  // sync message display names from presence store when it changes
   useEffect(() => {
-    const socket = getSocket();
-    const handleProfileUpdate = (payload: { userId: string; userName: string; avatarUrl: string | null }) => {
-      updateMessages((prev) => {
-        const baseId = payload.userId ? String(payload.userId).split('_')[0] : '';
-        if (!baseId) return prev;
-        return prev.map((m) => (
-          m.userId && String(m.userId).startsWith(baseId)
-            ? { ...m, userName: payload.userName, avatarUrl: payload.avatarUrl }
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`chat-profiles:${roomId}:${channelInstanceId.current}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, (payload) => {
+        const updated = payload.new as any;
+        const updatedUserId = updated?.id as string | undefined;
+        if (!updatedUserId) return;
+        const name = updated.display_name || updated.email?.split('@')[0] || 'Reader';
+        updateMessages((prev) => prev.map((m) =>
+          m.userId && String(m.userId).split('_')[0] === updatedUserId
+            ? { ...m, userName: name, avatarUrl: updated.avatar_url ?? m.avatarUrl }
             : m
         ));
-      });
-    };
-    socket.on('profile:updated', handleProfileUpdate);
-    return () => { socket.off('profile:updated', handleProfileUpdate); };
-  }, [updateMessages]);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [roomId, updateMessages]);
 
   useEffect(() => {
     if (isRelocatingRef.current) return;
@@ -487,7 +476,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
         updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
           ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt: readAt, readAt }] }
           : m));
-        getSocket().emit('chat:read', { roomId, messageIds, userId: selfBaseId, readAt });
+        chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:read', payload: { roomId, messageIds, userId: selfBaseId, readAt } }).catch(() => {});
       }
     }).catch(() => {});
   }, [canUseAdvancedApi, isAtBottom, messages, messagesEndpoint, roomId, self, updateMessages]);
@@ -508,7 +497,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
         updateMessages((prev) => prev.map((m) => messageIds.includes(m.id)
           ? { ...m, receipts: [...(m.receipts ?? []).filter((r) => r.userId && String(r.userId).split('_')[0] !== selfBaseId), { roomId, messageId: m.id, userId: selfBaseId, deliveredAt, readAt: null }] }
           : m));
-        getSocket().emit('chat:delivered', { roomId, messageIds, userId: selfBaseId, deliveredAt });
+        chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:delivered', payload: { roomId, messageIds, userId: selfBaseId, deliveredAt } }).catch(() => {});
       }
     }).catch(() => {});
   }, [canUseAdvancedApi, messages, messagesEndpoint, roomId, self, updateMessages]);
@@ -660,7 +649,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
     
     const now = Date.now();
     if (now - emitThrottleRef.current > 1000) {
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now });
+      chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:typing', payload: { roomId, userId: self.userId, userName: self.userName, typing: true, ts: now } }).catch(() => {});
       emitThrottleRef.current = now;
     }
 
@@ -669,7 +658,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
     }
     
     typingTimeoutRef.current = setTimeout(() => {
-      getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
+      chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:typing', payload: { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() } }).catch(() => {});
       typingTimeoutRef.current = null;
       emitThrottleRef.current = 0;
     }, 1500);
@@ -680,7 +669,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = null;
     emitThrottleRef.current = 0;
-    getSocket().emit('chat:typing', { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() });
+    chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:typing', payload: { roomId, userId: self.userId, userName: self.userName, typing: false, ts: Date.now() } }).catch(() => {});
   }, [roomId, self]);
 
   const uploadAttachment = useCallback(async () => {
@@ -711,7 +700,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
       if (!res.ok) return setError('Failed to edit message');
       const { message } = await res.json();
       updateMessages((prev) => prev.map((m) => (m.id === message.id ? message : m)));
-      getSocket().emit('chat:update', { roomId, message });
+      chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:update', payload: { roomId, message } }).catch(() => {});
       setEditing(null);
       setInput('');
       return;
@@ -768,7 +757,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
         replyToMessageId: message.replyToMessageId ?? optimistic.replyToMessageId,
       };
       updateMessages((prev) => prev.map((m) => (m.id === optimisticId ? finalMessage : m)));
-      getSocket().emit('chat:message', finalMessage);
+      chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:message', payload: finalMessage }).catch(() => {});
     } catch (err) {
       console.error('[chat] send failed:', err);
       updateMessages((prev) => prev.filter((m) => m.id !== optimisticId));
@@ -789,7 +778,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
     });
     if (!res.ok) return setError('Failed to delete message');
     updateMessages((prev) => prev.filter((m) => m.id !== msg.id));
-    getSocket().emit('chat:delete', { roomId, messageId: msg.id });
+    chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:delete', payload: { roomId, messageId: msg.id } }).catch(() => {});
   }, [messagesEndpoint, roomId, updateMessages]);
 
   const toggleReaction = useCallback(async (msg: ChatMessage, emoji: string) => {
@@ -806,7 +795,7 @@ export function Chat({ roomId, onClose, portalTargetId }: ChatProps) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'reaction', messageId: msg.id, emoji, active }),
     });
-    getSocket().emit('chat:reaction', { roomId, messageId: msg.id, userId: selfBaseId, emoji, active });
+    chatChannelRef.current?.send({ type: 'broadcast', event: 'chat:reaction', payload: { roomId, messageId: msg.id, userId: selfBaseId, emoji, active } }).catch(() => {});
   }, [canUseAdvancedApi, messagesEndpoint, roomId, self, updateMessages]);
 
   const clearForMe = useCallback(async () => {

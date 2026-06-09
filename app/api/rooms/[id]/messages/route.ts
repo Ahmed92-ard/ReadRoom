@@ -4,6 +4,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { ChatMessage } from '@/types';
+import { sendPushToRoomParticipants } from '@/lib/backend/push';
 
 function serializeMessage(row: any): ChatMessage {
   return {
@@ -93,5 +94,21 @@ export async function POST(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ message: serializeMessage(row) }, { status: 201 });
+  const serialized = serializeMessage(row);
+
+  const pushPayload = {
+    title: 'ReadRoom',
+    body: serialized.content ? String(serialized.content).slice(0, 100) : 'New Message',
+    icon: serialized.avatarUrl || '/icons/app_icon_192.png',
+    badge: '/icons/app_icon_192.png',
+    data: {
+      url: `/libraries/rooms/channels/${roomId}`,
+      roomId,
+      notificationType: 'message' as const,
+      senderName: serialized.userName
+    }
+  };
+  sendPushToRoomParticipants(roomId, user.id, pushPayload, false);
+
+  return NextResponse.json({ message: serialized }, { status: 201 });
 }

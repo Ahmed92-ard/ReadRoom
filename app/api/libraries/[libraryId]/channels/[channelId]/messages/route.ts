@@ -4,6 +4,7 @@ import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { ChatAttachment, ChatMessage } from '@/types';
 import { requireRoomInLibrary } from '@/lib/backend/readroom';
+import { sendPushToRoomParticipants } from '@/lib/backend/push';
 
 type Params = { libraryId: string; channelId: string };
 const CHAT_BUCKET = 'chat-attachments';
@@ -278,14 +279,23 @@ export async function POST(req: Request, { params }: { params: Promise<Params> |
     if (attachError) console.warn('[api/messages] attachment metadata failed:', attachError);
   }
 
-  let { data: hydrated, error: hydrateError } = await db.from('messages').select(messageSelect()).eq('id', insertedRow.id).single();
-  if (hydrateError && isModernChatSchemaError(hydrateError)) {
-    ({ data: hydrated } = await db.from('messages').select(baseMessageSelect()).eq('id', insertedRow.id).single());
-  }
-  if (!hydrated && hydrateError && isModernChatSchemaError(hydrateError)) {
-    ({ data: hydrated } = await db.from('messages').select('*').eq('id', insertedRow.id).single());
-  }
-  return NextResponse.json({ message: await serializeMessage(hydrated ?? insertedRow, db) }, { status: 201 });
+  const serialized = await serializeMessage(insertedRow, db);
+
+  const pushPayload = {
+    title: 'ReadRoom',
+    body: serialized.content ? String(serialized.content).slice(0, 100) : 'New Message',
+    icon: serialized.avatarUrl || '/icons/app_icon_192.png',
+    badge: '/icons/app_icon_192.png',
+    data: {
+      url: `/libraries/${libraryId}/channels/${channelId}`,
+      roomId: channelId,
+      notificationType: 'message' as const,
+      senderName: serialized.userName
+    }
+  };
+  sendPushToRoomParticipants(channelId, user.id, pushPayload, false);
+
+  return NextResponse.json({ message: serialized }, { status: 201 });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<Params> | Params }) {

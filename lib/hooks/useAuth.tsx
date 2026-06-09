@@ -144,14 +144,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (s?.expires_at) {
         const expiresAt = s.expires_at * 1000;
         if (expiresAt - Date.now() < 60_000) {
-          const refreshed = await withTimeout(
+          const refreshed = (await withTimeout(
             supabase.auth.refreshSession(),
             8_000,
             'auth session refresh'
           ).catch((refreshError) => {
             console.warn('[AuthProvider] refreshSession failed:', refreshError);
             return null;
-          });
+          })) as any;
           if (refreshed && !refreshed.error) {
             activeSession = refreshed.data.session;
           } else if (refreshed?.error) {
@@ -283,26 +283,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem('readroom_user_name', trimmed); // cross-tab sync
       } catch {}
 
-      // Broadcast to room via socket
-      const { getSocket } = await import('@/lib/socket/client');
+      // Update local presence store; usePresence's channel.track() will re-broadcast
       const { usePresenceStore } = await import('@/store/presenceStore');
-      const { stringToColor, makeInitials } = await import('@/lib/utils/avatar');
+      const { makeInitials } = await import('@/lib/utils/avatar');
       const self = usePresenceStore.getState().self;
       if (self) {
         const avatarInitials = makeInitials(trimmed);
         usePresenceStore.getState().updateSelf({ userName: trimmed, avatarInitials });
-        const socket = getSocket();
-        socket.emit('profile:updated', {
-          userId: self.userId,
-          userName: trimmed,
-          avatarUrl: self.avatarUrl ?? null,
-          avatarColor: stringToColor(self.userId),
-          avatarInitials,
-        });
-        const roomId = (window as any).__readroom_roomId;
-        if (roomId) {
-          socket.emit('presence:update', { roomId, user: { userId: self.userId, userName: trimmed, avatarInitials } });
-        }
       }
       return true;
     } catch (err) {
@@ -323,24 +310,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setAvatarUrl(url);
 
-      const { getSocket } = await import('@/lib/socket/client');
+      // Update local presence store; usePresence's channel.track() will re-broadcast
       const { usePresenceStore } = await import('@/store/presenceStore');
-      const { stringToColor, makeInitials } = await import('@/lib/utils/avatar');
       const self = usePresenceStore.getState().self;
       if (self) {
         usePresenceStore.getState().updateSelf({ avatarUrl: url });
-        const socket = getSocket();
-        socket.emit('profile:updated', {
-          userId: self.userId,
-          userName: self.userName,
-          avatarUrl: url,
-          avatarColor: stringToColor(self.userId),
-          avatarInitials: makeInitials(self.userName),
-        });
-        const roomId = (window as any).__readroom_roomId;
-        if (roomId) {
-          socket.emit('presence:update', { roomId, user: { userId: self.userId } });
-        }
       }
       return true;
     } catch (err) {

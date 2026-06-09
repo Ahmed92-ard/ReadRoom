@@ -1,19 +1,20 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { getSocket } from '@/lib/socket/client';
+import { createClient } from '@/lib/supabase/client';
 import { usePDFStore } from '@/store/pdfStore';
 import { usePresenceStore } from '@/store/presenceStore';
 import type { SyncPayload } from '@/types';
 
 export function usePDFSync(
-  roomId: string, 
+  roomId: string,
   containerRef: React.RefObject<HTMLDivElement>,
-  activePdfId?: string | null, 
+  activePdfId?: string | null,
   activePdfName?: string | null,
   pageOverride?: number,
   scrollOverride?: number,
-  topPaneKey?: string | null
+  topPaneKey?: string | null,
+  libraryId?: string | null
 ) {
   const pageFromStore = usePDFStore((s) => s.page);
   const scrollFromStore = usePDFStore((s) => s.scroll);
@@ -22,46 +23,35 @@ export function usePDFSync(
   const scroll = scrollOverride !== undefined ? scrollOverride : scrollFromStore;
 
   const zoom = usePDFStore((s) => s.zoom);
-  const setSyncState = usePDFStore((s) => s.setSyncState);
   const followMode = usePDFStore((s) => s.followMode);
-  const followTarget = usePDFStore((s) => s.followTarget);
   const self = usePresenceStore((s) => s.self);
 
-  // Refs — keep current values available inside stable socket handlers
-  const followRef = useRef(followMode);
-  const targetRef = useRef(followTarget);
+  const followModeRef = useRef(followMode);
   const selfRef = useRef(self);
-  const roomIdRef = useRef(roomId);
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Track the timestamp of the last remote update to ignore side-effects (echos)
+  const dbPersistRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRemoteUpdateTs = useRef(0);
 
-  // Keep refs in sync with latest values on every render
-  followRef.current = followMode;
-  targetRef.current = followTarget;
+  followModeRef.current = followMode;
   selfRef.current = self;
-  roomIdRef.current = roomId;
 
   // ── Emit sync:state on local navigation ────────────────────────────────────
   useEffect(() => {
     if (!self || followMode) return;
+    if (Date.now() - lastRemoteUpdateTs.current < 200) return;
 
-    // Skip if a remote update just happened (prevent echo)
-    if (Date.now() - lastRemoteUpdateTs.current < 200) {
-      return;
-    }
+    const supabase = createClient();
+    // Re-use the room-broadcast channel — Supabase deduplicates under the hood
+    const channel = supabase.channel(`room-broadcast:${roomId}`, {
+      config: { broadcast: { self: false } },
+    });
+    channel.subscribe();
 
-    // We always broadcast our main workspace position to others
-    // unless we're currently applying a remote update to it.
-
-    const socket = getSocket();
     if (throttleRef.current) clearTimeout(throttleRef.current);
-    throttleRef.current = setTimeout(() => {
-      // Page-relative scroll for cross-device stability
+    throttleRef.current = setTimeout(async () => {
       let pageOffset = scroll;
-      const container = topPaneKey 
+      const container = topPaneKey
         ? (document.querySelector(`[data-pane-key="${topPaneKey}"] [data-pdf-container="true"]`) as HTMLDivElement)
         : containerRef.current;
       const pageEl = container?.querySelector(`[data-page="${page}"]`);
@@ -71,51 +61,56 @@ export function usePDFSync(
         pageOffset = Math.max(0, Math.min(1, (cRect.top - pRect.top) / pRect.height));
       }
 
-      if (!socket.connected) return;
-
-      console.log(`[usePDFSync] Emitting sync:state for room ${roomId} (page: ${page}, scroll: ${pageOffset})`);
-      socket.emit('sync:state', {
+      const payload: SyncPayload = {
         roomId,
         userId: self.userId,
         activePdfId: activePdfId ?? null,
         activePdfName: activePdfName ?? null,
         page,
         scroll: pageOffset,
+        zoom,
         ts: Date.now(),
-      } satisfies SyncPayload);
+      };
+
+      await channel.send({ type: 'broadcast', event: 'sync:state', payload });
+
+      // Persist to DB (debounced 2s) so latecomers get the last known position
+      if (dbPersistRef.current) clearTimeout(dbPersistRef.current);
+      dbPersistRef.current = setTimeout(() => {
+        const endpoint = libraryId
+          ? `/api/libraries/${libraryId}/channels/${roomId}`
+          : `/api/rooms/${roomId}`;
+        fetch(endpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPage: page, scrollPct: pageOffset, zoom }),
+        }).catch(() => {});
+      }, 2000);
     }, 150);
 
     return () => {
       if (throttleRef.current) clearTimeout(throttleRef.current);
+      supabase.removeChannel(channel);
     };
-  }, [roomId, activePdfId, activePdfName, page, scroll, zoom, self, followMode, topPaneKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, activePdfId, activePdfName, page, scroll, zoom, self, followMode, topPaneKey, libraryId]);
 
-  // ── Emit presence:update when PDF state changes ────────────────────────────
+  // ── Update local presence store with current PDF state (no emit — usePresence tracks) ───
   useEffect(() => {
     if (!self) return;
-    const socket = getSocket();
-
     if (presenceRef.current) clearTimeout(presenceRef.current);
     presenceRef.current = setTimeout(() => {
-      if (!socket.connected) return;
-      socket.emit('presence:update', {
-        roomId,
-        user: {
-          userId: self.userId,
-          page,
-          scroll,
-          zoom,
-          activePdfId: activePdfId ?? null,
-          activePdfName: activePdfName ?? null,
-          isActive: true,
-          lastSeen: Date.now(),
-        },
+      usePresenceStore.getState().updateSelf({
+        page,
+        scroll,
+        zoom,
+        activePdfId: activePdfId ?? null,
+        activePdfName: activePdfName ?? null,
+        isActive: true,
+        lastSeen: Date.now(),
       });
     }, 500);
-
-    return () => {
-      if (presenceRef.current) clearTimeout(presenceRef.current);
-    };
-  }, [roomId, activePdfId, activePdfName, page, scroll, zoom, self]);
-
+    return () => { if (presenceRef.current) clearTimeout(presenceRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePdfId, activePdfName, page, scroll, zoom, self]);
 }

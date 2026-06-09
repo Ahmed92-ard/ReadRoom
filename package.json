@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "next dev",
     "build": "next build",
-    "start": "NODE_ENV=production tsx server.ts",
+    "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit"
   },
@@ -26,8 +26,6 @@
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-resizable-panels": "^4.11.1",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5",
     "uuid": "^10.0.0",
     "web-push": "^3.6.7",
     "zustand": "^4.5.7"

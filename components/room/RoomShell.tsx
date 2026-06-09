@@ -23,7 +23,7 @@ import { SettingsOverlay } from '@/components/room/SettingsOverlay';
 import { CallOverlay } from '@/components/room/CallOverlay';
 import { usePDFSync } from '@/lib/hooks/usePDFSync';
 import { usePresence } from '@/lib/hooks/usePresence';
-import { getSocket } from '@/lib/socket/client';
+
 import { createClient } from '@/lib/supabase/client';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { usePresenceStore } from '@/store/presenceStore';
@@ -1145,14 +1145,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       isActive: true,
       lastSeen: Date.now(),
     };
+    // updateSelf triggers usePresence's Supabase Presence track() automatically
     updateSelf(patch);
-    getSocket().emit('presence:update', {
-      roomId,
-      user: {
-        ...currentSelf,
-        ...patch,
-      },
-    });
   }, [libraryId, roomId, room?.name, initialRoom?.name, updateSelf]);
 
   // ── Folder expansion state: re-read from storage when room changes ────────
@@ -1396,7 +1390,8 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     topPaneState ? topPaneState.filename : room?.pdf?.filename,
     topPaneState?.page,
     topPaneState?.scroll,
-    topPane?.key
+    topPane?.key,
+    libraryId ?? null
   );
   
   usePresence(
@@ -1415,12 +1410,15 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     return () => { delete (window as any).__readroom_roomId; };
   }, [roomId]);
 
-  // ── Stable Socket Listeners ────────────────────────────────────────────────
-  useEffect(() => {
-    const socket = getSocket();
-    if (!socket.connected) socket.connect();
+  // ── Broadcast channel ref (used by callbacks to emit events) ──────────────
+  const broadcastChannelRef = useRef<any>(null);
 
-    console.log('[RoomShell] registering socket listeners for room:', roomId);
+  // ── Supabase Realtime broadcast listeners ─────────────────────────────────
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase.channel(`room-broadcast:${roomId}`, {
+      config: { broadcast: { self: false } },
+    });
 
     const handlePdfAdded = (activity: RoomActivity) => {
       console.log('[RoomShell] pdf:added', activity.id);
@@ -1538,21 +1536,17 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       }
     };
 
-    const handleConnect = () => {
-      fetchFolderTree();
-    };
+    channel
+      .on('broadcast', { event: 'pdf:added' }, ({ payload }) => handlePdfAdded(payload as RoomActivity))
+      .on('broadcast', { event: 'library:updated' }, ({ payload }) => handleLibraryUpdated(payload as RoomActivity))
+      .on('broadcast', { event: 'notification:activity' }, ({ payload }) => handleActivity(payload as RoomActivity))
+      .subscribe();
 
-    socket.on('pdf:added', handlePdfAdded);
-    socket.on('library:updated', handleLibraryUpdated);
-    socket.on('notification:activity', handleActivity);
-    socket.on('connect', handleConnect);
+    broadcastChannelRef.current = channel;
 
     return () => {
-      console.log('[RoomShell] cleaning up socket listeners');
-      socket.off('pdf:added', handlePdfAdded);
-      socket.off('library:updated', handleLibraryUpdated);
-      socket.off('notification:activity', handleActivity);
-      socket.off('connect', handleConnect);
+      supabase.removeChannel(channel);
+      broadcastChannelRef.current = null;
     };
   }, [roomId, initialUserId, initialUserName, buildRoomState, channelPdfToMeta, fetchFolderTree, persistNotificationState, pushToast, showBrowserNotification, currentChannelPdfId, normalizeChannelPDF, publishActivePdf, setRoom]);
 
@@ -1670,9 +1664,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
     }
   }, [channelPDFs, channelId, followTarget, openPdfViewer, libraryId, roomId, updateOpenViewerState, usersMap]);
 
-  // ── Follow mode: sync viewer as followed user navigates ─────────────────────
+  // ── Follow mode: sync viewer as followed user navigates (via Supabase broadcast) ───
   useEffect(() => {
-    const socket = getSocket();
+    const supabase = createClient();
+    const followChannel = supabase.channel(`room-broadcast:${roomId}`, {
+      config: { broadcast: { self: false } },
+    });
     const handler = (payload: {
       roomId?: string;
       userId: string;
@@ -1748,9 +1745,12 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       });
     };
 
-    socket.on('sync:state', handler as any);
+    followChannel
+      .on('broadcast', { event: 'sync:state' }, ({ payload }) => handler(payload as any))
+      .subscribe();
+
     return () => {
-      socket.off('sync:state', handler as any);
+      supabase.removeChannel(followChannel);
     };
   }, [channelId, channelPDFs, followTarget, openPdfViewer, openViewers, roomId, libraryId, updateOpenViewerState, usersMap]);
 
@@ -1835,17 +1835,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
           setSyncState({ page: 1, scroll: 0, zoom: 1 });
         }
 
-        getSocket().emit('library:updated', {
-          id: `library:deleted:${pdf.id}:${Date.now()}`,
-          roomId,
-          type: 'room:activity',
-          title: `${initialUserName || 'Someone'} deleted a PDF`,
-          body: pdf.filename,
-          userId: initialUserId,
-          userName: initialUserName,
-          ts: Date.now(),
-          metadata: { action: 'deleted', pdfId: pdf.id },
-        });
+        broadcastChannelRef.current?.send({
+          type: 'broadcast',
+          event: 'library:updated',
+          payload: {
+            id: `library:deleted:${pdf.id}:${Date.now()}`,
+            roomId,
+            type: 'room:activity',
+            title: `${initialUserName || 'Someone'} deleted a PDF`,
+            body: pdf.filename,
+            userId: initialUserId,
+            userName: initialUserName,
+            ts: Date.now(),
+            metadata: { action: 'deleted', pdfId: pdf.id },
+          },
+        }).catch(() => {});
 
         // Refresh folder tree so the deleted PDF disappears from the correct folder
         fetchFolderTree();
@@ -1920,17 +1924,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       if (!currentChannelPdfId) {
         await selectChannelPDF(addedPdf);
       }
-      getSocket().emit('pdf:added', {
-        id: `pdf:added:${addedPdf.id}`,
-        roomId,
-        type: 'pdf:added',
-        title: `${initialUserName || 'Someone'} added a PDF`,
-        body: addedPdf.filename,
-        userId: initialUserId,
-        userName: initialUserName,
-        ts: Date.now(),
-        metadata: { pdf: addedPdf },
-      });
+      broadcastChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'pdf:added',
+        payload: {
+          id: `pdf:added:${addedPdf.id}`,
+          roomId,
+          type: 'pdf:added',
+          title: `${initialUserName || 'Someone'} added a PDF`,
+          body: addedPdf.filename,
+          userId: initialUserId,
+          userName: initialUserName,
+          ts: Date.now(),
+          metadata: { pdf: addedPdf },
+        },
+      }).catch(() => {});
     },
     [initialUserId, initialUserName, normalizeChannelPDF, roomId, selectChannelPDF, fetchFolderTree, currentChannelPdfId]
   );
@@ -1960,15 +1968,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         publishActivePdf(nextPdf?.id ?? null, nextPdf?.filename ?? null);
         setSyncState({ page: 1, scroll: 0, zoom: 1 });
       }
-      getSocket().emit('library:updated', {
-        id: `library:folder-deleted:${folderId}:${Date.now()}`,
-        roomId,
-        type: 'library:updated',
-        title: `${initialUserName || 'Someone'} deleted a folder`,
-        userId: initialUserId,
-        userName: initialUserName,
-        ts: Date.now(),
-      });
+      broadcastChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'library:updated',
+        payload: {
+          id: `library:folder-deleted:${folderId}:${Date.now()}`,
+          roomId,
+          type: 'library:updated',
+          title: `${initialUserName || 'Someone'} deleted a folder`,
+          userId: initialUserId,
+          userName: initialUserName,
+          ts: Date.now(),
+        },
+      }).catch(() => {});
     } catch (err) {
       setPdfLibraryError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2013,15 +2025,19 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
         return;
       }
       await fetchFolderTree();
-      getSocket().emit('library:updated', {
-        id: `library:folder-created:${Date.now()}`,
-        roomId,
-        type: 'library:updated',
-        title: `${initialUserName || 'Someone'} created a folder`,
-        userId: initialUserId,
-        userName: initialUserName,
-        ts: Date.now(),
-      });
+      broadcastChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'library:updated',
+        payload: {
+          id: `library:folder-created:${Date.now()}`,
+          roomId,
+          type: 'library:updated',
+          title: `${initialUserName || 'Someone'} created a folder`,
+          userId: initialUserId,
+          userName: initialUserName,
+          ts: Date.now(),
+        },
+      }).catch(() => {});
     } catch (err) {
       setPdfLibraryError(err instanceof Error ? err.message : String(err));
     }
@@ -2051,17 +2067,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to move PDF');
       await fetchFolderTree();
-      getSocket().emit('library:updated', {
-        id: `library:pdf-moved:${movingPdf.id}:${Date.now()}`,
-        roomId,
-        type: 'library:updated',
-        title: `${initialUserName || 'Someone'} moved a PDF`,
-        body: movingPdf.filename,
-        userId: initialUserId,
-        userName: initialUserName,
-        ts: Date.now(),
-        metadata: { action: 'moved', pdfId: movingPdf.id, folderId: moveTargetFolderId },
-      });
+      broadcastChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'library:updated',
+        payload: {
+          id: `library:pdf-moved:${movingPdf.id}:${Date.now()}`,
+          roomId,
+          type: 'library:updated',
+          title: `${initialUserName || 'Someone'} moved a PDF`,
+          body: movingPdf.filename,
+          userId: initialUserId,
+          userName: initialUserName,
+          ts: Date.now(),
+          metadata: { action: 'moved', pdfId: movingPdf.id, folderId: moveTargetFolderId },
+        },
+      }).catch(() => {});
       setMovingPdf(null);
     } catch (err) {
       setPdfLibraryError(err instanceof Error ? err.message : String(err));
@@ -2097,17 +2117,21 @@ export function RoomShell({ roomId, initialUserId, initialUserName, initialRoom 
       
       await fetchFolderTree();
       
-      getSocket().emit('library:updated', {
-        id: `library:reorder:${id}:${Date.now()}`,
-        roomId,
-        type: 'library:updated',
-        title: `${initialUserName || 'Someone'} rearranged the shelf`,
-        body: type === 'folder' ? 'Moved a folder' : 'Moved a PDF',
-        userId: initialUserId,
-        userName: initialUserName,
-        ts: Date.now(),
-        metadata: { action: 'reorder', type, itemId: id, parentId: newParentId, position: newPosition }
-      });
+      broadcastChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'library:updated',
+        payload: {
+          id: `library:reorder:${id}:${Date.now()}`,
+          roomId,
+          type: 'library:updated',
+          title: `${initialUserName || 'Someone'} rearranged the shelf`,
+          body: type === 'folder' ? 'Moved a folder' : 'Moved a PDF',
+          userId: initialUserId,
+          userName: initialUserName,
+          ts: Date.now(),
+          metadata: { action: 'reorder', type, itemId: id, parentId: newParentId, position: newPosition },
+        },
+      }).catch(() => {});
 
     } catch (err) {
       console.error('[FolderTree] reorder error:', err);

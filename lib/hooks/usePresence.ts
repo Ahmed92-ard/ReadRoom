@@ -11,7 +11,6 @@
 //   supabase.channel(name).on(...).on(...).subscribe()
 
 import { useEffect, useRef } from 'react';
-import { getSocket } from '@/lib/socket/client';
 import { createClient } from '@/lib/supabase/client';
 import { usePresenceStore } from '@/store/presenceStore';
 import { usePDFStore } from '@/store/pdfStore';
@@ -52,6 +51,9 @@ export function usePresence(
   // Stable Supabase client — created once, never recreated
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   if (!supabaseRef.current) supabaseRef.current = createClient();
+
+  // Reference to the active realtime channel
+  const channelRef = useRef<any>(null);
 
   // Mutable refs for values that change but shouldn't re-trigger effects
   const activePdfIdRef = useRef(activePdfId);
@@ -115,7 +117,6 @@ export function usePresence(
 
     const channel = supabase
       .channel(channelName)
-      // ← .on() FIRST, then .subscribe() below
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'users' },
@@ -147,7 +148,6 @@ export function usePresence(
           });
         }
       )
-      // ← .subscribe() LAST — after all .on() handlers are registered
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           // Channel is live
@@ -159,13 +159,12 @@ export function usePresence(
     return () => {
       supabase.removeChannel(channel);
     };
-    // Only re-subscribe when roomId changes (stable supabase client, stable callbacks)
   }, [roomId, updateSelf, updateUser]);
 
-  // ── Socket.IO: join room + presence events ────────────────────────────────
+  // ── Supabase Realtime Presence Client connection ──────────────────────────
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket.connected) socket.connect();
+    const supabase = supabaseRef.current;
+    if (!supabase) return;
 
     const buildSelf = (): UserMeta => {
       const existingSelf = usePresenceStore.getState().self;
@@ -191,68 +190,74 @@ export function usePresence(
       };
     };
 
-    const joinRoom = () => {
-      const currentSelf = buildSelf();
-      setSelf(currentSelf);
-      socket.emit('room:join', { roomId, user: presenceOnly(currentSelf) as UserMeta });
-      setConnectionStatus('connected');
-    };
+    setConnectionStatus('disconnected');
 
-    if (socket.connected) joinRoom();
+    const channel = supabase.channel(`presence-room:${roomId}`, {
+      config: {
+        presence: {
+          key: tabId,
+        },
+      },
+    });
 
-    const pingInterval = setInterval(() => {
-      socket.emit('presence:ping', { roomId, userId: tabId });
-    }, 15_000);
+    channelRef.current = channel;
 
-    const handlePresenceList = (users: UserMeta[]) => {
-      users.forEach((u) => { if (u.userId !== tabId) addUser({ ...u, isActive: true }); });
-    };
-    const handlePresenceJoin = (u: UserMeta) => {
-      if (u.userId === tabId) return;
-      addUser({ ...u, isActive: true });
-    };
-    const handlePresenceUpdate = (u: UserMeta) => {
-      if (u.userId === tabId) return;
-      updateUser(u.userId, u);
-    };
-    const handlePresenceLeft = ({ userId: uid }: { userId: string }) => {
-      updateUser(uid, { isActive: false, lastSeen: Date.now() });
-    };
-    const handleProfileUpdated = (payload: {
-      userId: string; userName: string;
-      avatarUrl: string | null; avatarColor: string; avatarInitials: string;
-    }) => {
-      const baseId = payload.userId.split('_')[0];
-      const store = usePresenceStore.getState();
-      store.users.forEach((u, uid) => {
-        if (u.userId.startsWith(baseId)) updateUser(uid, payload);
+    // Attach presence sync handlers before subscribing
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const onlineTabIds = new Set(Object.keys(state));
+
+        // Add / Update online users
+        Object.entries(state).forEach(([key, presences]) => {
+          if (key === tabId) return; // skip self
+          const p = presences[0] as any;
+          if (p) {
+            addUser({
+              ...p,
+              userId: key,
+              isActive: true,
+            });
+          }
+        });
+
+        // Set users who have gone offline
+        const store = usePresenceStore.getState();
+        store.users.forEach((user, uid) => {
+          if (user.isActive && !onlineTabIds.has(uid) && uid !== tabId) {
+            updateUser(uid, { isActive: false, lastSeen: Date.now() });
+          }
+        });
+      })
+      .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+        if (key === tabId) return;
+        const p = newPresences[0] as any;
+        if (p) {
+          addUser({ ...p, userId: key, isActive: true });
+        }
+      })
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (key === tabId) return;
+        updateUser(key, { isActive: false, lastSeen: Date.now() });
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          setConnectionStatus('connected');
+          const currentSelf = buildSelf();
+          setSelf(currentSelf);
+          // Track our initial presence
+          await channel.track(presenceOnly(currentSelf));
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setConnectionStatus('error');
+        } else if (status === 'CLOSED') {
+          setConnectionStatus('disconnected');
+        }
       });
-      if (store.self?.userId.startsWith(baseId)) updateSelf(payload);
-    };
-    const handleConnect = () => joinRoom();
-    const handleDisconnect = () => setConnectionStatus('disconnected');
-    const handleConnectError = () => setConnectionStatus('error');
-
-    socket.on('presence:list', handlePresenceList);
-    socket.on('presence:join', handlePresenceJoin);
-    socket.on('presence:update', handlePresenceUpdate);
-    socket.on('presence:left', handlePresenceLeft);
-    socket.on('profile:updated', handleProfileUpdated);
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-    socket.on('connect_error', handleConnectError);
 
     return () => {
-      socket.emit('room:leave', { roomId, userId: tabId });
-      socket.off('presence:list', handlePresenceList);
-      socket.off('presence:join', handlePresenceJoin);
-      socket.off('presence:update', handlePresenceUpdate);
-      socket.off('presence:left', handlePresenceLeft);
-      socket.off('profile:updated', handleProfileUpdated);
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
-      socket.off('connect_error', handleConnectError);
-      clearInterval(pingInterval);
+      setConnectionStatus('disconnected');
+      supabase.removeChannel(channel);
+      channelRef.current = null;
     };
   }, [roomId, libraryId, tabId, addUser, setSelf, setConnectionStatus, updateUser, updateSelf]);
 
@@ -296,15 +301,17 @@ export function usePresence(
       updateSelf(patch);
 
       if (throttleTimer) clearTimeout(throttleTimer);
-      throttleTimer = setTimeout(() => {
-        const socket = getSocket();
-        if (socket.connected) socket.emit('presence:update', { roomId, user: presenceOnly({ ...selfNow, ...patch }) });
+      throttleTimer = setTimeout(async () => {
+        if (channelRef.current) {
+          await channelRef.current.track(presenceOnly({ ...selfNow, ...patch }));
+        }
       }, 500);
     });
 
     return () => { unsubscribe(); if (throttleTimer) clearTimeout(throttleTimer); };
   }, [roomId, libraryId, updateSelf]);
 
+  // Update library/room details when changed
   useEffect(() => {
     const self = usePresenceStore.getState().self;
     if (!self) return;
@@ -317,7 +324,9 @@ export function usePresence(
       lastSeen: Date.now(),
     };
     updateSelf(patch);
-    getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
+    if (channelRef.current) {
+      channelRef.current.track(presenceOnly({ ...self, ...patch }));
+    }
   }, [roomId, libraryId, roomName, updateSelf]);
 
   // ── Focus & Visibility change → isFocused & isActive ───────────────────────
@@ -337,7 +346,9 @@ export function usePresence(
         lastSeen
       };
       updateSelf(patch);
-      getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
+      if (channelRef.current) {
+        channelRef.current.track(presenceOnly({ ...self, ...patch }));
+      }
     };
 
     document.addEventListener('visibilitychange', handle);
@@ -357,7 +368,9 @@ export function usePresence(
     if (!self || userName === 'Reader' || self.userName !== 'Reader') return;
     const patch = { userName, avatarInitials: makeInitials(userName) };
     updateSelf(patch);
-    getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
+    if (channelRef.current) {
+      channelRef.current.track(presenceOnly({ ...self, ...patch }));
+    }
   }, [roomId, userName, updateSelf]);
 
   // ── Cross-tab name sync via localStorage ──────────────────────────────────
@@ -368,7 +381,9 @@ export function usePresence(
       if (!self) return;
       const patch = { userName: e.newValue, avatarInitials: makeInitials(e.newValue) };
       updateSelf(patch);
-      getSocket().emit('presence:update', { roomId, user: presenceOnly({ ...self, ...patch }) });
+      if (channelRef.current) {
+        channelRef.current.track(presenceOnly({ ...self, ...patch }));
+      }
     };
     window.addEventListener('storage', handle);
     return () => window.removeEventListener('storage', handle);

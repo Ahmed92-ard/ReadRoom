@@ -101,7 +101,11 @@ export async function triggerPushNotificationToUser(
               if (delError) console.error('[PushService] Failed to delete stale subscription:', delError.message);
             });
         } else {
-          console.error('[PushService] Error dispatching push notification:', err.message || err);
+          console.error(
+            `[PushService] Error dispatching push notification (status: ${err.statusCode || 'unknown'}):`,
+            err.message || err,
+            err.body ? `| Body: ${err.body}` : ''
+          );
         }
       }
     });
